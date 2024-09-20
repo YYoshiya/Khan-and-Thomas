@@ -1,32 +1,9 @@
-import numpy as np
-import time
+# CEpolicylin.py
 import numpy as np
 
 def CEpolicylin(ivec, kvec, kprime, p, znum, simLength):
     """
-    CEpolicylin function: Perform quadratic form regressions for the Krusell-Smith model.
-    
-    Parameters:
-    zvec : numpy array
-        History of productivity shock levels.
-    ivec : numpy array
-        Associated index level of productivity.
-    kvec : numpy array
-        History of current capital.
-    kprime : numpy array
-        History of next period's stock of capital.
-    p : numpy array
-        History of current relative price of output.
-    znum : int
-        Number of discrete shock levels.
-    simLength : int
-        Length of the simulation.
-        
-    Returns:
-    BetaK : numpy array
-        Estimated relation logk' = BetaK * [1 logk].
-    Betap : numpy array
-        Estimated relation logp = Betap * [1 logk].
+    CEpolicylin function: Perform linear regressions for the Krusell-Smith model.
     """
     BetaK = np.zeros((znum, 2))
     Betap = np.zeros((znum, 2))
@@ -47,7 +24,7 @@ def CEpolicylin(ivec, kvec, kprime, p, znum, simLength):
         kprimelog = np.log(kzprime)
         unit = np.ones(zobs)
         
-        # Independent and dependent variables for second order multidimensional linear regression in logs
+        # Independent and dependent variables for linear regression in logs
         Y1 = np.column_stack((kprimelog, plog))
         X2 = np.column_stack((unit, klog))
         
@@ -90,5 +67,3 @@ def CEpolicylin(ivec, kvec, kprime, p, znum, simLength):
         Betap[i, :] = Beta2[:, 1]
     
     return BetaK, Betap
-
-

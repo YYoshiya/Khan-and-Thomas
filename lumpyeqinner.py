@@ -1,9 +1,9 @@
+# lumpyeqinner.py
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
 from scipy.optimize import fminbound
-import globals
 import time
-
+import globals
 
 GAMY = globals.GAMY
 BETA = globals.BETA
@@ -67,14 +67,6 @@ def lumpyeqinner(BetaK, Betap, knotsk, knotsm, Z, Pi):
     iter = 0
     s1 = 0
 
-    def vfuncsp2(kp, mp, p, spline, knotsk, knotsm):
-        # スプライン補間を使って ev を計算
-        ev = spline(kp, mp)[0]  # scipyのスプラインは行列を返すので、要素を取り出す
-        
-        # vfuncsp2 の計算
-        f = -GAMY * p * kp + BETA * ev
-        return -f  # 最大化のために符号を反転
-
     # Creating a list of splines for each z (Productivity shocks)
     while diff > critin:
         splines = []
@@ -92,14 +84,15 @@ def lumpyeqinner(BetaK, Betap, knotsk, knotsm, Z, Pi):
                 for im in range(nm):
                     mp = mpmat[im, iz]
                     p = pmat[im, iz]
-                    kpnew[im, iz] = fminbound(vfuncsp2, knotsk[0], knotsk[-1], args=(mp, p, spline, knotsk, knotsm))
+                    spline_func = lambda kp: vfuncsp2(kp, mp, p, spline)
+                    kpnew[im, iz], _, _, _ = fminbound(spline_func, knotsk[0], knotsk[-1], full_output=True)
 
             # solve for xi(k,K,z)
             for im in range(nm):
                 mp = mpmat[im, iz]
                 p = pmat[im, iz]
                 w = wmat[im, iz]
-                e0[im, iz] = -vfuncsp2(kpnew[im, iz], mp, p, spline, knotsk, knotsm)
+                e0[im, iz] = -vfuncsp2(kpnew[im, iz], mp, p, spline)
 
                 for ik in range(nk):
                     know = knotsk[ik]
@@ -127,9 +120,16 @@ def lumpyeqinner(BetaK, Betap, knotsk, knotsm, Z, Pi):
         elif s1 >= 20:
             s1 = 0
 
-        kp = kpnew
-        v = vnew
+        kp = kpnew.copy()
+        v = vnew.copy()
 
     print(f"  Elapsed time = {time.time() - start_time:.8f} seconds")
 
     return v
+
+def vfuncsp2(kp, mp, p, spline):
+    # スプライン補間を使って ev を計算
+    ev = spline(kp, mp, grid=False)
+    # vfuncsp2 の計算
+    f = -GAMY * p * kp + BETA * ev
+    return -f  # 最大化のために符号を反転

@@ -1,10 +1,8 @@
+# main.py
 import numpy as np
 import time
-import CEpolicylin
 from CEpolicylin import CEpolicylin
-import lumpyeqinner
 from lumpyeqinner import lumpyeqinner
-import lumpyeqouter
 from lumpyeqouter import lumpyeqouter
 import scipy.io
 import globals
@@ -15,8 +13,6 @@ start_time = time.time()
 # Convergence criteria
 critout = 1e-4  # for outer loop
 critin  = 1e-5  # for inner loop
-critbp  = 1e-10 # for bisection to solve p = F(p)
-critg   = 1e-10 # for golden section search to solve for kw
 
 GAMY = globals.GAMY
 BETA = globals.BETA
@@ -58,11 +54,12 @@ rm = nm - 2
 data = scipy.io.loadmat('PlannerSim.mat')
 
 # Extract the variables from the loaded .mat file
-Kvec = data['Kvec'].flatten()  # Kvec を1次元配列に変換
-Kpvec = data['Kpvec'].flatten()  # Kpvec を1次元配列に変換
-Cvec = data['Cvec'].flatten()  # Cvec を1次元配列に変換
-izvec = data['izvec'].flatten()  # izvec を1次元配列に変換
+Kvec = data['Kvec'].flatten()
+Kpvec = data['Kpvec'].flatten()
+Cvec = data['Cvec'].flatten()
+izvec = data['izvec'].flatten().astype(int) - 1  # インデックスとして使用するため1を引いて整数型に変換
 simT = len(Kvec)
+
 # Get regression coefficients
 BetaK, Betap = CEpolicylin(izvec, Kvec, Kpvec, 1.0/Cvec, nz, simT)
 
@@ -76,7 +73,7 @@ while diff > critout:
     v = lumpyeqinner(BetaK, Betap, knotsk, knotsm, Z, Pi)
 
     # Perform simulation
-    Yvec, Ivec, Cvec, Nvec, Wvec, Zvec, Kvec, Kpvec = lumpyeqouter(v, BetaK, knotsk, knotsm, Z, Pi, izvec)
+    Yvec, Ivec, Cvec, Nvec, Wvec, Zvec, Kvec, Kpvec = lumpyeqouter(v, BetaK, knotsk, knotsm, Z, Pi, izvec, kSS)
 
     BetaKnew = np.zeros((nz, 2))
     Betapnew = np.zeros((nz, 2))
@@ -100,8 +97,8 @@ while diff > critout:
     iter += 1
     print(f"Iteration {iter}: ||Tmp-mp|| = {diffmp:.4f}, ||Tp-p|| = {diffp:.4f}, Elapsed time = {time.time() - iter_start_time:.4f}")
 
-    BetaK = BetaKnew
-    Betap = Betapnew
+    BetaK = BetaKnew.copy()
+    Betap = Betapnew.copy()
 
 # Save the results
 np.save('lumpyeqksresult.npy', [v, BetaK, Betap, Kvec, Kpvec, Cvec, izvec])
