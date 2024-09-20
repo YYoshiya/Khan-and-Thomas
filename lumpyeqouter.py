@@ -1,15 +1,25 @@
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
+import time  # timeモジュールをインポート
+import globals
+
+GAMY = globals.GAMY
+BETA = globals.BETA
+DELTA = globals.DELTA
+THETA = globals.THETA
+NU = globals.NU
+ETA = globals.ETA
+B = globals.B
+critin = globals.critin
 
 def lumpyeqouter(v, BetaK, knotsk, knotsm, Z, Pi, izvec):
-    global GAMY, BETA, kSS
 
     nk = len(knotsk)
     nm = len(knotsm)
     nz = len(Z)
 
     print('  OUTER LOOP')
-    start_time = time.time()
+    start_time = time.time()  # 正しいtimeモジュールの呼び出し
 
     simT = len(izvec)
     Zvec = np.zeros(simT)
@@ -35,9 +45,9 @@ def lumpyeqouter(v, BetaK, knotsk, knotsm, Z, Pi, izvec):
         spline = RectBivariateSpline(knotsk, knotsm, vcond)
         splines.append(spline)
 
-    for time in range(simT):
+    for t in range(simT):  # timeをtに変更
         mnow = np.dot(Thetanow, Kvecnow)
-        iz = izvec[time]
+        iz = izvec[t]  # timeをtに変更
 
         X = np.array([1, np.log(mnow)])
         mp = np.exp(np.dot(BetaK[iz, :], X))
@@ -69,17 +79,17 @@ def lumpyeqouter(v, BetaK, knotsk, knotsm, Z, Pi, izvec):
         Zagg = znow
         Kpagg = np.dot(Thetanew, Kvecnew)
 
-        Zvec[time] = znow
-        Kvec[time] = mnow
-        Kpvec[time] = Kpagg
-        Yvec[time] = Yagg
-        Ivec[time] = Iagg
-        Cvec[time] = Cagg
-        Nvec[time] = Nagg
-        Wvec[time] = wnew
+        Zvec[t] = znow  # timeをtに変更
+        Kvec[t] = mnow  # timeをtに変更
+        Kpvec[t] = Kpagg  # timeをtに変更
+        Yvec[t] = Yagg  # timeをtに変更
+        Ivec[t] = Iagg  # timeをtに変更
+        Cvec[t] = Cagg  # timeをtに変更
+        Nvec[t] = Nagg  # timeをtに変更
+        Wvec[t] = wnew  # timeをtに変更
 
-        if time % 100 == 0:
-            print(f'  time = {time}: pnow = {pnew:.4f}, pl = {plow:.4f}')
+        if t % 100 == 0:  # timeをtに変更
+            print(f'  time = {t}: pnow = {pnew:.4f}, pl = {plow:.4f}')
 
     print(f'  Elapsed time = {time.time() - start_time:.8f} seconds')
 

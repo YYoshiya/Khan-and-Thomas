@@ -1,10 +1,20 @@
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
+from scipy.optimize import fminbound
+import globals
 import time
 
+
+GAMY = globals.GAMY
+BETA = globals.BETA
+DELTA = globals.DELTA
+THETA = globals.THETA
+NU = globals.NU
+ETA = globals.ETA
+B = globals.B
+critin = globals.critin
+
 def lumpyeqinner(BetaK, Betap, knotsk, knotsm, Z, Pi):
-    global critin
-    global GAMY, BETA, DELTA, THETA, NU, ETA, B
 
     nk = len(knotsk)
     nm = len(knotsm)
@@ -57,48 +67,52 @@ def lumpyeqinner(BetaK, Betap, knotsk, knotsm, Z, Pi):
     iter = 0
     s1 = 0
 
-    # Creating a list of splines for each z (Productivity shocks)
-    splines = []
-    for iz in range(nz):
-        vcond = np.zeros((nk, nm))
-        for jz in range(nz):
-            vcond += Pi[iz, jz] * v[:, :, jz]  # E[V(k,K,z')|z]
+    def vfuncsp2(kp, mp, p, spline, knotsk, knotsm):
+        # スプライン補間を使って ev を計算
+        ev = spline(kp, mp)[0]  # scipyのスプラインは行列を返すので、要素を取り出す
         
-        # Fit 2D spline with RectBivariateSpline
-        spline = RectBivariateSpline(knotsk, knotsm, vcond)
-        splines.append(spline)
+        # vfuncsp2 の計算
+        f = -GAMY * p * kp + BETA * ev
+        return -f  # 最大化のために符号を反転
 
+    # Creating a list of splines for each z (Productivity shocks)
     while diff > critin:
+        splines = []
         for iz in range(nz):
-            spline = splines[iz]
+            vcond = np.zeros((nk, nm))
+            for jz in range(nz):
+                vcond += Pi[iz, jz] * v[:, :, jz]  # E[V(k,K,z')|z]
 
+            # Fit 2D spline with RectBivariateSpline
+            spline = RectBivariateSpline(knotsk, knotsm, vcond)
+            splines.append(spline)
+
+            # target k
             if s1 == 0:
                 for im in range(nm):
                     mp = mpmat[im, iz]
                     p = pmat[im, iz]
-                    # Golden section search to find optimal kp
-                    kpnew[im, iz] = golden(vfuncsp2, knotsk[0], knotsk[-1], mp, p, spline, knotsk, knotsm)
+                    kpnew[im, iz] = fminbound(vfuncsp2, knotsk[0], knotsk[-1], args=(mp, p, spline, knotsk, knotsm))
 
-        for im in range(nm):
-            mp = mpmat[im, iz]
-            p = pmat[im, iz]
-            w = wmat[im, iz]
-            e0[im, iz] = -vfuncsp2(kpnew[im, iz], mp, p, spline, knotsk, knotsm)
+            # solve for xi(k,K,z)
+            for im in range(nm):
+                mp = mpmat[im, iz]
+                p = pmat[im, iz]
+                w = wmat[im, iz]
+                e0[im, iz] = -vfuncsp2(kpnew[im, iz], mp, p, spline, knotsk, knotsm)
 
-            for ik in range(nk):
-                know = knotsk[ik]
-                # Evaluate spline and its derivative using RectBivariateSpline
-                v1 = spline((1 - DELTA) / GAMY * know, mp, grid=False)
-                v1_derivative = spline((1 - DELTA) / GAMY * know, mp, dx=1, grid=False)
-                e1[ik, im, iz] = -p * (1 - DELTA) * know + BETA * v1
+                for ik in range(nk):
+                    know = knotsk[ik]
+                    v1 = spline((1 - DELTA) / GAMY * know, mp, grid=False)
+                    e1[ik, im, iz] = -p * (1 - DELTA) * know + BETA * v1
 
-                xitemp = (e0[im, iz] - e1[ik, im, iz]) / (p * w)
-                xi[ik, im, iz] = min(B, max(0, xitemp))
+                    xitemp = (e0[im, iz] - e1[ik, im, iz]) / (p * w)
+                    xi[ik, im, iz] = min(B, max(0, xitemp))
 
-                vnew[ik, im, iz] = (v0[ik, im, iz]
-                    - p * w * xi[ik, im, iz]**2 / (2 * B)
-                    + xi[ik, im, iz] / B * e0[im, iz]
-                    + (1 - xi[ik, im, iz] / B) * e1[ik, im, iz])
+                    vnew[ik, im, iz] = (v0[ik, im, iz]
+                        - p * w * xi[ik, im, iz]**2 / (2 * B)
+                        + xi[ik, im, iz] / B * e0[im, iz]
+                        + (1 - xi[ik, im, iz] / B) * e1[ik, im, iz])
 
         diffkp = np.max(np.abs(kpnew - kp))
         diffv = np.max(np.abs(vnew - v))

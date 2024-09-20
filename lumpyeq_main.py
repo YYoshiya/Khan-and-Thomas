@@ -1,6 +1,13 @@
 import numpy as np
 import time
-from functions import CEpolicylin, lumpyeqinner, lumpyeqouter
+import CEpolicylin
+from CEpolicylin import CEpolicylin
+import lumpyeqinner
+from lumpyeqinner import lumpyeqinner
+import lumpyeqouter
+from lumpyeqouter import lumpyeqouter
+import scipy.io
+import globals
 
 # Start timer
 start_time = time.time()
@@ -11,14 +18,14 @@ critin  = 1e-5  # for inner loop
 critbp  = 1e-10 # for bisection to solve p = F(p)
 critg   = 1e-10 # for golden section search to solve for kw
 
-# Parameters from Khan and Thomas (2003)
-GAMY  = 1.0160
-BETA  = 0.9540
-DELTA = 0.060
-THETA = 0.3250
-NU    = 0.580
-ETA   = 3.6142
-B     = 0.002
+GAMY = globals.GAMY
+BETA = globals.BETA
+DELTA = globals.DELTA
+THETA = globals.THETA
+NU = globals.NU
+ETA = globals.ETA
+B = globals.B
+critin = globals.critin
 
 ykSS = (GAMY - BETA * (1 - DELTA)) / BETA / THETA
 ckSS = ykSS + (1 - GAMY - DELTA)
@@ -48,14 +55,16 @@ knotsm = np.linspace(mbounds[0], mbounds[1], nm)
 rm = nm - 2
 
 # Load the PlannerSim data from files
-Kvec = np.load('Kvec.npy')
-Kpvec = np.load('Kpvec.npy')
-Cvec = np.load('Cvec.npy')
-izvec = np.load('izvec.npy')
-simT = len(Kvec)
+data = scipy.io.loadmat('PlannerSim.mat')
 
+# Extract the variables from the loaded .mat file
+Kvec = data['Kvec'].flatten()  # Kvec を1次元配列に変換
+Kpvec = data['Kpvec'].flatten()  # Kpvec を1次元配列に変換
+Cvec = data['Cvec'].flatten()  # Cvec を1次元配列に変換
+izvec = data['izvec'].flatten()  # izvec を1次元配列に変換
+simT = len(Kvec)
 # Get regression coefficients
-BetaK, Betap = CEpolicylin(Z[izvec], izvec, Kvec, Kpvec, 1.0 / Cvec, nz, simT)
+BetaK, Betap = CEpolicylin(izvec, Kvec, Kpvec, 1.0/Cvec, nz, simT)
 
 diff = 1e4
 iter = 0

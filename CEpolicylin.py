@@ -1,9 +1,8 @@
 import numpy as np
 import time
-
 import numpy as np
 
-def CEpolicylin(zvec, ivec, kvec, kprime, p, znum, simLength):
+def CEpolicylin(ivec, kvec, kprime, p, znum, simLength):
     """
     CEpolicylin function: Perform quadratic form regressions for the Krusell-Smith model.
     
