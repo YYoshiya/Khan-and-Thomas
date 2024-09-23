@@ -97,7 +97,7 @@ def lumpyeqouter(v, BetaK, knotsk, knotsm, Z, Pi, izvec, kSS):
     return Yvec, Ivec, Cvec, Nvec, Wvec, Zvec, Kvec, Kpvec
 
 def bisectp(pL, pH, spline, knotsk, knotsm, mp, znow, Theta, Kvec):
-    diff = 1e+4
+    diff = 1e-4
     iter_count = 0
 
     while diff > critbp:
