@@ -101,7 +101,18 @@ while diff > critout:
     Betap = Betapnew.copy()
 
 # Save the results
-np.save('lumpyeqksresult.npy', [v, BetaK, Betap, Kvec, Kpvec, Cvec, izvec])
-np.save('lumpyeqksresult2.npy', [Yvec, Ivec, Cvec, Nvec, Wvec, Zvec, Kvec, Kpvec])
+np.savez('lumpyeqksresults.npz',
+         v=v,
+         BetaK=BetaK,
+         Betap=Betap,
+         Kvec=Kvec,
+         Kpvec=Kpvec,
+         Cvec=Cvec,
+         izvec=izvec,
+         Yvec=Yvec,
+         Ivec=Ivec,
+         Nvec=Nvec,
+         Wvec=Wvec,
+         Zvec=Zvec)
 
 print(f"Total elapsed time: {time.time() - start_time:.4f} seconds")
