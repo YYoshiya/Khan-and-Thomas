@@ -34,3 +34,10 @@ class GeneralizedMomModel(FeedforwardModel):
         gm = torch.mean(x, dim=-2, keepdim=True)
         gm = gm.repeat(1, x.shape[-2], 1)
         return gm
+    
+class PriceModel(FeedforwardModel):
+    def __init__(self, d_in, d_out, config, name="pricemodel"):
+        super(PriceModel, self).__init__(d_in, d_out, config, name=name)
+
+    def forward(self, x):
+        return self.dense_layers(x)

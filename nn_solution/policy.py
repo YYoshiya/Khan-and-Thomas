@@ -107,3 +107,38 @@ class PolicyTrainer():
                         self.config["value_config"]["num_epoch"],
                         self.config["value_config"]["batch_size"]
                     )
+    
+class KTPolicyTrainer(PolicyTrainer):
+    def __init__(self, vtrainers, init_ds, policy_path=None):
+        super(KTPolicyTrainer, self).__init__(vtrainers, init_ds, policy_path)
+        if self.config["init_with_bchmk"]:
+            init_policy = self.init_ds.k_policy_bchmk
+            policy_type = "pde"
+        else:
+            init_policy = self.init_ds.c_policy_const_share
+            policy_type = "nn_share"
+        self.policy_ds = self.init_ds.get_policydataset(init_policy, policy_type, update_init=False)
+        
+    def loss(self, input_data):
+        k_cross = input_data["k_cross"]
+        ashock = input_data["ashock"]
+        price = input_data["price"]
+        util_sum = 0
+        for t in range(self.t_unroll):
+            a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)
+            a_tmp = torch.unsqueeze(a_tmp, 2)
+            basic_s_tmp = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
+            full_state_dict = {
+                "basic_s": basic_s_tmp,
+                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s" withtf=True)
+            }
+            if t == self.t_unroll - 1:
+                value = 0
+                for vtr in self.vtrainers:
+                    value += self.init_ds.unnormalize_data(
+                        vtr.value_fn(full_state_dict)[..., 0], key="value", withtf=True)
+                value /= self.num_vnet
+                util_sum += self.discount[t]*value
+                continue
+            k_next = self.policy_fn(full_state_dict)
+            

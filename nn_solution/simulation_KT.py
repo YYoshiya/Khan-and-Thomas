@@ -19,7 +19,7 @@ def simul_shocks(n_sample, T, mparam, state_init=None):
     
     return ashock
 
-def simul_k(n_sample, T, mparam, policy, policy_type, state_init=None, shocks=None): 
+def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None): 
     if shocks:
         ashock = shocks
     
@@ -40,7 +40,8 @@ def simul_k(n_sample, T, mparam, policy, policy_type, state_init=None, shocks=No
     
     if policy_type == "nn":
         for t in range(1, T):
+            price = price_fn(k_cross[:, :, t-1])
             k_cross_t = policy(k_cross[:, :, t - 1], ashock[:, t - 1])
     
-    simul_data = {"k_cross": k_cross, "ashock": ashock}
+    simul_data = {"price": price, "k_cross": k_cross, "ashock": ashock}
             
