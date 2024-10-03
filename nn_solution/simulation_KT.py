@@ -40,8 +40,15 @@ def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None,
     
     if policy_type == "nn":
         for t in range(1, T):
-            price = price_fn(k_cross[:, :, t-1])
-            k_cross_t = policy(k_cross[:, :, t - 1], ashock[:, t - 1])
-    
-    simul_data = {"price": price, "k_cross": k_cross, "ashock": ashock}
+            price = price_fn(k_cross[:, :, t-1])# 384*1
+            wage = mparam.eta / price # 384*1
+            yterm = ashock[:, t-1] * k_cross[:, :, t-1]**mparam.theta # 384*50
+            n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
+            y = yterm * n**mparam.nu
+            v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
+            v0 = v0_temp * price
+            k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])# 384*50
             
+    
+    simul_data = {"price": price, "v0": v0, "k_cross": k_cross, "ashock": ashock}
+            # 384*T, 384*50*T, 384*T

@@ -130,7 +130,7 @@ class KTPolicyTrainer(PolicyTrainer):
             basic_s_tmp = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
             full_state_dict = {
                 "basic_s": basic_s_tmp,
-                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s" withtf=True)
+                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
             }
             if t == self.t_unroll - 1:
                 value = 0
@@ -140,5 +140,10 @@ class KTPolicyTrainer(PolicyTrainer):
                 value /= self.num_vnet
                 util_sum += self.discount[t]*value
                 continue
+            price = torch.repeat_interleave(price[:, t:t+1], 50, dim=1)
+            wage = 
             k_next = self.policy_fn(full_state_dict)
+            yterm = ashock * k_cross ** THETA
+            
+            n = (NU * yterm / w0)**(1/(1-))
             
