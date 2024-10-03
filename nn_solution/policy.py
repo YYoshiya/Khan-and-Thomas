@@ -140,10 +140,21 @@ class KTPolicyTrainer(PolicyTrainer):
                 value /= self.num_vnet
                 util_sum += self.discount[t]*value
                 continue
-            price = torch.repeat_interleave(price[:, t:t+1], 50, dim=1)
-            wage = 
-            k_next = self.policy_fn(full_state_dict)
-            yterm = ashock * k_cross ** THETA
             
-            n = (NU * yterm / w0)**(1/(1-))
+            price = price_fn(k_cross)
+            wage = self.mparam.eta / price
+            yterm = ashock[:, t] * k_cross[t, :]**self.mparam.theta
+            n = (self.mparam.nu * yterm / wage)**(1 / (1 - self.mparam.nu))
+            y = yterm * n**self.mparam.nu
+            v0_temp = y - wage * n + (1 - self.mparam.delta) * k_cross
+            v0 = v0_temp * price
+            next_k = torch.argmax(value)
+            
+            k_cross = self.policy_fn(full_state_dict)
+            
+            e0 = 
+    
+    def expected_value(self, model, P):
+        expec = model() @
+        
             
