@@ -40,7 +40,8 @@ class PolicyTrainer():
         self.decay_rate = self.policy_config["lr_end"] / self.policy_config["lr_beg"]
         self.mparam = init_ds.mparam
         d_in = self.config["n_basic"] + self.config["n_fm"] + self.config["n_gm"]
-        self.model = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
+        self.policy = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
+        self.policy_bi = util.BinaryClassificationModel(d_in, self.policy_config, name="p_net").to(self.device)
         if self.config["n_gm"] > 0:
             self.gm_model = util.GeneralizedMomModel(1, self.config["n_gm"], self.config["gm_config"], name="v_gm").to(self.device)
             # 両方のモデルのパラメータを集める
@@ -148,11 +149,13 @@ class KTPolicyTrainer(PolicyTrainer):
             y = yterm * n**self.mparam.nu
             v0_temp = y - wage * n + (1 - self.mparam.delta) * k_cross
             v0 = v0_temp * price
-            next_k = torch.argmax(value)
+            k_next = self.policy_fn(full_state_dict)
+            e0 = value_fn(k_next)
             
-            k_cross = self.policy_fn(full_state_dict)
             
-            e0 = 
+
+            
+            
     
     def expected_value(self, model, P):
         expec = model() @

@@ -2,22 +2,26 @@ import numpy as np
 from scipy.interpolate import RectBivariateSpline
 import torch
 
-def simul_shocks(n_sample, T, mparam, state_init=None):
-    n_agt = mparam.n_agt
-    ashock = np.zeros([n_sample, T])
-    if state_init:
-        # convert productivity to 0/1 variable
-        ashock[:, 0:1] = ((state_init["ashock"] - 1) / mparam.delta_a + 1) / 2
+def simul_shocks(n_sample, T, Z, Pi, state_init=None):
+    nz = len(Z)
+    ashock = np.zeros([n_sample, T], dtype=int)  # ショックインデックスの格納用
+    
+    if state_init is not None:
+        ashock[:, 0] = state_init  # 初期状態を設定
     else:
-        ashock[:, 0] = np.random.binomial(1, 0.5, n_sample)  # stationary distribution of Z is (0.5, 0.5)
+        # 初期状態をランダムに決定（均等分布）
+        ashock[:, 0] = np.random.choice(nz, size=n_sample)
     
     for t in range(1, T):
-        if_keep = np.random.binomial(1, 0.875, n_sample)  # prob for Z to stay the same is 0.875
-        ashock[:, t] = if_keep * ashock[:, t - 1] + (1 - if_keep) * (1 - ashock[:, t - 1])
+        for i in range(n_sample):
+            current_state = ashock[i, t - 1]
+            # 確率遷移行列 Pi に従って次の状態を決定
+            ashock[i, t] = np.random.choice(nz, p=Pi[current_state])
     
-    ashock = (ashock * 2 - 1) * mparam.delta_a + 1  # convert 0/1 variable to productivity
+    # ショックインデックスから実際のショック値に変換
+    ashock_values = Z[ashock]
     
-    return ashock
+    return ashock_values
 
 def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None): 
     if shocks:

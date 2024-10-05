@@ -22,18 +22,31 @@ class FeedforwardModel(nn.Module):
         # モデルの重みをロード
         self.load_state_dict(torch.load(path))
 
+class BinaryClassificationModel(FeedforwardModel):
+    def __init__(self, d_in, config, name="binarymodel"):
+        # 出力次元を1に設定
+        super(BinaryClassificationModel, self).__init__(d_in, 1, config, name)
+        # シグモイドアクティベーションを最終層に追加
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        logits = super(BinaryClassificationModel, self).forward(x)
+        probs = self.sigmoid(logits)
+        return probs
+
 class GeneralizedMomModel(FeedforwardModel):
-    def __init__(self, d_in, d_out, config, name="generalizedmomentmodel"):
-        super(GeneralizedMomModel, self).__init__(d_in, d_out, config, name=name)
+    def __init__(self, d_in, config, name="generalizedmomentmodel"):
+        super(GeneralizedMomModel, self).__init__(d_in, d_out=1, config=config, name=name)
 
     def basis_fn(self, x):
         return self.dense_layers(x)
 
     def forward(self, x):
-        x = self.basis_fn(x)
-        gm = torch.mean(x, dim=-2, keepdim=True)
-        gm = gm.repeat(1, x.shape[-2], 1)
+        x = self.basis_fn(x)  # [batch_size, 1]
+        gm = torch.mean(x, dim=-2, keepdim=True)  # 平均を計算
+        gm = gm.repeat(1, x.shape[-2], 1)  # 必要に応じて繰り返し
         return gm
+
     
 class PriceModel(FeedforwardModel):
     def __init__(self, d_in, d_out, config, name="pricemodel"):
