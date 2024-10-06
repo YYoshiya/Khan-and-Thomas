@@ -31,7 +31,7 @@ class PolicyTrainer():
         self.config = init_ds.config
         self.policy_config = self.config["policy_config"]
         self.t_unroll = self.policy_config["t_unroll"]
-        self.vtrainers = vtrainers
+        self.value = util.FeedforwardModel(d_in, 1, self.policy_config, name="value_net").to(self.device)
         self.valid_size = self.policy_config["valid_size"]
         self.sgm_scale = self.policy_config["sgm_scale"] # scaling param in sigmoid
         self.init_ds = init_ds
@@ -120,13 +120,25 @@ class KTPolicyTrainer(PolicyTrainer):
             policy_type = "nn_share"
         self.policy_ds = self.init_ds.get_policydataset(init_policy, policy_type, update_init=False)
         
-    def loss(self, input_data):
+
+    def create_data(self, input_data):
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
-        price = input_data["price"]
-        util_sum = 0
         for t in range(self.t_unroll):
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)
+            a_tmp = torch.unsqueeze(a_tmp, 2)
+            basic_s_tmp = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
+            full_state_dict = {
+                "basic_s": basic_s_tmp,
+                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
+            }
+        return full_state_dict
+
+    def loss1(self, input_data): #vを最大にするpolicyを学習するためのlossを計算。
+        k_cross = input_data["k_cross"]
+        ashock = input_data["ashock"]
+        for t in range(self.t_unroll):
+            a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
             basic_s_tmp = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
             full_state_dict = {
@@ -139,7 +151,45 @@ class KTPolicyTrainer(PolicyTrainer):
                     value += self.init_ds.unnormalize_data(
                         vtr.value_fn(full_state_dict)[..., 0], key="value", withtf=True)
                 value /= self.num_vnet
-                util_sum += self.discount[t]*value
+                continue
+            k_cross = self.policy_fn(full_state_dict)
+
+        loss1 = value
+            
+
+
+
+
+    def loss2(self, input_data):
+        k_cross = input_data["k_cross"]
+        ashock = input_data["ashock"]
+        price = input_data["price"]
+        for t in range(self.t_unroll):
+            a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
+            a_tmp = torch.unsqueeze(a_tmp, 2)
+            basic_s_tmp = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
+            full_state_dict = {
+                "basic_s": basic_s_tmp,
+                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
+            }
+            if t == self.t_unroll - 1:
+                e0 = self.mparam.GAMY * price * k_cross + self.mparam.BETA * value(full_state_dict)
+                a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
+                a_tmp = torch.unsqueeze(a_tmp, 2)
+                basic_s_tmp = torch.cat([torch.unsqueeze(k_cross_pre, axis=-1), a_tmp], axis=-1)
+                full_state_dict_e1 = {
+                    "basic_s": basic_s_tmp,
+                    "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross_pre, axis=-1), key="agt_s", withtf=True)
+                }
+                e1 = -price * (1-self.mparam.delta) * k_cross_pre + self.mparam.BETA * value(full_state_dict_e1)
+                xitemp = (e0 - e1)/(price * wage)
+                xi = min(B, max(0, xitemp))
+                value = 0
+                for vtr in self.vtrainers:
+                    value += self.init_ds.unnormalize_data(
+                        vtr.value_fn(full_state_dict)[..., 0], key="value", withtf=True)
+                value /= self.num_vnet
+                loss2 = v0 - price * wage * xi **2 / (2 * B) + xi / B * e0 + (1 - xi / B) * e1
                 continue
             
             price = price_fn(k_cross)
@@ -149,8 +199,10 @@ class KTPolicyTrainer(PolicyTrainer):
             y = yterm * n**self.mparam.nu
             v0_temp = y - wage * n + (1 - self.mparam.delta) * k_cross
             v0 = v0_temp * price
-            k_next = self.policy_fn(full_state_dict)
-            e0 = value_fn(k_next)
+            k_cross_pre = k_cross
+            k_cross = self.policy_fn(full_state_dict)
+        
+        return loss2
             
             
 
