@@ -22,7 +22,7 @@ def simul_shocks(n_sample, T, Z, Pi, state_init=None):
     ashock_values = Z[ashock]
     
     return ashock_values
-
+#CPUに移すのとか忘れずに。
 def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None): 
     if shocks:
         ashock = shocks
@@ -62,7 +62,7 @@ def price_train(n_sample, T, mparam, policy, policy_type, price_fn, state_init=N
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    
+
 
 
 # value, policyが学習されないようにする必要あり。
