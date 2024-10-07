@@ -42,14 +42,18 @@ class PolicyTrainer():
         d_in = self.config["n_basic"] + self.config["n_fm"] + self.config["n_gm"]
         self.policy = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
         self.policy_bi = util.BinaryClassificationModel(d_in, self.policy_config, name="p_net").to(self.device)
-        if self.config["n_gm"] > 0:
-            self.gm_model = util.GeneralizedMomModel(1, self.config["n_gm"], self.config["gm_config"], name="v_gm").to(self.device)
-            # 両方のモデルのパラメータを集める
-            params = list(self.model.parameters()) + list(self.gm_model.parameters())
-        else:
-            params = self.model.parameters()
+        self.gm_model = util.GeneralizedMomModel(1, self.config["n_gm"], self.config["gm_config"], name="v_gm").to(self.device)
+        # 両方のモデルのパラメータを集める
+        params = list(self.policy.parameters()) + list(self.gm_model.parameters())
+        params_bi = list(self.policy_bi.parameters()) + list(self.gm_model.parameters())
         self.optimizer = optim.Adam(
                 params,
+                lr=self.policy_config["lr_beg"],
+                betas=(0.99, 0.99),
+                eps=1e-8
+            )
+        self.optimizer_bi = optim.Adam(
+                params_bi,
                 lr=self.policy_config["lr_beg"],
                 betas=(0.99, 0.99),
                 eps=1e-8
@@ -80,7 +84,7 @@ class PolicyTrainer():
     
     def train(self, n_epoch, batch_size=None):
         valid_data = {k: torch.tensor(self.init_ds.datadict[k], dtype=TORCH_DTYPE) for k in self.init_ds.keys}
-        ashock, ishock = KS.simul_shocks(
+        ashock, ishock = KT.simul_shocks(
             self.valid_size, self.t_unroll, self.mparam,
             state_init=self.init_ds.datadict
         )
@@ -95,10 +99,16 @@ class PolicyTrainer():
                 train_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
                 # トレーニングステップを実行
                 self.optimizer.zero_grad()
-                output_dict = self.loss(train_data)
-                loss = output_dict["m_util"]
-                loss.backward()
+                loss1 = self.loss1(train_data)
+                loss1.backward()
                 self.optimizer.step()
+            for train_data in train_datasets:
+                train_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
+                # トレーニングステップを実行
+                self.optimizer_bi.zero_grad()
+                loss2 = self.loss2(train_data)
+                loss2.backward()
+                self.optimizer_bi.step()
             if n > 0 and n % 24 == 0:
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(update_init)
