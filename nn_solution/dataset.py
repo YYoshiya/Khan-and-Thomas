@@ -149,3 +149,129 @@ class InitDataSet(DataSetwithStats):
             policy, policy_type, state_init=state_init
         )
         self.update_from_simul(simul_data)
+    
+    def update_from_simul(self, simul_data):
+        init_datadict = dict((k, simul_data[k][..., -1].copy()) for k in self.keys)
+        for k in self.keys:
+            if len(init_datadict[k].shape) == 1:
+                init_datadict[k] = init_datadict[k][:, None] # for macro init state like N in JFV
+        notnan = ~(np.isnan(init_datadict["k_cross"]).any(axis=1))
+        if np.sum(~notnan) > 0:
+            num_nan = np.sum(~notnan)
+            num_total = notnan.shape[0]
+            print("Warning: {} of {} init samples are nan!".format(num_nan, num_total))
+            idx = np.where(notnan)[0]
+            idx = np.concatenate([idx, idx[:num_nan]])
+            for k in self.keys:
+                init_datadict[k] = init_datadict[k][idx]
+        self.update_datadict(init_datadict)
+    
+    def process_vdatadict(self, v_datadict):
+        idx_nan = np.logical_or(
+            np.isnan(v_datadict["basic_s"]).any(axis=(1, 2)),
+            np.isnan(v_datadict["value"]).any(axis=(1, 2))
+        )
+        ma = self.config["dataset_config"]["moving_average"]
+        for key, array in v_datadict.items():
+            array = array[~idx_nan].astype(NP_DTYPE)
+            self.update_stats(array, key, ma)
+            v_datadict[key] = self.normalize_data(array, key)
+        print("Average of total utility %f." % (self.stats_dict["value"][0][0]))
+
+        valid_size = self.config["value_config"]["valid_size"]
+        n_sample = v_datadict["value"].shape[0]
+        if valid_size > 0.2*n_sample:
+            valid_size = int(0.2*n_sample)
+            print("Valid size is reduced to %d according to small data size!" % valid_size)
+        print("The dataset has %d samples in total." % n_sample)
+        dataset = CustomDataset(v_datadict)
+        train_size = n_sample - valid_size
+        train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
+        batch_size = self.config["value_config"]["batch_size"]
+        train_vdataset = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+        valid_vdataset = DataLoader(valid_dataset, batch_size=valid_size, shuffle=False)
+        
+        return train_vdataset, valid_vdataset
+    
+    def get_policydataset(self, policy, policy_type, update_init=False):
+        policy_config = self.config["policy_config"]
+        simul_data = self.simul_k_func(
+            self.n_path, policy_config["T"], self.mparam, policy, policy_type,
+            state_init=self.datadict
+        )
+        if update_init:
+            self.update_from_simul(simul_data)
+        p_datadict = {}
+        idx_nan = False
+        for k in self.keys:
+            arr = simul_data[k].astype(NP_DTYPE)
+            arr = arr[..., slice(-policy_config["t_sample"], -1, policy_config["t_skip"])]
+            if len(arr.shape) == 3:
+                arr = np.swapaxes(arr, 1, 2)
+                arr = np.reshape(arr, (-1, self.mparam.n_agt))
+                if k != "ishock":
+                    idx_nan = np.logical_or(idx_nan, np.isnan(arr).any(axis=1))
+            else:
+                arr = np.reshape(arr, (-1, 1))
+                if k != "ashock":
+                    idx_nan = np.logical_or(idx_nan, np.isnan(arr[:, 0]))
+            p_datadict[k] = arr
+        for k in self.keys:
+            p_datadict[k] = p_datadict[k][~idx_nan]
+        if policy_config["opt_type"] == "game":
+            p_datadict = crazyshuffle(p_datadict)
+        policy_ds = BasicDataSet(p_datadict)
+        return policy_ds
+    
+    def simul_k_func(self, n_sample, T, mparam, c_policy, policy_type, state_init=None, shocks=None):
+        raise NotImplementedError
+    
+class KSInitDataSet(InitDataSet):
+    def __init__(self, mparam, config):
+        super().__init__(mparam, config)
+        mats = sio.loadmat(mparam.mats_path)
+        self.splines = KT.construct_bspl(mats)
+        self.keys = ["k_cross", "ashock", "ishock"]
+        self.k_policy_bchmk = lambda k_cross, ashock, ishock: KT.k_policy_bspl(k_cross, ashock, ishock, self.splines)
+        # the first burn for initialization
+        self.update_with_burn(self.k_policy_bchmk, "pde")
+
+    def get_valuedataset(self, policy, policy_type, update_init=False):
+        value_config = self.config["value_config"]
+        t_count = value_config["t_count"]
+        t_skip = value_config["t_skip"]
+        simul_data = self.simul_k_func(
+            self.n_path, value_config["T"], self.mparam, policy, policy_type,
+            state_init=self.datadict
+        )
+        if update_init:
+            self.update_from_simul(simul_data)
+        
+        ashock = simul_data["ashock"]
+        k_cross = simul_data["k_cross"]
+        profit = simul_data["v0"]
+        k_mean = np.mean(k_cross, axis=1, keepdims=True)
+        discount = np.power(self.mparam.beta, np.arange(t_count))
+
+        basic_s = np.zeros(shape=[0, self.mparam.n_agt, self.n_basic+1])
+        agt_s = np.zeros(shape=[0, self.mparam.n_agt, 1])
+        value = np.zeros(shape=[0, self.mparam.n_agt, 1])
+        t_idx = 0
+        while t_idx + t_count < value_config["T"] - 1:
+            k_tmp = k_cross[:, :, t_idx:t_idx+1]
+            k_mean_tmp = np.repeat(k_mean[:, :, t_idx:t_idx+1], self.mparam.n_agt, axis=1)
+            a_tmp = np.repeat(ashock[:, t_idx:t_idx+1], self.mparam.n_agt, axis=1)
+            basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp, a_tmp], axis=-1, keepdims=True)
+            v_tmp = np.sum(profit[..., t_idx:t_idx+t_count] * discount, axis=-1, keepdims=True)
+            basic_s = np.concatenate([basic_s, k_cross[:, :, t_idx:t_idx+t_count]], axis=0)
+            agt_s = np.concatenate([agt_s, ashock[:, t_idx:t_idx+t_count, None]], axis=0)
+            value = np.concatenate([value, profit[:, t_idx:t_idx+t_count, None]], axis=0)
+            t_idx += t_skip
+        
+        v_datadict = {"basic_s": basic_s, "agt_s": agt_s, "value": value}
+        train_vdataset, valid_vdataset = self.process_vdatadict(v_datadict)
+        return train_vdataset, valid_vdataset
+    
+    def simul_k_func(self, n_sample, T, mparam, c_policy, policy_type, state_init=None, shocks=None):
+        return KT.simul_k(n_sample, T, mparam, c_policy, policy_type, price_fn, state_init, shocks)
+    
