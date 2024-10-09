@@ -58,3 +58,72 @@ def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None,
     simul_data = {"price": price, "wage": wage, "v0": v0, "k_cross": k_cross, "ashock": ashock}
             # 384*T, 384*T, 384*50*T, 384*50*T, 384*T
     return simul_data
+
+class PolicyDataset(Dataset):
+    def __init__(self, data):
+        """
+        data: numpy配列
+        入力 (X): grid_k, grid_K, ashock
+        ターゲット (y): grid_k
+        """
+        self.X = torch.tensor(data, dtype=torch.float32)        # grid_k, grid_K, ashock
+        self.y = torch.tensor(data[:, 0], dtype=torch.float32) # grid_k
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
+def initial_policy(model, mparam, num_epochs=100, batch_size=50):
+    # ショックをシミュレーション
+    ashock = simul_shocks(n_sample=1, T=500, Z=mparam, Pi=mparam.Pi, state_init=None)
+
+    # グリッドの作成
+    grid_k = np.linspace(0.1, 3.0, 100)
+    grid_K = np.linspace(1.0, 5.0, 10)
+
+    # grid_k と grid_K を500個に繰り返す
+    repeats_k = int(np.ceil(500 / len(grid_k)))
+    grid_k_seq = np.tile(grid_k, repeats_k)[:500]
+
+    repeats_K = int(np.ceil(500 / len(grid_K)))
+    grid_K_seq = np.tile(grid_K, repeats_K)[:500]
+
+    # ashock をフラットにして500個に切り取る
+    ashock_seq = ashock.flatten()[:500]
+
+    # 各シーケンスを列として結合
+    data = np.column_stack([grid_k_seq, grid_K_seq, ashock_seq])
+
+    # カスタムデータセットの作成
+    dataset = PolicyDataset(data)
+
+    # DataLoaderの作成
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    # モデル、損失関数、オプティマイザーの設定
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    # 学習ループの実装
+    for epoch in range(num_epochs):
+        model.train()
+        epoch_loss = 0.0
+        for batch_X, batch_y in dataloader:
+            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+
+            # フォワードパス
+            outputs = model(batch_X).squeeze()
+            loss = criterion(outputs, batch_y)
+
+            # バックワードパスとオプティマイザーのステップ
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item() * batch_X.size(0)
+
+        epoch_loss /= len(dataloader.dataset)
+        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}')

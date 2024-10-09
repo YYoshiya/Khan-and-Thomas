@@ -229,12 +229,9 @@ class InitDataSet(DataSetwithStats):
 class KTInitDataSet(InitDataSet):
     def __init__(self, mparam, config):
         super().__init__(mparam, config)
-        mats = sio.loadmat(mparam.mats_path)
-        self.splines = KT.construct_bspl(mats)
-        self.keys = ["k_cross", "ashock", "ishock"]
-        self.k_policy_bchmk = lambda k_cross, ashock: KT.k_policy_bspl(k_cross, ashock, self.splines)
-        # the first burn for initialization
-        self.update_with_burn(self.k_policy_bchmk, "pde")
+        self.policy_init_only = util.FeedforwardModel(3, 1, config["policy_config"], name="init_model")
+        KT.initial_policy(self.policy_init_only, mparam, num_epochs=100, batch_size=50)
+        self.update_with_burn(self.policy_init, "nn")
 
     def get_valuedataset(self, policy, policy_type, update_init=False):
         value_config = self.config["value_config"]
