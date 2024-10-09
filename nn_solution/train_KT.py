@@ -54,6 +54,7 @@ def main():
         policy_type = "nn_share"
     train_vds, valid_vds = init_ds.get_valuedataset(init_policy, policy_type, update_init=False)
     vtrainers = [ValueTrainer(config) for i in range(value_config["num_vnet"])]
+    
     for vtr in vtrainers:
         vtr.train(train_vds, valid_vds, value_config["num_epoch"], value_config["batch_size"])
     
