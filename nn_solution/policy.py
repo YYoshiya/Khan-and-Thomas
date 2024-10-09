@@ -135,7 +135,9 @@ class KTPolicyTrainer(PolicyTrainer):
         else:
             init_policy = self.init_ds.c_policy_const_share
             policy_type = "nn_share"
-        self.policy_ds = self.init_ds.get_policydataset(init_policy, policy_type, update_init=False)
+        KT.initial_policy(self.policy_true, self.mparam, num_epochs=100, batch_size=50)
+        KT.initial_policy(self.policy, self.mparam, num_epochs=100, batch_size=50)
+        self.policy_ds = self.init_ds.get_policydataset(self.policy_true, policy_type, update_init=False)
         
 
     def create_data(self, input_data):

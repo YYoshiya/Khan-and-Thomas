@@ -43,7 +43,7 @@ def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None,
     else:
         k_cross[:, :, 0] = mparam.k_ss
     
-    if policy_type == "nn":
+    if policy_type == "nn_share":
         for t in range(1, T):
             price = price_fn(k_cross[:, :, t-1])# 384*1
             wage = mparam.eta / price # 384*1
