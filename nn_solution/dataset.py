@@ -226,7 +226,7 @@ class InitDataSet(DataSetwithStats):
     def simul_k_func(self, n_sample, T, mparam, c_policy, policy_type, state_init=None, shocks=None):
         raise NotImplementedError
     
-class KSInitDataSet(InitDataSet):
+class KTInitDataSet(InitDataSet):
     def __init__(self, mparam, config):
         super().__init__(mparam, config)
         mats = sio.loadmat(mparam.mats_path)
@@ -274,5 +274,3 @@ class KSInitDataSet(InitDataSet):
     
     def simul_k_func(self, n_sample, T, mparam, c_policy, policy_type, state_init=None, shocks=None):
         return KT.simul_k(n_sample, T, mparam, c_policy, policy_type, price_fn, state_init, shocks)
-    
-    #コミットされてない
