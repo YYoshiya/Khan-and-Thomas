@@ -161,6 +161,7 @@ class KTPolicyTrainer(PolicyTrainer):
                     value += self.init_ds.unnormalize_data(
                         vtr.value_fn(full_state_dict)[..., 0], key="value", withtf=True)
                 value /= self.num_vnet
+                util_sum +=  self.discount[t] * value
                 continue
             k_cross = self.policy_fn(full_state_dict)
 
@@ -183,7 +184,7 @@ class KTPolicyTrainer(PolicyTrainer):
                 "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
             }
             if t == self.t_unroll - 1:
-                e0 = self.mparam.GAMY * price * k_cross + self.mparam.BETA * value(full_state_dict)
+                e0 = -self.mparam.GAMY * price * k_cross + self.mparam.BETA * value(full_state_dict)
                 a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
                 a_tmp = torch.unsqueeze(a_tmp, 2)
                 basic_s_tmp = torch.cat([torch.unsqueeze(k_cross_pre, axis=-1), a_tmp], axis=-1)

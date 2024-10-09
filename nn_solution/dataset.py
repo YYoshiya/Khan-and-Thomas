@@ -232,7 +232,7 @@ class KTInitDataSet(InitDataSet):
         mats = sio.loadmat(mparam.mats_path)
         self.splines = KT.construct_bspl(mats)
         self.keys = ["k_cross", "ashock", "ishock"]
-        self.k_policy_bchmk = lambda k_cross, ashock, ishock: KT.k_policy_bspl(k_cross, ashock, ishock, self.splines)
+        self.k_policy_bchmk = lambda k_cross, ashock: KT.k_policy_bspl(k_cross, ashock, self.splines)
         # the first burn for initialization
         self.update_with_burn(self.k_policy_bchmk, "pde")
 
