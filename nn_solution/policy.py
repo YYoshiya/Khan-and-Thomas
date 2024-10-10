@@ -156,10 +156,8 @@ class KTPolicyTrainer(PolicyTrainer):
         else:
             init_policy = self.init_ds.c_policy_const_share
             policy_type = "nn_share"
-        KT.initial_policy(self.policy_true, self.mparam, num_epochs=100, batch_size=50)
-        KT.initial_policy(self.policy, self.mparam, num_epochs=100, batch_size=50)
-        self.price_loss_training_loop(self.n_sample_price, self.T_price, self.mparam, batch_size=64, state_init=None, shocks=None)
-        self.policy_ds = self.init_ds.get_policydataset(self.policy_true, policy_type, self.price_model, update_init=False)
+        self.price_loss_training_loop(self.n_sample_price, self.T_price, self.mparam, init_ds.policy_init_only, self.price_model, batch_size=64, state_init=None, shocks=None)
+        self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_model, init=True, update_init=False)
         
 
     def create_data(self, input_data):
@@ -249,7 +247,7 @@ class KTPolicyTrainer(PolicyTrainer):
         return loss
     
 
-    def price_loss_training_loop(self, n_sample, T, mparam, batch_size=64, state_init=None, shocks=None):
+    def price_loss_training_loop(self, n_sample, T, mparam, policy_fn, price_fn, optimizer, batch_size=64, state_init=None, shocks=None):
         # デバイスの設定
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {device}")
@@ -277,14 +275,14 @@ class KTPolicyTrainer(PolicyTrainer):
         
         for t in range(1, T):
             k_prev = k_cross[:, :, t-1]  # 前の時間ステップの資本 [n_sample, n_agt]
-            price = self.price_model(k_prev)      # 価格 [n_sample, n_agt]
+            price = price_fn(k_prev)      # 価格 [n_sample, n_agt]
             wage = mparam.eta / price      # 賃金 [n_sample, n_agt]
             yterm = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta  
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))      
             y = yterm * n**mparam.nu                                    
             
             # 政策関数を用いて次期資本を決定
-            k_cross[:, :, t] = self.policy_true(k_prev, ashock[:, t-1])                   
+            k_cross[:, :, t] = self.policy_fn(k_prev, ashock[:, t-1])                   
 
             # 投資と消費の計算
             inow = mparam.GAMY * k_cross[:,:,t] - (1 - mparam.delta) * k_prev   
@@ -302,7 +300,6 @@ class KTPolicyTrainer(PolicyTrainer):
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
         # トレーニングループ
-        optimizer = self.optimizer_price
         self.price_model.train()  # モデルをトレーニングモードに設定
         for epoch in range(mparam.num_epochs):
             print(f"Epoch {epoch+1}/{mparam.num_epochs}")
@@ -316,6 +313,22 @@ class KTPolicyTrainer(PolicyTrainer):
                     print(f"  Batch {batch_idx}/{len(dataloader)}: Loss = {loss.item():.6f}")
         
         print("Training completed.")
+    
+    def current_policy(self, k_cross, ashock):
+        k_mean = torch.mean(k_cross, dim=1, keepdim=True)
+        k_mean = torch.repeat_interleave(k_mean, self.mparam.n_agt, dim=1)
+        ashock = torch.repeat_interleave(ashock, self.mparam.n_agt, dim=1)
+        basic_s = torch.cat([k_cross, k_mean, ashock], dim=-1)
+        basic_s = self.normalize_data(basic_s, key="basic_s", withtf=True)
+        agt_s = self.normalize_data(k_cross, key="agt_s", withtf=True)
+        
+        full_state_dict = {
+            "basic_s": basic_s,
+            "agt_s": agt_s
+        }
+        
+        output = self.policy_fn(full_state_dict)[..., 0]
+        return output
 
 
             
