@@ -207,6 +207,7 @@ class KTPolicyTrainer(PolicyTrainer):
             }
             
             if t == self.t_unroll - 1:
+                wage = self.mparam.eta / price
                 e0 = -self.mparam.GAMY * price * k_cross + self.mparam.BETA * self.init_ds.unnormalize_data(value(full_state_dict), withth=True)
                 a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
                 a_tmp = torch.unsqueeze(a_tmp, 2)
@@ -217,8 +218,8 @@ class KTPolicyTrainer(PolicyTrainer):
                 }
                 e1 = -price * (1-self.mparam.delta) * k_cross_pre + self.mparam.BETA * self.init_ds.unnormalize_data(value(full_state_dict_e1), withth=True)
                 xitemp = (e0 - e1)/(price * wage)
-                xi = min(B, max(0, xitemp))
-                alpha = xi / B
+                xi = min(self.mparam.B, max(0, xitemp))
+                alpha = xi / self.mparam.B
                 value = 0
                 true_policy = alpha * k_cross + (1 - alpha) * (1-self.mparam.delta) * k_cross_pre
                 
@@ -227,10 +228,10 @@ class KTPolicyTrainer(PolicyTrainer):
                     "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
                 }
                 
-                loss = torch.mean((true_policy - policy(full_state_dict_loss))**2)
+                loss = torch.mean((true_policy - self.policy_true(full_state_dict_loss))**2)
                 continue
             
-            price = price_fn(k_cross)
+            price = self.price_model(k_cross)
             k_cross_pre = k_cross
             k_cross = self.policy_fn(full_state_dict)
         
@@ -250,7 +251,7 @@ class KTPolicyTrainer(PolicyTrainer):
             if state_init:
                 assert torch.all(ashock[:, 0:1] == state_init["ashock"].to(device)), "Shock inputs are inconsistent with state_init"
         else:
-            ashock = simul_shocks(n_sample, T, mparam, state_init).to(device)
+            ashock = KT.simul_shocks(n_sample, T, mparam, state_init).to(device)
         
         # エージェント数の取得
         n_agt = mparam.n_agt  # 例: エージェント数
@@ -268,15 +269,15 @@ class KTPolicyTrainer(PolicyTrainer):
                 k_prev = k_cross[:, :, t-1]  # 前の時間ステップの資本 [n_sample, n_agt]
                 price = self.price_model(k_prev)      # 価格 [n_sample, n_agt]
                 wage = mparam.eta / price      # 賃金 [n_sample, n_agt]
-                yterm = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta  # 生産量 [n_sample, n_agt]
-                n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))      # 労働量 [n_sample, n_agt]
-                y = yterm * n**mparam.nu                                    # 総生産量 [n_sample, n_agt]
+                yterm = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta  
+                n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))      
+                y = yterm * n**mparam.nu                                    
                 
                 # 政策関数を用いて次期資本を決定
-                k_cross[:, :, t] = self.policy_true(k_prev, ashock[:, t-1])                   # [n_sample, n_agt]
+                k_cross[:, :, t] = self.policy_true(k_prev, ashock[:, t-1])                   
 
                 # 投資と消費の計算
-                inow = mparam.GAMY * k_next - (1 - mparam.delta) * k_prev   # 投資 [n_sample, n_agt]
+                inow = mparam.GAMY * k_cross[:,:,t] - (1 - mparam.delta) * k_prev   
                 ynow = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta * n**mparam.nu  # 消費 [n_sample, n_agt]
                 Cnow = ynow - inow                                           # 消費量 [n_sample, n_agt]
                 
@@ -284,18 +285,15 @@ class KTPolicyTrainer(PolicyTrainer):
                 price_target = 1 / Cnow                                       # 目標価格 [n_sample, n_agt]
                 
                 # 現在の価格と目標価格の二乗誤差を計算
-                loss_t = (price - price_target)**2                            # [n_sample, n_agt]
+                loss_t = (price - price_target)**2                            
         
         # DataLoaderの作成
-        dataset = CustomDataset(per_step_losses)
+        dataset = CustomDataset(loss_t)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
-        
-        # オプティマイザの初期化（必要に応じて）
-        # 例: optimizer = torch.optim.Adam(price_fn.parameters(), lr=1e-3)
-        
+
         # トレーニングループ
         optimizer = self.optimizer_price
-        price_fn.train()  # モデルをトレーニングモードに設定
+        self.price_model.train()  # モデルをトレーニングモードに設定
         for epoch in range(mparam.num_epochs):
             print(f"Epoch {epoch+1}/{mparam.num_epochs}")
             for batch_idx, (batch_loss,) in enumerate(dataloader):
@@ -311,112 +309,105 @@ class KTPolicyTrainer(PolicyTrainer):
 
 
             
-def price_train(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
-    loss = price_loss1(n_sample, T, mparam, policy, policy_type, price_fn, state_init, shocks)
-    optimizer_price.zero_grad()
-    loss.backward()
-    optimizer_price.step()
-
-
 
 # value, policyが学習されないようにする必要あり。
 # 真のpolicyがalphaを考慮してるからここでは真のpolicyを流してよさそう。
 #k_crossを384, 50, 32にして32*384, 50
 #↑いや384, 50, 500にしてシャッフルしてやるわ。
-def price_loss1(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
-    if shocks:
-        ashock = shocks
-    
-        assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
-        assert T == ashock.shape[1], "T is inconsistent with given shocks."
-        if state_init:
-            assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
-                "Shock inputs are inconsistent with state_init"
-    else:
-        ashock = simul_shocks(n_sample, T, mparam, state_init)
-    
-    k_cross = np.zeros([n_sample, n_agt, T])
-    if state_init:
-        assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
-        k_cross[:, :, 0] = state_init["k_cross"]
-    else:
-        k_cross[:, :, 0] = mparam.k_ss
-        
-    if policy_type == "nn":
-        for t in range(1, T):
-            price = price_fn(k_cross[:, :, t-1])# 384*1
-            wage = mparam.eta / price # 384*1
-            yterm = ashock[:, t-1] * k_cross[:, :, t-1]**mparam.theta # 384*50
-            n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
-            y = yterm * n**mparam.nu
-            k_cross_pre = k_cross[:, :, t-1]
-            k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])# 384*50
-            inow = mparam.GAMY * k_cross - (1 - mparam.delta) * k_cross_pre
-            ynow = ashock[:, t-1] * k_cross_pre**mparam.theta * n**mparam.nu
-            
-        Inow = torch.sum(inow, axis=1)
-        Ynow = torch.sum(ynow, axis=1)
-        Cnow = Ynow - Inow
-        price1 = 1 / Cnow 
-        loss = torch.mean((price - price1)**2)
 
-    return  loss
+    # def price_loss1(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
+    #     if shocks:
+    #         ashock = shocks
+    #     
+    #         assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
+    #         assert T == ashock.shape[1], "T is inconsistent with given shocks."
+    #         if state_init:
+    #             assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
+    #                 "Shock inputs are inconsistent with state_init"
+    #     else:
+    #         ashock = simul_shocks(n_sample, T, mparam, state_init)
+    #     
+    #     k_cross = np.zeros([n_sample, n_agt, T])
+    #     if state_init:
+    #         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
+    #         k_cross[:, :, 0] = state_init["k_cross"]
+    #     else:
+    #         k_cross[:, :, 0] = mparam.k_ss
+    #         
+    #     if policy_type == "nn":
+    #         for t in range(1, T):
+    #             price = price_fn(k_cross[:, :, t-1])# 384*1
+    #             wage = mparam.eta / price # 384*1
+    #             yterm = ashock[:, t-1] * k_cross[:, :, t-1]**mparam.theta # 384*50
+    #             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
+    #             y = yterm * n**mparam.nu
+    #             k_cross_pre = k_cross[:, :, t-1]
+    #             k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])# 384*50
+    #             inow = mparam.GAMY * k_cross - (1 - mparam.delta) * k_cross_pre
+    #             ynow = ashock[:, t-1] * k_cross_pre**mparam.theta * n**mparam.nu
+    #             
+    #         Inow = torch.sum(inow, axis=1)
+    #         Ynow = torch.sum(ynow, axis=1)
+    #         Cnow = Ynow - Inow
+    #         price1 = 1 / Cnow 
+    #         loss = torch.mean((price - price1)**2)
+    #
+    #     return  loss
             
         
-def price_loss(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
-    if shocks:
-        ashock = shocks
-    
-        assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
-        assert T == ashock.shape[1], "T is inconsistent with given shocks."
-        if state_init:
-            assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
-                "Shock inputs are inconsistent with state_init"
-    else:
-        ashock = simul_shocks(n_sample, T, mparam, state_init)
-    
-    k_cross = np.zeros([n_sample, n_agt, T])
-    if state_init:
-        assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
-        k_cross[:, :, 0] = state_init["k_cross"]
-    else:
-        k_cross[:, :, 0] = mparam.k_ss
-    
-    if policy_type == "nn":
-        for t in range(1, T):
-            price = price_fn(k_cross[:, :, t-1])# 384*1
-            wage = mparam.eta / price # 384*1
-            yterm = ashock[:, t-1] * k_cross[:, :, t-1]**mparam.theta # 384*50
-            n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
-            y = yterm * n**mparam.nu
-            k_cross_pre = k_cross[:, :, t-1]
-            k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])# 384*50
-            a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
-            a_tmp = torch.unsqueeze(a_tmp, 2)
-            basic_s_tmp = torch.cat([torch.unsqueeze(k_cross[:,:,t], axis=-1), a_tmp], axis=-1)
-            full_state_dict = {
-                "basic_s": basic_s_tmp,
-                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross[:,:,t], axis=-1), key="agt_s", withtf=True)
-            }
-            e0 = -mparam.GAMY * price * k_cross + mparam.BETA * value(full_state_dict)
-            basic_s_tmp_e1 = torch.cat([torch.unsqueeze(k_cross_pre, axis=-1), a_tmp], axis=-1)
-            full_state_dict_e1 = {
-                "basic_s": basic_s_tmp_pre,
-                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross_pre, axis=-1), key="agt_s", withtf=True)
-            }
-            e1 = mparam.p * (1 - mparam.delta) * k_cross_pre + mparam.BETA * value(full_state_dict_e1)
-            xitemp = (e0 - e1)/(price * wage)
-            xi = min(B, max(0, xitemp))
-            alpha = xi / B
-            inow = alpha * (mparam.GAMY * k_cross - (1 - mparam.delta) * k_cross_pre)
-            ynow = ashock[:, t-1] * k_cross_pre**mparam.theta * n**mparam.nu
-            nnow = n + xi**2/(2*B)
-        
-        Inow = torch.sum(inow, axis=1)
-        Ynow = torch.sum(ynow, axis=1)
-        Cnow = Ynow - Inow
-        price1 = 1 / Cnow #n_sample, Tになってて欲しい。
-        loss = torch.mean((price - price1)**2)
-
-    return  loss
-            
+# def price_loss(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
+#     if shocks:
+#         ashock = shocks
+#     
+#         assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
+#         assert T == ashock.shape[1], "T is inconsistent with given shocks."
+#         if state_init:
+#             assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
+#                 "Shock inputs are inconsistent with state_init"
+#     else:
+#         ashock = simul_shocks(n_sample, T, mparam, state_init)
+#     
+#     k_cross = np.zeros([n_sample, n_agt, T])
+#     if state_init:
+#         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
+#         k_cross[:, :, 0] = state_init["k_cross"]
+#     else:
+#         k_cross[:, :, 0] = mparam.k_ss
+#     
+#     if policy_type == "nn":
+#         for t in range(1, T):
+#             price = price_fn(k_cross[:, :, t-1])# 384*1
+#             wage = mparam.eta / price # 384*1
+#             yterm = ashock[:, t-1] * k_cross[:, :, t-1]**mparam.theta # 384*50
+#             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
+#             y = yterm * n**mparam.nu
+#             k_cross_pre = k_cross[:, :, t-1]
+#             k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])# 384*50
+#             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
+#             a_tmp = torch.unsqueeze(a_tmp, 2)
+#             basic_s_tmp = torch.cat([torch.unsqueeze(k_cross[:,:,t], axis=-1), a_tmp], axis=-1)
+#             full_state_dict = {
+#                 "basic_s": basic_s_tmp,
+#                 "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross[:,:,t], axis=-1), key="agt_s", withtf=True)
+#             }
+#             e0 = -mparam.GAMY * price * k_cross + mparam.BETA * value(full_state_dict)
+#             basic_s_tmp_e1 = torch.cat([torch.unsqueeze(k_cross_pre, axis=-1), a_tmp], axis=-1)
+#             full_state_dict_e1 = {
+#                 "basic_s": basic_s_tmp_pre,
+#                 "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross_pre, axis=-1), key="agt_s", withtf=True)
+#             }
+#             e1 = mparam.p * (1 - mparam.delta) * k_cross_pre + mparam.BETA * value(full_state_dict_e1)
+#             xitemp = (e0 - e1)/(price * wage)
+#             xi = min(B, max(0, xitemp))
+#             alpha = xi / B
+#             inow = alpha * (mparam.GAMY * k_cross - (1 - mparam.delta) * k_cross_pre)
+#             ynow = ashock[:, t-1] * k_cross_pre**mparam.theta * n**mparam.nu
+#             nnow = n + xi**2/(2*B)
+#         
+#         Inow = torch.sum(inow, axis=1)
+#         Ynow = torch.sum(ynow, axis=1)
+#         Cnow = Ynow - Inow
+#         price1 = 1 / Cnow #n_sample, Tになってて欲しい。
+#         loss = torch.mean((price - price1)**2)
+# 
+#     return  loss

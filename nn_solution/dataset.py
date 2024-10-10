@@ -6,6 +6,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 import scipy.io as sio
 import simulation_KT as KT
+import util
 
 DTYPE = "float32"
 if DTYPE == "float64":
@@ -218,8 +219,8 @@ class InitDataSet(DataSetwithStats):
             p_datadict[k] = arr
         for k in self.keys:
             p_datadict[k] = p_datadict[k][~idx_nan]
-        if policy_config["opt_type"] == "game":
-            p_datadict = crazyshuffle(p_datadict)
+        #if policy_config["opt_type"] == "game":
+            #p_datadict = crazyshuffle(p_datadict)
         policy_ds = BasicDataSet(p_datadict)
         return policy_ds
     
@@ -260,14 +261,14 @@ class KTInitDataSet(InitDataSet):
             a_tmp = np.repeat(ashock[:, t_idx:t_idx+1], self.mparam.n_agt, axis=1)
             basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp, a_tmp], axis=-1, keepdims=True)
             v_tmp = np.sum(profit[..., t_idx:t_idx+t_count] * discount, axis=-1, keepdims=True)
-            basic_s = np.concatenate([basic_s, k_cross[:, :, t_idx:t_idx+t_count]], axis=0)
-            agt_s = np.concatenate([agt_s, ashock[:, t_idx:t_idx+t_count, None]], axis=0)
-            value = np.concatenate([value, profit[:, t_idx:t_idx+t_count, None]], axis=0)
+            basic_s = np.concatenate([basic_s, basic_s_tmp], axis=0)
+            agt_s = np.concatenate([agt_s, k_tmp], axis=0)
+            value = np.concatenate([value, v_tmp], axis=0)
             t_idx += t_skip
         
         v_datadict = {"basic_s": basic_s, "agt_s": agt_s, "value": value}
         train_vdataset, valid_vdataset = self.process_vdatadict(v_datadict)
         return train_vdataset, valid_vdataset
     
-    def simul_k_func(self, n_sample, T, mparam, c_policy, policy_type, state_init=None, shocks=None):
+    def simul_k_func(self, n_sample, T, mparam, c_policy, policy_type, price_fn, state_init=None, shocks=None):
         return KT.simul_k(n_sample, T, mparam, c_policy, policy_type, price_fn, state_init, shocks)
