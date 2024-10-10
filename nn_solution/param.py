@@ -1,4 +1,4 @@
-
+import numpy as np
 
 class KTParam():
     def __init__(self, n_agt, beta, mats_path):

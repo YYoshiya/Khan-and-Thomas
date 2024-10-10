@@ -22,18 +22,6 @@ class FeedforwardModel(nn.Module):
         # モデルの重みをロード
         self.load_state_dict(torch.load(path))
 
-class BinaryClassificationModel(FeedforwardModel):
-    def __init__(self, d_in, config, name="binarymodel"):
-        # 出力次元を1に設定
-        super(BinaryClassificationModel, self).__init__(d_in, 1, config, name)
-        # シグモイドアクティベーションを最終層に追加
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        logits = super(BinaryClassificationModel, self).forward(x)
-        probs = self.sigmoid(logits)
-        return probs
-
 class GeneralizedMomModel(FeedforwardModel):
     def __init__(self, d_in, config, name="generalizedmomentmodel"):
         super(GeneralizedMomModel, self).__init__(d_in, d_out=1, config=config, name=name)
@@ -54,3 +42,8 @@ class PriceModel(FeedforwardModel):
 
     def forward(self, x):
         return self.dense_layers(x)
+    
+def print_elapsedtime(delta):
+    hours, rem = divmod(delta, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print("Elapsed time: {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))

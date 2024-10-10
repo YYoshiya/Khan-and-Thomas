@@ -9,22 +9,20 @@ from torch.utils.data import Dataset, DataLoader
 def simul_shocks(n_sample, T, Z, Pi, state_init=None):
     nz = len(Z)
     ashock = np.zeros([n_sample, T], dtype=int)  # ショックインデックスの格納用
-    
+
     if state_init is not None:
         ashock[:, 0] = state_init  # 初期状態を設定
     else:
         # 初期状態をランダムに決定（均等分布）
         ashock[:, 0] = np.random.choice(nz, size=n_sample)
-    
+
     for t in range(1, T):
-        for i in range(n_sample):
-            current_state = ashock[i, t - 1]
-            # 確率遷移行列 Pi に従って次の状態を決定
-            ashock[i, t] = np.random.choice(nz, p=Pi[current_state])
-    
+        current_states = ashock[:, t - 1]
+        ashock[:, t] = [np.random.choice(nz, p=Pi[state]) for state in current_states]
+
     # ショックインデックスから実際のショック値に変換
     ashock_values = Z[ashock]
-    
+
     return ashock_values
 
 #CPUに移すのとか忘れずに。
@@ -81,7 +79,7 @@ class PolicyDataset(Dataset):
 
 def initial_policy(model, mparam, num_epochs=100, batch_size=50):
     # ショックをシミュレーション
-    ashock = simul_shocks(n_sample=1, T=500, Z=mparam, Pi=mparam.Pi, state_init=None)
+    ashock = simul_shocks(n_sample=1, T=500, Z=mparam.Z, Pi=mparam.Pi, state_init=None)
 
     # グリッドの作成
     grid_k = np.linspace(0.1, 3.0, 100)

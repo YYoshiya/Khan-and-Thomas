@@ -43,7 +43,7 @@ def main():
             json.dump(config, f)
     
     start_time = time.time()
-    init_ds = KTInitDataSet(mparam, config["dataset_config"])
+    init_ds = KTInitDataSet(mparam, config)
     value_config = config["value_config"]
     if config["init_with_bchmk"]:
         init_policy = init_ds.k_policy_bchmk
