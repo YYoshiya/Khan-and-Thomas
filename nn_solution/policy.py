@@ -59,7 +59,7 @@ class PolicyTrainer():
         self.policy = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
         self.policy_true = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net_true").to(self.device)
         self.gm_model = util.GeneralizedMomModel(1, self.config["n_gm"], self.config["gm_config"], name="v_gm").to(self.device)
-        self.price_model = util.PriceModel(1, 1, self.policy_config, name="price_net").to(self.device)
+        self.price_model = util.PriceModel(1, 1, self.policy["price_config"], name="price_net").to(self.device)
         # 両方のモデルのパラメータを集める
         params = list(self.policy.parameters()) + list(self.gm_model.parameters())
         params_true = list(self.policy_true.parameters()) + list(self.gm_model.parameters())
@@ -153,7 +153,8 @@ class KTPolicyTrainer(PolicyTrainer):
             policy_type = "nn_share"
         KT.initial_policy(self.policy_true, self.mparam, num_epochs=100, batch_size=50)
         KT.initial_policy(self.policy, self.mparam, num_epochs=100, batch_size=50)
-        self.policy_ds = self.init_ds.get_policydataset(self.policy_true, policy_type, update_init=False)
+        self.price_loss_training_loop(self.n_sample_price, self.T_price, self.mparam, batch_size=64, state_init=None, shocks=None)
+        self.policy_ds = self.init_ds.get_policydataset(self.policy_true, policy_type, self.price_model, update_init=False)
         
 
     def create_data(self, input_data):

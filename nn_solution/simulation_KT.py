@@ -9,6 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 def simul_shocks(n_sample, T, Z, Pi, state_init=None):
     nz = len(Z)
     ashock = np.zeros([n_sample, T], dtype=int)  # ショックインデックスの格納用
+    Pi = Pi / Pi.sum(axis=1, keepdims=True)
 
     if state_init is not None:
         ashock[:, 0] = state_init  # 初期状態を設定
@@ -44,17 +45,18 @@ def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None,
         k_cross[:, :, 0] = state_init["k_cross"]
     else:
         k_cross[:, :, 0] = mparam.k_ss
-    
+    price_fn.to("cpu")
+    policy.to("cpu")
     if policy_type == "nn_share":
         for t in range(1, T):
-            price = price_fn(k_cross[:, :, t-1])# 384*1
+            price = price_fn(k_cross[:, :, t-1])# 384*1 #CPUへ
             wage = mparam.eta / price # 384*1
             yterm = ashock[:, t-1] * k_cross[:, :, t-1]**mparam.theta # 384*50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
             v0 = v0_temp * price # 384*50
-            k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])# 384*50
+            k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])# 384*50 #CPUへ
             
     
     simul_data = {"price": price, "v0": v0, "k_cross": k_cross, "ashock": ashock}
@@ -108,7 +110,7 @@ def initial_policy(model, mparam, num_epochs=100, batch_size=50):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-
+    model.to(device)
     # 学習ループの実装
     for epoch in range(num_epochs):
         model.train()

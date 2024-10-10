@@ -40,8 +40,14 @@ class PriceModel(FeedforwardModel):
     def __init__(self, d_in, d_out, config, name="pricemodel"):
         super(PriceModel, self).__init__(d_in, d_out, config, name=name)
 
-    def forward(self, x):
+    def basis_fn(self, x):
         return self.dense_layers(x)
+    
+    def forward(self, x):
+        x = self.basis_fn(x)
+        price = torch.mean(x, dim=-2, keepdim=True)
+        price = price.repeat(1, x.shape[-2], 1)
+    
     
 def print_elapsedtime(delta):
     hours, rem = divmod(delta, 3600)

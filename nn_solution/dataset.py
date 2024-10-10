@@ -140,14 +140,14 @@ class InitDataSet(DataSetwithStats):
             assert config["policy_config"]["update_init"], \
                 "Must update init data during learning if bchmk policy is not used for sampling init"
 
-    def update_with_burn(self, policy, policy_type, t_burn=None, state_init=None):
+    def update_with_burn(self, policy, policy_type, price_fn, t_burn=None, state_init=None):
         if t_burn is None:
             t_burn = self.t_burn
         if state_init is None:
             state_init = self.datadict
         simul_data = self.simul_k_func(
             self.n_path, t_burn, self.mparam,
-            policy, policy_type, state_init=state_init
+            policy, policy_type, price_fn, state_init=state_init
         )
         self.update_from_simul(simul_data)
     
@@ -194,10 +194,10 @@ class InitDataSet(DataSetwithStats):
         
         return train_vdataset, valid_vdataset
     
-    def get_policydataset(self, policy, policy_type, update_init=False):
+    def get_policydataset(self, policy, policy_type, price_fn, update_init=False):
         policy_config = self.config["policy_config"]
         simul_data = self.simul_k_func(
-            self.n_path, policy_config["T"], self.mparam, policy, policy_type,
+            self.n_path, policy_config["T"], self.mparam, policy, policy_type, price_fn,
             state_init=self.datadict
         )
         if update_init:
@@ -231,15 +231,16 @@ class KTInitDataSet(InitDataSet):
     def __init__(self, mparam, config):
         super().__init__(mparam, config)
         self.policy_init_only = util.FeedforwardModel(3, 1, config["policy_config"], name="init_model")
+        self.price_init_only = util.PriceModel(1, 1, config["price_config"], name="price_model")
         KT.initial_policy(self.policy_init_only, mparam, num_epochs=100, batch_size=50)
-        self.update_with_burn(self.policy_init, "nn")
+        self.update_with_burn(self.policy_init_only, "nn", self.price_init_only)
 
-    def get_valuedataset(self, policy, policy_type, update_init=False):
+    def get_valuedataset(self, policy, policy_type, price_fn, update_init=False):
         value_config = self.config["value_config"]
         t_count = value_config["t_count"]
         t_skip = value_config["t_skip"]
         simul_data = self.simul_k_func(
-            self.n_path, value_config["T"], self.mparam, policy, policy_type,
+            self.n_path, value_config["T"], self.mparam, policy, policy_type, price_fn,
             state_init=self.datadict
         )
         if update_init:

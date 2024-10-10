@@ -59,7 +59,9 @@
     "price_config": {
         "n_path": 64,
         "T": 1000,
-        "n_sample": 20
+        "n_sample": 20,
+        "net_width": [12, 12],
+        "activation": "tanh"
     },
     
     "simul_config": {
