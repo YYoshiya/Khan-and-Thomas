@@ -59,7 +59,7 @@ def main():
     n_sample_price = price_config["n_sample"]
     T_price = price_config["T"]
     ptrainer = KTPolicyTrainer(vtrainers, init_ds)
-    train_vds, valid_vds = init_ds.get_valuedataset(ptrainer.policy_true, "nn_share", ptrainer.price_model,update_init=False)
+    train_vds, valid_vds = init_ds.get_valuedataset(ptrainer.policy_fn_true, "nn_share", ptrainer.price_model,update_init=False)
     
     for vtr in vtrainers:
         vtr.train(train_vds, valid_vds, value_config["num_epoch"], value_config["batch_size"])

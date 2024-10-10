@@ -28,40 +28,50 @@ def simul_shocks(n_sample, T, Z, Pi, state_init=None):
 
 #CPUに移すのとか忘れずに。
 def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None): 
-    if shocks:
-        ashock = shocks
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
+    if shocks is not None:
+        ashock = torch.tensor(shocks, device=device)
         assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
         assert T == ashock.shape[1], "T is inconsistent with given shocks."
         if state_init:
-            assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
+            assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device)) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
+        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init).to(device)
+    
     n_agt = mparam.n_agt
-    k_cross = np.zeros([n_sample, n_agt, T])
+    k_cross = torch.zeros(n_sample, n_agt, T, device=device)
+    
     if state_init:
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
-        k_cross[:, :, 0] = state_init["k_cross"]
+        k_cross[:, :, 0] = torch.tensor(state_init["k_cross"], device=device)
     else:
-        k_cross[:, :, 0] = mparam.k_ss
-    price_fn.to("cpu")
-    policy.to("cpu")
+        k_cross[:, :, 0] = mparam.k_ss.to(device)
+    
+    price_fn.to(device)
+    policy.to(device)
+    
     if policy_type == "nn_share":
         for t in range(1, T):
-            price = price_fn(k_cross[:, :, t-1])# 384*1 #CPUへ
-            wage = mparam.eta / price # 384*1
-            yterm = ashock[:, t-1] * k_cross[:, :, t-1]**mparam.theta # 384*50
-            n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
+            price = price_fn(k_cross[:, :, t-1])
+            wage = mparam.eta / price
+            yterm = ashock[:, t-1].unsqueeze(1) * k_cross[:, :, t-1]**mparam.theta
+            n = (mparam.nu * yterm / wage.unsqueeze(1))**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
-            v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
-            v0 = v0_temp * price # 384*50
-            k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])# 384*50 #CPUへ
-            
+            v0_temp = y - wage.unsqueeze(1) * n + (1 - mparam.delta) * k_cross[:, :, t-1]
+            v0 = v0_temp * price.unsqueeze(1)
+            k_cross[:, :, t] = policy(k_cross[:, :, t - 1], ashock[:, t - 1])
     
-    simul_data = {"price": price, "v0": v0, "k_cross": k_cross, "ashock": ashock}
-            # 384*T, 384*T, 384*50*T, 384*50*T, 384*T
+    simul_data = {
+        "price": price.cpu().numpy(),
+        "v0": v0.cpu().numpy(),
+        "k_cross": k_cross.cpu().numpy(),
+        "ashock": ashock.cpu().numpy()
+    }
+    
     return simul_data
+
 
 class PolicyDataset(Dataset):
     def __init__(self, data):
