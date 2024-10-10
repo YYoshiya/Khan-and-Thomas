@@ -37,7 +37,7 @@ def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None,
             assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock = simul_shocks(n_sample, T, mparam, state_init)
+        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
     n_agt = mparam.n_agt
     k_cross = np.zeros([n_sample, n_agt, T])
     if state_init:
