@@ -43,6 +43,7 @@ class PolicyTrainer():
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.config = init_ds.config
         self.policy_config = self.config["policy_config"]
+        self.price_config = self.config["price_config"]
         self.t_unroll = self.policy_config["t_unroll"]
         self.value = util.FeedforwardModel(d_in, 1, self.policy_config, name="value_net").to(self.device)
         self.valid_size = self.policy_config["valid_size"]
@@ -52,6 +53,8 @@ class PolicyTrainer():
         self.num_vnet = len(vtrainers)
         self.decay_rate = self.policy_config["lr_end"] / self.policy_config["lr_beg"]
         self.mparam = init_ds.mparam
+        self.n_sample_price = self.price_config["n_sample"]
+        self.T_price = self.price_config["T"]
         d_in = self.config["n_basic"] + self.config["n_fm"] + self.config["n_gm"]
         self.policy = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
         self.policy_true = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net_true").to(self.device)
@@ -128,7 +131,7 @@ class PolicyTrainer():
                 loss2 = self.loss2(train_data)
                 loss2.backward()
                 self.optimizer_true.step()#この後にpriceの学習入れるべきじゃない？
-            price_loss_training_loop(n_sample, T, mparam, policy, policy_type, price_fn, optimizer, batch_size=64, state_init=None, shocks=None,)
+            self.price_loss_training_loop(self.n_sample_price, self.T_price, self.mparam, batch_size=64, state_init=None, shocks=None,)
             if n > 0 and n % 24 == 0:
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(update_init)
@@ -169,7 +172,9 @@ class KTPolicyTrainer(PolicyTrainer):
     def loss1(self, input_data): #vを最大にするpolicyを学習するためのlossを計算。
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
+        price = input_data["price"]
         for t in range(self.t_unroll):
+            price = price[:, t:t+1]
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
             basic_s_tmp = a_tmp
@@ -238,7 +243,7 @@ class KTPolicyTrainer(PolicyTrainer):
         return loss
     
 
-    def price_loss_training_loop(self, n_sample, T, mparam,  policy_type, batch_size=64, state_init=None, shocks=None):
+    def price_loss_training_loop(self, n_sample, T, mparam, batch_size=64, state_init=None, shocks=None):
         # デバイスの設定
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {device}")
@@ -264,28 +269,27 @@ class KTPolicyTrainer(PolicyTrainer):
         else:
             k_cross[:, :, 0] = mparam.k_ss.to(device)
         
-        if policy_type == "nn_share":
-            for t in range(1, T):
-                k_prev = k_cross[:, :, t-1]  # 前の時間ステップの資本 [n_sample, n_agt]
-                price = self.price_model(k_prev)      # 価格 [n_sample, n_agt]
-                wage = mparam.eta / price      # 賃金 [n_sample, n_agt]
-                yterm = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta  
-                n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))      
-                y = yterm * n**mparam.nu                                    
-                
-                # 政策関数を用いて次期資本を決定
-                k_cross[:, :, t] = self.policy_true(k_prev, ashock[:, t-1])                   
+        for t in range(1, T):
+            k_prev = k_cross[:, :, t-1]  # 前の時間ステップの資本 [n_sample, n_agt]
+            price = self.price_model(k_prev)      # 価格 [n_sample, n_agt]
+            wage = mparam.eta / price      # 賃金 [n_sample, n_agt]
+            yterm = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta  
+            n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))      
+            y = yterm * n**mparam.nu                                    
+            
+            # 政策関数を用いて次期資本を決定
+            k_cross[:, :, t] = self.policy_true(k_prev, ashock[:, t-1])                   
 
-                # 投資と消費の計算
-                inow = mparam.GAMY * k_cross[:,:,t] - (1 - mparam.delta) * k_prev   
-                ynow = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta * n**mparam.nu  # 消費 [n_sample, n_agt]
-                Cnow = ynow - inow                                           # 消費量 [n_sample, n_agt]
-                
-                # 目標価格の計算（例として1/Cnowとする）
-                price_target = 1 / Cnow                                       # 目標価格 [n_sample, n_agt]
-                
-                # 現在の価格と目標価格の二乗誤差を計算
-                loss_t = (price - price_target)**2                            
+            # 投資と消費の計算
+            inow = mparam.GAMY * k_cross[:,:,t] - (1 - mparam.delta) * k_prev   
+            ynow = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta * n**mparam.nu  # 消費 [n_sample, n_agt]
+            Cnow = ynow - inow                                           # 消費量 [n_sample, n_agt]
+            
+            # 目標価格の計算（例として1/Cnowとする）
+            price_target = 1 / Cnow                                       # 目標価格 [n_sample, n_agt]
+            
+            # 現在の価格と目標価格の二乗誤差を計算
+            loss_t = (price - price_target)**2                            
         
         # DataLoaderの作成
         dataset = CustomDataset(loss_t)

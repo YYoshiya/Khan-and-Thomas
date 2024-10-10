@@ -1,6 +1,10 @@
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
 import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+
 
 def simul_shocks(n_sample, T, Z, Pi, state_init=None):
     nz = len(Z)
@@ -35,7 +39,7 @@ def simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None,
                 "Shock inputs are inconsistent with state_init"
     else:
         ashock = simul_shocks(n_sample, T, mparam, state_init)
-    
+    n_agt = mparam.n_agt
     k_cross = np.zeros([n_sample, n_agt, T])
     if state_init:
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
