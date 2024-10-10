@@ -98,10 +98,15 @@ class PolicyTrainer():
     
     def policy_fn(self, input_data):
         state = self.prepare_state(input_data)
-        policy = torch.sigmoid(self.model(state))
+        policy = torch.sigmoid(self.policy(state))
+    
+    def policy_fn_true(self, input_data):
+        state = self.prepare_state(input_data)
+        policy = torch.sigmoid(self.policy_true(state))
     
     def loss(self, input_data):
         raise NotImplementedError
+    
     def get_valuedataset(self, update_init=False):
         raise NotImplementedError
     
@@ -234,7 +239,7 @@ class KTPolicyTrainer(PolicyTrainer):
                     "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
                 }
                 
-                loss = torch.mean((true_policy - self.policy_true(full_state_dict_loss))**2)
+                loss = torch.mean((true_policy - self.policy_fn_true(full_state_dict_loss))**2)
                 continue
             
             price = self.price_model(k_cross)
@@ -257,7 +262,7 @@ class KTPolicyTrainer(PolicyTrainer):
             if state_init:
                 assert torch.all(ashock[:, 0:1] == state_init["ashock"].to(device)), "Shock inputs are inconsistent with state_init"
         else:
-            ashock = KT.simul_shocks(n_sample, T, mparam, state_init).to(device)
+            ashock = KT.simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init).to(device)
         
         # エージェント数の取得
         n_agt = mparam.n_agt  # 例: エージェント数

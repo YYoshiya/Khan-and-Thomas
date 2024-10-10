@@ -233,7 +233,7 @@ class KTInitDataSet(InitDataSet):
         self.policy_init_only = util.FeedforwardModel(3, 1, config["policy_config"], name="init_model")
         self.price_init_only = util.PriceModel(1, 1, config["price_config"], name="price_model")
         KT.initial_policy(self.policy_init_only, mparam, num_epochs=100, batch_size=50)
-        self.update_with_burn(self.policy_init_only, "nn", self.price_init_only)
+        self.update_with_burn(self.policy_init_only, "nn_share", self.price_init_only)
 
     def get_valuedataset(self, policy, policy_type, price_fn, update_init=False):
         value_config = self.config["value_config"]
