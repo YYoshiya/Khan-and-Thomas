@@ -97,7 +97,8 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
 
     if policy_type == "nn_share":
         for t in range(1, T):
-            price = price_fn(k_cross[:, :, t-1])
+            
+            price = price_fn(k_cross[:, :, t-1:t])
             wage = mparam.eta / price
             yterm = ashock[:, t-1].unsqueeze(1) * k_cross[:, :, t-1]**mparam.theta
             n = (mparam.nu * yterm / wage.unsqueeze(1))**(1 / (1 - mparam.nu))
