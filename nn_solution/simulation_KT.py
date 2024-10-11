@@ -83,7 +83,7 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
             assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device)) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init).to(device)
+        ashock = torch.tensor(simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init), device=device)
     
     n_agt = mparam.n_agt
     k_cross = torch.zeros(n_sample, n_agt, T, device=device)
@@ -92,11 +92,9 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
         k_cross[:, :, 0] = torch.tensor(state_init["k_cross"], device=device)
     else:
-        k_cross[:, :, 0] = mparam.k_ss.to(device)
+        k_cross[:, :, 0] = torch.tensor(mparam.k_ss).to(device)
     k_mean[:, 0] = k_cross[:, :, 0].mean(dim=1)
-    
-    price_fn.to(device)
-    policy.to(device)
+
     if policy_type == "nn_share":
         for t in range(1, T):
             price = price_fn(k_cross[:, :, t-1])
