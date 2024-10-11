@@ -90,6 +90,28 @@ class PolicyTrainer():
         self.discount = torch.pow(self.mparam.beta, torch.arange(self.t_unroll)).to(self.device)
         self.policy_ds = None
     
+    def sampler(self, batch_size, update_init=False):
+        self.policy_ds = self.init_ds.get_policydataset(self.current_c_policy, "nn_share", self.price_model, update_init)
+        dataset = CustomDataset(self.policy_ds.datadict)
+        train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        first_batch = next(iter(train_loader))
+        ashock = KT.simul_shocks(batch_size, self.t_unroll, self.mparam.Z, self.mparam.Pi, state_init=None)
+        new_data = {
+            "k_cross": first_batch["k_cross"],
+            "ashock": torch.tensor(ashock, dtype=TORCH_DTYPE)
+        }
+        
+        for train_data in train_loader:
+            ashock = KT.simul_shocks(batch_size, self.t_unroll, self.mparam.Z, self.mparam.Pi, state_init=None)
+            new_data["k_cross"] = torch.cat([new_data["k_cross"], train_data["k_cross"]], dim=0)
+            new_data["ashock"] = torch.cat([new_data["ashock"], torch.tensor(ashock, dtype=TORCH_DTYPE)], dim=0)
+        
+        new_dataset = CustomDataset(new_data)
+        new_train_loader = torch.utils.data.DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
+        return new_train_loader
+        
+        
+        
     def prepare_state(self, input_data):
         state = torch.cat([input_data["basic_s"][..., 0:1], input_data["basic_s"][..., 2:]], dim=-1)
         gm = self.gm_model(input_data["agt_s"])
