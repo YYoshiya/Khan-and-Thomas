@@ -44,9 +44,13 @@ class PriceModel(FeedforwardModel):
         return self.dense_layers(x)
     
     def forward(self, x):
+
         x = self.basis_fn(x)
+
         price = torch.mean(x, dim=-2, keepdim=True)
-        price = price.repeat(1, x.shape[-2], 1)
+
+        return price
+
     
     
 def print_elapsedtime(delta):

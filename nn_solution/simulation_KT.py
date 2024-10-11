@@ -72,6 +72,13 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
     
     return simul_data
 
+def init_policy_fn(init_policy, k_cross, k_mean, ashock):
+    k_mean_tmp = torch.repeat_interleave(k_mean, 50, dim=1).unsqueeze(-1)
+    ashock_tmp = torch.repeat_interleave(ashock, 50, dim=1).unsqueeze(-1)
+    basic_s = torch.cat(k_cross, ashock_tmp, k_mean_tmp, dim=2) 
+    output = init_policy(basic_s)
+    return output
+
 def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -88,6 +95,8 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
     n_agt = mparam.n_agt
     k_cross = torch.zeros(n_sample, n_agt, T, device=device)
     k_mean = torch.zeros(n_sample, T, device=device)
+    price = torch.zeros(n_sample, T, device=device)
+    v0 = torch.zeros(n_sample, n_agt, T-1, device=device)
     if state_init:
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
         k_cross[:, :, 0] = torch.tensor(state_init["k_cross"], device=device)
@@ -98,14 +107,14 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
     if policy_type == "nn_share":
         for t in range(1, T):
             
-            price = price_fn(k_cross[:, :, t-1:t])
-            wage = mparam.eta / price
-            yterm = ashock[:, t-1].unsqueeze(1) * k_cross[:, :, t-1]**mparam.theta
+            price[:, t-1] = price_fn(k_cross[:, :, t-1:t]).squeeze()
+            wage = mparam.eta / price[:, t-1]#384
+            yterm = ashock[:, t-1].unsqueeze(1) * k_cross[:, :, t-1]**mparam.theta#大きさが合わないと思う。384,50
             n = (mparam.nu * yterm / wage.unsqueeze(1))**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage.unsqueeze(1) * n + (1 - mparam.delta) * k_cross[:, :, t-1]
-            v0 = v0_temp * price.unsqueeze(1)
-            k_cross[:, :, t] = policy(k_cross[:, :, t - 1], k_mean[:, t-1], ashock[:, t - 1])
+            v0 = v0_temp * price[:, t-1].unsqueeze(1)
+            k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t])#
             k_mean[:, t] = k_cross[:, :, t].mean(dim=1)
     
     simul_data = {
