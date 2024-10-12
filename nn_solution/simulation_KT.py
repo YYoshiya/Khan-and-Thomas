@@ -6,6 +6,16 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
 
+DTYPE = "float32"
+if DTYPE == "float64":
+    NP_DTYPE = np.float64
+    TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定
+elif DTYPE == "float32":
+    NP_DTYPE = np.float32
+    TORCH_DTYPE = torch.float32  # PyTorchのデータ型を指定
+else:
+    raise ValueError("Unknown dtype.")
+
 def simul_shocks(n_sample, T, Z, Pi, state_init=None):
     nz = len(Z)
     ashock = np.zeros([n_sample, T], dtype=int)  # ショックインデックスの格納用
@@ -75,7 +85,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
 def init_policy_fn(init_policy, k_cross, k_mean, ashock):
     k_mean_tmp = torch.repeat_interleave(k_mean, 50, dim=1).unsqueeze(-1)
     ashock_tmp = torch.repeat_interleave(ashock, 50, dim=1).unsqueeze(-1)
-    basic_s = torch.cat(k_cross, ashock_tmp, k_mean_tmp, dim=2) 
+    basic_s = torch.cat([k_cross, ashock_tmp, k_mean_tmp], dim=2) 
     output = init_policy(basic_s)
     return output
 
@@ -90,7 +100,7 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
             assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device)) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock = torch.tensor(simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init), device=device)
+        ashock = torch.tensor(simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init), device=device, dtype=TORCH_DTYPE)
     
     n_agt = mparam.n_agt
     k_cross = torch.zeros(n_sample, n_agt, T, device=device)
