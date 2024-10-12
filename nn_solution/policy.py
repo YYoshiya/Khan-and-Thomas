@@ -45,7 +45,6 @@ class PolicyTrainer():
         self.policy_config = self.config["policy_config"]
         self.price_config = self.config["price_config"]
         self.t_unroll = self.policy_config["t_unroll"]
-        self.value = util.FeedforwardModel(d_in, 1, self.policy_config, name="value_net").to(self.device)
         self.valid_size = self.policy_config["valid_size"]
         self.sgm_scale = self.policy_config["sgm_scale"] # scaling param in sigmoid
         self.init_ds = init_ds
@@ -57,9 +56,9 @@ class PolicyTrainer():
         self.T_price = self.price_config["T"]
         d_in = self.config["n_basic"] + self.config["n_fm"] + self.config["n_gm"]
         self.policy = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
-        self.policy_true = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net_true").to(self.device)
-        self.gm_model = util.GeneralizedMomModel(1, self.config["n_gm"], self.config["gm_config"], name="v_gm").to(self.device)
-        self.price_model = util.PriceModel(1, 1, self.policy["price_config"], name="price_net").to(self.device)
+        self.policy_true = util.FeedforwardModel(d_in, 1, self.policy_config, "p_net_true").to(self.device)
+        self.gm_model = util.GeneralizedMomModel(1, self.config["gm_config"], name="v_gm").to(self.device)
+        self.price_model = util.PriceModel(1, 1, self.config["price_config"], name="price_net").to(self.device)
         # 両方のモデルのパラメータを集める
         params = list(self.policy.parameters()) + list(self.gm_model.parameters())
         params_true = list(self.policy_true.parameters()) + list(self.gm_model.parameters())
@@ -91,7 +90,7 @@ class PolicyTrainer():
         self.policy_ds = None
     
     def sampler(self, batch_size, update_init=False):
-        self.policy_ds = self.init_ds.get_policydataset(self.current_c_policy, "nn_share", self.price_model, update_init)
+        self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_model, update_init)
         dataset = CustomDataset(self.policy_ds.datadict)
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
         first_batch = next(iter(train_loader))
@@ -178,7 +177,7 @@ class KTPolicyTrainer(PolicyTrainer):
         else:
             init_policy = self.init_ds.c_policy_const_share
             policy_type = "nn_share"
-        self.price_loss_training_loop(self.n_sample_price, self.T_price, self.mparam, init_ds.policy_init_only, self.price_model, batch_size=64, state_init=None, shocks=None)
+        self.price_loss_training_loop(self.n_sample_price, self.T_price, self.mparam, init_ds.policy_init_only, self.price_model, self.optimizer_price,batch_size=64, state_init=None, shocks=None)
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_model, init=True, update_init=False)
         
 
@@ -304,7 +303,7 @@ class KTPolicyTrainer(PolicyTrainer):
             y = yterm * n**mparam.nu                                    
             
             # 政策関数を用いて次期資本を決定
-            k_cross[:, :, t] = self.policy_fn(k_prev, ashock[:, t-1])                   
+            k_cross[:, :, t] = policy_fn(k_prev, ashock[:, t-1])                   
 
             # 投資と消費の計算
             inow = mparam.GAMY * k_cross[:,:,t] - (1 - mparam.delta) * k_prev   
@@ -349,8 +348,11 @@ class KTPolicyTrainer(PolicyTrainer):
             "agt_s": agt_s
         }
         
-        output = self.policy_fn(full_state_dict)[..., 0]
+        output = self.policy_fn_true(full_state_dict)[..., 0]
         return output
+    
+    def get_valuedataset(self, update_init=False):
+        return self.init_ds.get_valuedataset(self.current_c_policy)
 
 
             

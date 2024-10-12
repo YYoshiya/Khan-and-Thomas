@@ -230,6 +230,7 @@ class InitDataSet(DataSetwithStats):
 class KTInitDataSet(InitDataSet):
     def __init__(self, mparam, config):
         super().__init__(mparam, config)
+        self.keys = ["k_cross", "ashock"]
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.policy_init_only = util.FeedforwardModel(3, 1, config["policy_config"], name="init_model").to(self.device)
         self.price_init_only = util.PriceModel(1, 1, config["price_config"], name="init_price").to(self.device)
@@ -238,14 +239,13 @@ class KTInitDataSet(InitDataSet):
     
     
 
-    def get_valuedataset(self, policy, policy_type, price_fn, update_init=False):
+    def get_valuedataset(self, policy, policy_type, price_fn, init=None, update_init=False):
         value_config = self.config["value_config"]
         t_count = value_config["t_count"]
         t_skip = value_config["t_skip"]
         simul_data = self.simul_k_func(
-            self.n_path, value_config["T"], self.mparam, policy, policy_type, price_fn,
-            state_init=self.datadict
-        )
+            self.n_path, value_config["T"], self.mparam, policy, policy_type, price_fn, init=init,
+            state_init=self.datadict)
         if update_init:
             self.update_from_simul(simul_data)
         
