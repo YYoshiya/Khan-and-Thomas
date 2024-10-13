@@ -93,11 +93,26 @@ def init_policy_fn(init_policy, k_cross, k_mean, ashock):
     output_torch = init_policy(basic_s_torch)
     
     # 結果をCPU上でNumPyに変換
-    output = output_torch.cpu().detach().numpy()
-    # GPUメモリを開放
-    del basic_s_torch, output_torch
-    torch.cuda.empty_cache()
+    output = output_torch
+
     return output
+
+def init_policy_fn_tf(init_policy, k_cross, k_mean, ashock):
+    # PyTorchで処理する
+    k_mean_tmp = k_mean.repeat(1, 50).unsqueeze(2)  # axis=1をPyTorchで再現
+    ashock_tmp = ashock.repeat(1, 50).unsqueeze(2)  # axis=1をPyTorchで再現
+    basic_s = torch.cat([k_cross, ashock_tmp, k_mean_tmp], dim=2)  # NumPyのconcatenateをtorch.catで再現
+    
+    # GPUでNNの計算を実行
+    basic_s_torch = basic_s.to("cuda")  # GPUに移動
+    output_torch = init_policy(basic_s_torch)
+    
+    # 結果をそのまま返す（必要ならCPUに移動してNumPyに変換）
+    output = output_torch  # 必要に応じて .to('cpu') を付けてCPUに戻す
+
+    return output
+
+
 
 def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -134,7 +149,7 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
             v0 = v0_temp * price[:, t-1:t]
-            k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t])#
+            k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
             k_mean[:, t] = k_cross[:, :, t].mean(axis=1)
     
     simul_data = {

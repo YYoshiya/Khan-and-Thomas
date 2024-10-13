@@ -192,7 +192,7 @@ class KTPolicyTrainer(PolicyTrainer):
         else:
             init_policy = self.init_ds.c_policy_const_share
             policy_type = "nn_share"
-        self.price_loss_training_loop(self.n_sample_price, self.T_price, self.mparam, KT.init_policy_fn, self.price_model, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None)
+        self.price_loss_training_loop(self.n_sample_price, self.T_price, self.mparam, KT.init_policy_fn_tf, self.price_model, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None)
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_model, init=True, update_init=False)
         
 
@@ -296,64 +296,73 @@ class KTPolicyTrainer(PolicyTrainer):
             if state_init:
                 assert torch.all(ashock[:, 0:1] == state_init["ashock"].to(device)), "Shock inputs are inconsistent with state_init"
         else:
-            ashock = KT.simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
+            ashock = torch.tensor(KT.simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init), dtype=TORCH_DTYPE)
         
         # エージェント数の取得
         n_agt = mparam.n_agt  # 例: エージェント数
         
         # k_crossの初期化
-        k_cross = np.zeros((n_sample, n_agt, T))
+        k_cross = torch.zeros((n_sample, n_agt, T))
         if state_init:
             assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
             k_cross[:, :, 0] = state_init["k_cross"]
         else:
-            k_cross[:, :, 0] = mparam.k_ss
+            k_cross[:, :, 0] = torch.tensor(mparam.k_ss, dtype=TORCH_DTYPE)
         
+        loss_list = []
         for t in range(1, T):
-            k_prev = k_cross[:, :, t-1:t]  #384,50,1
-            price = price_fn(torch.tensor(k_prev, dtype=TORCH_DTYPE, device=device)).detach().cpu().numpy().squeeze(-1)   #384,1
-            wage = mparam.eta / price      
+            k_prev = k_cross[:, :, t-1:t].to(device)  #384,50,1
+            price = price_fn(k_prev).to("cpu").squeeze(-1)
+            wage = mparam.eta / price     
             yterm = ashock[:, t-1:t] * k_prev.squeeze(-1)**mparam.theta  #384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))  #384,50  
             y = yterm * n**mparam.nu                                    
             if init is not None:
                 k_mean = k_cross[:, :, t-1:t].mean(axis=1)
-                k_cross[:, :, t] = policy_fn(self.init_ds.policy_init_only, k_prev, k_mean, ashock[:, t-1:t]).squeeze(-1)
+                k_cross[:, :, t] = policy_fn(self.init_ds.policy_init_only, k_prev, k_mean, ashock[:, t-1:t]).to("cpu").squeeze(-1)
             else:
-                k_cross[:, :, t] = policy_fn(k_cross[:,:,t-1], ashock[:, t-1:t])#curent_policyを入れる。
+                k_cross[:, :, t] = policy_fn(k_cross[:,:,t-1], ashock[:, t-1:t]).to("cpu")#curent_policyを入れる。
                                   
 
             # 投資と消費の計算
             inow = mparam.GAMY * k_cross[:,:,t] - (1 - mparam.delta) * k_prev.squeeze(-1)   #384,50
             ynow = ashock[:, t-1:t] * k_prev.squeeze(-1)**mparam.theta * n**mparam.nu  # 消費 [n_sample, n_agt]
-            Cnow = ynow.sum(axis=1) - inow.sum(axis=1)                                           # 消費量 [n_sample, n_agt]
+            Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)         #384,1                        
             
             # 目標価格の計算（例として1/Cnowとする）
-            price_target = 1 / Cnow                                       # 目標価格 [n_sample, n_agt]
+            price_target = 1 / Cnow                                       #384,1
             
             # 現在の価格と目標価格の二乗誤差を計算
-            loss_t = (price - price_target)**2                    #aggregateされてなくない？        
+            loss_t = (price - price_target)**2
+            
+            loss_list.append(loss_t)                        
         
-        # DataLoaderの作成
-        dataset = PriceDataset(loss_t)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+        loss_all = torch.cat(loss_list, dim=0)  # 384*T, 50
+        num_batches = (loss_all.size(0) + batch_size - 1) // batch_size
 
         # トレーニングループ
         self.price_model.train()  # モデルをトレーニングモードに設定
         for epoch in range(10):
             print(f"Epoch {epoch+1}/{10}")
             t=0
-            for batch_loss in dataloader:
-                t=+1
-                optimizer.zero_grad()
-                loss = batch_loss.mean()
-                loss.backward()
-                optimizer.step()
-                
-                if t % 10== 0:
-                    print(f"  Batch {t}/{len(dataloader)}: Loss = {loss.item():.6f}")
+            for batch_idx in range(num_batches):
+                start = batch_idx * batch_size
+            end = min(start + batch_size, loss_all.size(0))
+            batch_loss = loss_all[start:end].mean()
+
+            optimizer.zero_grad()
+            batch_loss.backward()
+            optimizer.step()
+
+            epoch_loss += batch_loss.item()
+
+            if (batch_idx + 1) % 10 == 0:
+                print(f"  Batch {batch_idx+1}/{num_batches}: Loss = {batch_loss.item():.6f}")
         
-        print("Training completed.")
+        avg_epoch_loss = epoch_loss / num_batches
+        print(f"  Average Loss: {avg_epoch_loss:.6f}")
+
+    print("Training completed.")
     
     def current_policy(self, k_cross, ashock):
         k_mean = torch.mean(k_cross, dim=1, keepdim=True)
