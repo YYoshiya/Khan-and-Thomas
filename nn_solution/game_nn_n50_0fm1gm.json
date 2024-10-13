@@ -9,7 +9,7 @@
     "init_with_bchmk": false,
     "dataset_config": {
         "n_path": 384,
-        "t_burn": 6000,
+        "t_burn": 500,
         "value_sampling": "nn",
         "moving_average": 1.0
     },

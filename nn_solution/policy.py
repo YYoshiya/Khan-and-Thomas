@@ -284,9 +284,12 @@ class KTPolicyTrainer(PolicyTrainer):
     
 
     def price_loss_training_loop(self, n_sample, T, mparam, policy_fn, price_fn, optimizer, batch_size=64, init=None, state_init=None, shocks=None):
-        # デバイスの設定
+    # デバイスの設定
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {device}")
+
+        # モデルをデバイスに移動
+        self.price_model.to(device)
 
         # ショックの設定
         if shocks is not None:
@@ -296,73 +299,81 @@ class KTPolicyTrainer(PolicyTrainer):
             if state_init:
                 assert torch.all(ashock[:, 0:1] == state_init["ashock"].to(device)), "Shock inputs are inconsistent with state_init"
         else:
-            ashock = torch.tensor(KT.simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init), dtype=TORCH_DTYPE)
-        
+            ashock = torch.tensor(KT.simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init), dtype=TORCH_DTYPE, device=device)
+
         # エージェント数の取得
         n_agt = mparam.n_agt  # 例: エージェント数
-        
-        # k_crossの初期化
-        k_cross = torch.zeros((n_sample, n_agt, T))
+
+        # k_crossの初期化をリストに変更
+        k_cross_list = []
         if state_init:
-            assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
-            k_cross[:, :, 0] = state_init["k_cross"]
+            k_cross_t = state_init["k_cross"].to(device)  # Shape: (n_sample, n_agt)
         else:
-            k_cross[:, :, 0] = torch.tensor(mparam.k_ss, dtype=TORCH_DTYPE)
-        
+            k_cross_t = torch.tensor(mparam.k_ss, dtype=TORCH_DTYPE, device=device).unsqueeze(0).repeat(n_sample, 1)  # Shape: (n_sample, n_agt)
+        k_cross_list.append(k_cross_t)
+
         loss_list = []
         for t in range(1, T):
-            k_prev = k_cross[:, :, t-1:t].to(device)  #384,50,1
-            price = price_fn(k_prev).to("cpu").squeeze(-1)
-            wage = mparam.eta / price     
-            yterm = ashock[:, t-1:t] * k_prev.squeeze(-1)**mparam.theta  #384,50
-            n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))  #384,50  
-            y = yterm * n**mparam.nu                                    
+            k_prev = k_cross_list[-1]  # Shape: (n_sample, n_agt)
+            k_prev_unsqueezed = k_prev.unsqueeze(-1)
+            # price_fnがGPU上で動作するように
+            price = price_fn(k_prev_unsqueezed).squeeze(-1)  # Shape: (n_sample,)
+            wage = mparam.eta / price  # Shape: (n_sample,)
+
+            yterm = ashock[:, t-1].unsqueeze(1) * k_prev**mparam.theta  # Shape: (n_sample, n_agt)
+            n = (mparam.nu * yterm / wage.unsqueeze(1))**(1 / (1 - mparam.nu))  # Shape: (n_sample, n_agt)
+            y = yterm * n**mparam.nu  # Shape: (n_sample, n_agt)
+
             if init is not None:
-                k_mean = k_cross[:, :, t-1:t].mean(axis=1)
-                k_cross[:, :, t] = policy_fn(self.init_ds.policy_init_only, k_prev, k_mean, ashock[:, t-1:t]).to("cpu").squeeze(-1)
+                k_mean = k_prev.mean(dim=1, keepdim=True)  # Shape: (n_sample, 1)
+                k_new = policy_fn(self.init_ds.policy_init_only, k_prev_unsqueezed, k_mean, ashock[:, t-1].unsqueeze(1))  # Shape: (n_sample, n_agt)
             else:
-                k_cross[:, :, t] = policy_fn(k_cross[:,:,t-1], ashock[:, t-1:t]).to("cpu")#curent_policyを入れる。
-                                  
+                k_new = policy_fn(k_prev, ashock[:, t-1].unsqueeze(1))  # Shape: (n_sample, n_agt)
+
+            # k_newはGPU上にあると仮定
+            k_cross_list.append(k_new)
 
             # 投資と消費の計算
-            inow = mparam.GAMY * k_cross[:,:,t] - (1 - mparam.delta) * k_prev.squeeze(-1)   #384,50
-            ynow = ashock[:, t-1:t] * k_prev.squeeze(-1)**mparam.theta * n**mparam.nu  # 消費 [n_sample, n_agt]
-            Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)         #384,1                        
-            
+            inow = mparam.GAMY * k_new.squeeze(-1) - (1 - mparam.delta) * k_prev  # Shape: (n_sample, n_agt)
+            ynow = ashock[:, t-1].unsqueeze(1) * (k_prev**mparam.theta) * (n**mparam.nu)  # Shape: (n_sample, n_agt)
+            Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)  # Shape: (n_sample, 1)
+
             # 目標価格の計算（例として1/Cnowとする）
-            price_target = 1 / Cnow                                       #384,1
-            
+            price_target = 1 / Cnow  # Shape: (n_sample, 1)
+
             # 現在の価格と目標価格の二乗誤差を計算
-            loss_t = (price - price_target)**2
-            
-            loss_list.append(loss_t)                        
-        
-        loss_all = torch.cat(loss_list, dim=0)  # 384*T, 50
+            loss_t = (price.unsqueeze(1) - price_target)**2  # Shape: (n_sample, 1)
+
+            loss_list.append(loss_t)
+
+        # loss_allをGPU上で連結
+        loss_all = torch.cat(loss_list, dim=0)  # Shape: (T-1)*n_sample, 1
         num_batches = (loss_all.size(0) + batch_size - 1) // batch_size
 
         # トレーニングループ
         self.price_model.train()  # モデルをトレーニングモードに設定
         for epoch in range(10):
-            print(f"Epoch {epoch+1}/{10}")
-            t=0
+            epoch_loss = 0.0  # 初期化
+            print(f"Epoch {epoch+1}/10")
             for batch_idx in range(num_batches):
                 start = batch_idx * batch_size
-            end = min(start + batch_size, loss_all.size(0))
-            batch_loss = loss_all[start:end].mean()
+                end = min(start + batch_size, loss_all.size(0))
+                batch_loss = loss_all[start:end].mean()
 
-            optimizer.zero_grad()
-            batch_loss.backward()
-            optimizer.step()
+                optimizer.zero_grad()
+                batch_loss.backward()
+                optimizer.step()
 
-            epoch_loss += batch_loss.item()
+                epoch_loss += batch_loss.item()
 
-            if (batch_idx + 1) % 10 == 0:
-                print(f"  Batch {batch_idx+1}/{num_batches}: Loss = {batch_loss.item():.6f}")
-        
-        avg_epoch_loss = epoch_loss / num_batches
-        print(f"  Average Loss: {avg_epoch_loss:.6f}")
+                if (batch_idx + 1) % 10 == 0:
+                    print(f"  Batch {batch_idx+1}/{num_batches}: Loss = {batch_loss.item():.6f}")
 
-    print("Training completed.")
+            avg_epoch_loss = epoch_loss / num_batches
+            print(f"  Average Loss: {avg_epoch_loss:.6f}")
+
+        print("Training completed.")
+
     
     def current_policy(self, k_cross, ashock):
         k_mean = torch.mean(k_cross, dim=1, keepdim=True)
