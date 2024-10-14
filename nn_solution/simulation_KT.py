@@ -116,9 +116,8 @@ def init_policy_fn_tf(init_policy, k_cross, k_mean, ashock):
 
 def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
     if shocks is not None:
-        ashock = torch.tensor(shocks, device=device)
+        ashock = shocks
         assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
         assert T == ashock.shape[1], "T is inconsistent with given shocks."
         if state_init:
@@ -141,8 +140,8 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
 
     if policy_type == "nn_share":
         for t in range(1, T):
-            
-            price[:, t-1:t] = price_fn(torch.tensor(k_cross[:, :, t-1:t],dtype=TORCH_DTYPE, device=device)).detach().cpu().numpy().squeeze(-1)
+            #384,1
+            price[:, t-1] = price_fn(torch.tensor(k_cross[:, :, t-1],dtype=TORCH_DTYPE, device=device)).detach().cpu().numpy().squeeze(-1)
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))

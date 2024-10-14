@@ -39,19 +39,17 @@ class CustomDataset(Dataset):
         return sample
 
 class PriceDataset(Dataset):
-    def __init__(self, loss_t):
-        if isinstance(loss_t, np.ndarray):
-            self.loss_t = torch.tensor(loss_t, dtype=TORCH_DTYPE)
+    def __init__(self, basic_s):
+        if isinstance(basic_s, np.ndarray):
+            self.basic_s = torch.tensor(basic_s, dtype=TORCH_DTYPE)
         else:
-            self.loss_t = loss_t
-
-        assert len(self.loss_t.shape) == 2, "loss_t should have two dimensions (n_sample, n_agt)"
+            self.basic_s = basic_s
     
     def __len__(self):
-        return self.loss_t.shape[0]
+        return len(self.basic_s)
     
     def __getitem__(self, idx):
-        return self.loss_t[idx]
+        return self.basic_s[idx]
 
 class PolicyTrainer():
     def __init__(self, vtrainers, init_ds, policy_path=None):
@@ -285,92 +283,47 @@ class KTPolicyTrainer(PolicyTrainer):
 
     import torch
 
-    def price_loss_training_loop(self, n_sample, T, mparam, policy_fn, price_fn, optimizer, batch_size=64, init=None, state_init=None, shocks=None):
-        # 異常検出を有効化
-        torch.autograd.set_detect_anomaly(True)
-        
-        # デバイスの設定
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Using device: {device}")
+    def price_loss_training_loop(self, n_sample, T, mparam, policy_fn, price_fn, optimizer, batch_size=128, init=None, state_init=None, shocks=None):
+        if init is not None:
+            input_data = KT.init_simul_k(n_sample, T, mparam, policy_fn, price_fn, state_init=None, shocks=None)
+        else:
+            input_data = KT.simul_k(n_sample, T, mparam, policy_fn, price_fn, state_init=None, shocks=None)
+        k_cross = input_data["k_cross"]
+        ashock = input_data["ashock"]
+        k_tmp = np.reshape(k_cross, (-1, 50))#384*T, 1
+        a_tmp = np.repeat(ashock, (-1, 1))#384*T, 1
+        basic_s = np.concatenate([k_tmp, a_tmp])
+        dataset = PriceDataset(basic_s)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-        # モデルをデバイスに移動
-        self.price_model.to(device)
-
-        # トレーニングループ
-        self.price_model.train()  # モデルをトレーニングモードに設定
-        for epoch in range(100):
-            epoch_loss = 0.0  # 初期化
-            print(f"Epoch {epoch+1}/10")
-
-            # ショックの設定
-            if shocks is not None:
-                ashock = shocks.to(device)
-                assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
-                assert T == ashock.shape[1], "T is inconsistent with given shocks."
-                if state_init:
-                    assert torch.all(ashock[:, 0:1] == state_init["ashock"].to(device)), "Shock inputs are inconsistent with state_init"
-            else:
-                ashock = torch.tensor(KT.simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init), dtype=TORCH_DTYPE, device=device)
-
-            # k_crossの初期化
-            k_cross_list = []
-            if state_init:
-                k_cross_t = state_init["k_cross"].to(device)  # Shape: (n_sample, n_agt)
-            else:
-                k_cross_t = torch.tensor(mparam.k_ss, dtype=TORCH_DTYPE, device=device).unsqueeze(0).unsqueeze(2).repeat(n_sample, 1, 1)  # Shape: (n_sample, n_agt, 1)
-            k_cross_list.append(k_cross_t)
-
-            loss_list = []
-            for t in range(1, T):
-                k_prev = k_cross_list[t-1]  # Shape: (n_sample, n_agt, 1)
-                # price_fnがGPU上で動作するように
-                price = torch.clamp(price_fn(k_prev).squeeze(-1), min=0.1, max=10)  # Shape: (n_sample, n_agt)
-                wage = mparam.eta / price  # Shape: (n_sample, n_agt)
-
-                # ytermの計算
-                yterm = ashock[:, t-1].unsqueeze(1) * k_prev.squeeze(-1)**mparam.theta  # Shape: (n_sample, n_agt)
-                n = (mparam.nu * yterm / wage.unsqueeze(1))**(1 / (1 - mparam.nu))  # Shape: (n_sample, n_agt)
-                y = yterm * n**mparam.nu  # Shape: (n_sample, n_agt)
-
-                # policy_fnの適用
-                if init is not None:
-                    k_mean = k_prev.squeeze(-1).mean(dim=1, keepdim=True)  # Shape: (n_sample, 1)
-                    k_new = policy_fn(k_prev, k_mean, ashock[:, t-1].unsqueeze(1))  # Shape: (n_sample, n_agt)
-                else:
-                    k_new = policy_fn(k_prev, ashock[:, t-1].unsqueeze(1))  # Shape: (n_sample, n_agt)
-
-                # k_newはGPU上にあると仮定
-                k_cross_list.append(k_new)
-
-                # 投資と消費の計算
-                inow = mparam.GAMY * k_new.squeeze(-1) - (1 - mparam.delta) * k_prev.squeeze(-1)  # Shape: (n_sample, n_agt)
-                ynow = ashock[:, t-1].unsqueeze(1) * (k_prev.squeeze(-1)**mparam.theta) * (n**mparam.nu)  # Shape: (n_sample, n_agt)
-                Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)  # Shape: (n_sample, 1)
-
-                # 目標価格の計算（例として1/Cnowとする）
-                price_target = 1 / Cnow  # Shape: (n_sample, 1)
-
-                # 現在の価格と目標価格の二乗誤差を計算
-                loss_t = (price.unsqueeze(1) - price_target)**2  # Shape: (n_sample, 1)
-
-                loss_list.append(loss_t)
-
-            # loss_allをGPU上で連結
-            loss_all = torch.cat(loss_list, dim=0)  # Shape: (T-1)*n_sample, 1
-
-            # バッチごとのトレーニング
-            batch_loss = loss_all.mean()
-
+        for data in range(dataset):
             optimizer.zero_grad()
-            batch_loss.backward()  # retain_graph=False（デフォルト）
+
+            loss = self.loss_price(data)
+            loss.backward()
             optimizer.step()
+    
 
-            epoch_loss += batch_loss.item()
+    def loss_price(self, data, policy_fn, price_fn, mparam):
+        ashock = data["ashock"]
+        k_cross = data["k_cross"]
+        price = price_fn(data)
+        wage = mparam.eta / price
+
+        yterm = ashock * k_cross ** mparam.theta
+        n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))
+        k_new = policy_fn(data)
+        inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
+        ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
+        Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
+
+        price_target = 1 / Cnow
+        loss = nn.MSE(price, price_target)
+        return loss
 
 
 
-        print("Training completed.")
-
+        
 
     
     def current_policy(self, k_cross, ashock):

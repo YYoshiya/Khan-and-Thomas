@@ -47,9 +47,7 @@ class PriceModel(FeedforwardModel):
 
         x = self.basis_fn(x)
 
-        price = torch.mean(x, dim=-2, keepdim=True)
-
-        return price
+        return x
 
     
     
