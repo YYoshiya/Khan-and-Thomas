@@ -177,7 +177,7 @@ class PolicyDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
-def initial_policy(model, mparam, num_epochs=100, batch_size=50):
+def initial_policy(model, mparam, num_epochs=200, batch_size=50):
     # ショックをシミュレーション
     ashock = simul_shocks(n_sample=1, T=500, Z=mparam.Z, Pi=mparam.Pi, state_init=None)
 
@@ -207,7 +207,7 @@ def initial_policy(model, mparam, num_epochs=100, batch_size=50):
     # モデル、損失関数、オプティマイザーの設定
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.005)
     model.to(device)
     # 学習ループの実装
     for epoch in range(num_epochs):
