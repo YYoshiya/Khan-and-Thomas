@@ -322,7 +322,7 @@ class KTPolicyTrainer(PolicyTrainer):
 
             loss_list = []
             for t in range(1, T):
-                k_prev = k_cross_list[-1]  # Shape: (n_sample, n_agt, 1)
+                k_prev = k_cross_list[t-1]  # Shape: (n_sample, n_agt, 1)
                 # price_fnがGPU上で動作するように
                 price = torch.clamp(price_fn(k_prev).squeeze(-1), min=0.1, max=10)  # Shape: (n_sample, n_agt)
                 wage = mparam.eta / price  # Shape: (n_sample, n_agt)
