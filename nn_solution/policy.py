@@ -71,7 +71,7 @@ class PolicyTrainer():
         self.policy = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
         self.policy_true = util.FeedforwardModel(d_in, 1, self.policy_config, "p_net_true").to(self.device)
         self.gm_model = util.GeneralizedMomModel(1, self.config["gm_config"], name="v_gm").to(self.device)
-        self.price_model = util.PriceModel(1, 1, self.config["price_config"], name="price_net").to(self.device)
+        self.price_model = util.PriceModel(50, 1, self.config["price_config"], name="price_net").to(self.device)
         # 両方のモデルのパラメータを集める
         params = list(self.policy.parameters()) + list(self.gm_model.parameters())
         params_true = list(self.policy_true.parameters()) + list(self.gm_model.parameters())
@@ -190,7 +190,7 @@ class KTPolicyTrainer(PolicyTrainer):
         else:
             init_policy = self.init_ds.c_policy_const_share
             policy_type = "nn_share"
-        self.price_loss_training_loop(self.n_sample_price, 64, self.mparam, self.init_policy_fn_tf, self.price_model, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None)
+        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.price_model, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None)
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_model, init=True, update_init=False)
         
 
@@ -283,23 +283,25 @@ class KTPolicyTrainer(PolicyTrainer):
 
     import torch
 
-    def price_loss_training_loop(self, n_sample, T, mparam, policy_fn, price_fn, optimizer, batch_size=128, init=None, state_init=None, shocks=None):
+    def price_loss_training_loop(self, n_sample, T, mparam, policy_fn, policy_type, price_fn, optimizer, batch_size=128, init=None, state_init=None, shocks=None):
         if init is not None:
-            input_data = KT.init_simul_k(n_sample, T, mparam, policy_fn, price_fn, state_init=None, shocks=None)
+            input_data = KT.init_simul_k(n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None)
         else:
-            input_data = KT.simul_k(n_sample, T, mparam, policy_fn, price_fn, state_init=None, shocks=None)
+            input_data = KT.simul_k(n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None)
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
-        k_tmp = np.reshape(k_cross, (-1, 50))#384*T, 1
-        a_tmp = np.repeat(ashock, (-1, 1))#384*T, 1
+        k_tmp = np.reshape(k_cross, (-1, 50))#384*T, 50
+        a_tmp = np.reshape(ashock, (-1, 1))#384*T, 1
+        a_tmp = np.repeat(a_tmp, 50, axis=1)#384*T, 50
         basic_s = np.concatenate([k_tmp, a_tmp])
         dataset = PriceDataset(basic_s)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         for data in range(dataset):
+            data.to(self.device)
             optimizer.zero_grad()
 
-            loss = self.loss_price(data)
+            loss = self.loss_price(data, policy_fn, price_fn, mparam)
             loss.backward()
             optimizer.step()
     
