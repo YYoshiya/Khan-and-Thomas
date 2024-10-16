@@ -360,7 +360,7 @@ class KTPolicyTrainer(PolicyTrainer):
         k_mean_mean = torch.mean(k_mean, dim=(0,1))
         k_mean_std = torch.std(k_mean, dim=(0,1))
         
-        price = self.init_ds.unnormalize_data(price_fn(self.init_ds.normalize_data(data), key="basic_s", withtf=True), key="basic_s", withtf=True)
+        price = self.init_ds.unnormalize_data(price_fn(self.init_ds.normalize_data(data, key="basic_s", withtf=True), key="basic_s", withtf=True))
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta
