@@ -71,7 +71,7 @@ class PolicyTrainer():
         self.policy = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
         self.policy_true = util.FeedforwardModel(d_in, 1, self.policy_config, "p_net_true").to(self.device)
         self.gm_model = util.GeneralizedMomModel(1, self.config["gm_config"], name="v_gm").to(self.device)
-        self.price_model = util.PriceModel(50, 1, self.config["price_config"], name="price_net").to(self.device)
+        self.price_model = util.PriceModel(51, 1, self.config["price_config"], name="price_net").to(self.device)
         # 両方のモデルのパラメータを集める
         params = list(self.policy.parameters()) + list(self.gm_model.parameters())
         params_true = list(self.policy_true.parameters()) + list(self.gm_model.parameters())
@@ -298,26 +298,31 @@ class KTPolicyTrainer(PolicyTrainer):
         ashock = input_data["ashock"]
         k_tmp = np.reshape(k_cross, (-1, 50))  # 384*T, 50
         a_tmp = np.reshape(ashock, (-1, 1))  # 384*T, 1
-        basic_s = torch.tensor(np.concatenate([k_tmp, a_tmp], axis=1))  # データを結合
+        basic_s = torch.tensor(np.concatenate([k_tmp, a_tmp], axis=1), dtype=TORCH_DTYPE)  # データを結合
 
         # データセットの作成
         dataset = PriceDataset(basic_s)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         # トレーニングループ
-        for data in dataloader:
-            data.to(self.device)
+        for batch_idx, data in enumerate(dataloader):
+            data = data.to(self.device)
             optimizer.zero_grad()
 
-            # 事前に選択されたロス関数を使用
+            # ロス関数の計算
             loss = loss_fn(data, policy_fn, price_fn, mparam)
+
+            # ステップとそのステップでのlossの出力
+            print(f"Step {batch_idx + 1}, Loss: {loss.item()}")
+
+            # 損失の逆伝播と最適化
             loss.backward()
             optimizer.step()
 
     
     def loss_price(self, data, policy_fn, price_fn, mparam):
-        ashock = data[:,50:]#1,1
-        k_cross = data[:, :50]#1,50
+        ashock = data[:,50:].to(self.device)#1,1
+        k_cross = data[:, :50].to(self.device)#1,50
         price = price_fn(data)
         wage = mparam.eta / price
 
@@ -335,27 +340,30 @@ class KTPolicyTrainer(PolicyTrainer):
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
 
         price_target = 1 / Cnow
-        loss = nn.MSE(price, price_target)
+        loss = nn.MSELoss(price, price_target)
         return loss
 
 
     def loss_price_init(self, data, policy_fn, price_fn, mparam):
-        ashock = data[:,50:]#1,1
-        k_cross = data[:, :50]#1,50
-        k_mean = torch.mean(k_cross, dim=1, keepdim=True)#1,1
+        ashock = data[:,50:]#128,1
+        k_cross = data[:, :50]#128,50
+        k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#1,50,1
         price = price_fn(data)
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta
         n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))
-        basic_s = torch.cat([k_cross, ashock, k_mean], dim=-1)
-        k_new = policy_fn(basic_s)
+        k_tmp = k_cross.unsqueeze(2)#128,50,1
+        a_tmp = ashock.repeat(1, 50).unsqueeze(2)#128,50,1
+        basic_s = torch.cat([k_tmp, a_tmp, k_mean], dim=-1)
+        k_new = policy_fn(basic_s).squeeze(2)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
 
         price_target = 1 / Cnow
-        loss = nn.MSE(price, price_target)
+        mse_loss_fn = nn.MSELoss()
+        loss = mse_loss_fn(price, price_target)
         return loss
 
 

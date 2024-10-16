@@ -233,7 +233,7 @@ class KTInitDataSet(InitDataSet):
         self.keys = ["k_cross", "ashock"]
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.policy_init_only = util.FeedforwardModel(3, 1, config["policy_config"], name="init_model").to(self.device)
-        self.price_init_only = util.PriceModel(50, 1, config["price_config"], name="init_price").to(self.device)
+        self.price_init_only = util.PriceModel(51, 1, config["price_config"], name="init_price").to(self.device)
         KT.initial_policy(self.policy_init_only, mparam, num_epochs=200, batch_size=50)
         self.update_with_burn(self.policy_init_only, "nn_share", self.price_init_only)
     

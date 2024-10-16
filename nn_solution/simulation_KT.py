@@ -140,8 +140,8 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
 
     if policy_type == "nn_share":
         for t in range(1, T):
-            #384,1
-            price[:, t-1] = price_fn(torch.tensor(k_cross[:, :, t-1],dtype=TORCH_DTYPE, device=device)).detach().cpu().numpy().squeeze(-1)
+            price_data = torch.cat((torch.tensor(k_cross[:, :, t-1], dtype=TORCH_DTYPE), torch.tensor(ashock[:, t-1:t], dtype=TORCH_DTYPE)), dim=1)
+            price[:, t-1] = price_fn(price_data.to(device)).detach().cpu().numpy().squeeze(-1)
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
