@@ -79,7 +79,7 @@ class DataSetwithStats(BasicDataSet):
     
     def update_stats(self, data, key, ma):
         # data can be of shape B * d or B * n_agt * d
-        axis_for_mean = tuple(list(range(len(data.shape)-1)))
+        axis_for_mean = tuple(range(len(data.shape)-1))
         if self.stats_dict[key] is None:
             mean, std = data.mean(axis=axis_for_mean), data.std(axis=axis_for_mean)
         else:
@@ -98,6 +98,15 @@ class DataSetwithStats(BasicDataSet):
         else:
             mean, std = self.stats_dict[key]
         return (data - mean) / std
+    
+    def normalize_data_ashock(self, data, key, withtf=False):
+        if withtf:
+            mean, std = self.stats_dict_tf[key]
+            mean = mean.to(data.device)
+            std = std.to(data.device)
+        else:
+            mean, std = self.stats_dict[key]
+        return (data - mean[1]) / std[1]
 
     def unnormalize_data(self, data, key, withtf=False):
         if withtf:
@@ -107,6 +116,24 @@ class DataSetwithStats(BasicDataSet):
         else:
             mean, std = self.stats_dict[key]
         return data * std + mean
+    
+    def unnormalize_data_k_cross(self, data, key, withtf=False):
+        if withtf:
+            mean, std = self.stats_dict_tf[key]
+            mean = mean.to(data.device)
+            std = std.to(data.device)
+        else:
+            mean, std = self.stats_dict[key]
+        return data * std[0] + mean[0]
+    
+    def unnormalize_data_ashock(self, data, key, withtf=False):
+        if withtf:
+            mean, std = self.stats_dict_tf[key]
+            mean = mean.to(data.device)
+            std = std.to(data.device)
+        else:
+            mean, std = self.stats_dict[key]
+        return data * std[1] + mean[1]
     
     def save_stats(self, path):
         with open(os.path.join(path, "stats.json"), "w") as fp:

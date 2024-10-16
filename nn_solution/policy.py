@@ -109,7 +109,7 @@ class PolicyTrainer():
         first_batch = next(iter(train_loader))
         ashock = KT.simul_shocks(batch_size, self.t_unroll, self.mparam.Z, self.mparam.Pi, state_init=None)
         new_data = {
-            "k_cross": first_batch["k_cross"],
+            "k_cross": torch.tensor(first_batch["k_cross"],dtype=TORCH_DTYPE),
             "ashock": torch.tensor(ashock, dtype=TORCH_DTYPE)
         }
         
@@ -215,7 +215,7 @@ class KTPolicyTrainer(PolicyTrainer):
             price = price[:, t:t+1]
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
-            basic_s_tmp = a_tmp
+            basic_s_tmp = self.init_ds.normalize_data_ashock(a_tmp, key="basic_s", withtf=True)
             full_state_dict = {
                 "basic_s": basic_s_tmp,
                 "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
@@ -245,17 +245,25 @@ class KTPolicyTrainer(PolicyTrainer):
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
             basic_s_tmp = a_tmp
+            basic_s_tmp = self.init_ds.normalize_data_ashock(basic_s_tmp, key="basic_s", withtf=True)
             full_state_dict = {
                 "basic_s": basic_s_tmp,
                 "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
             }
             
             if t == self.t_unroll - 1:
-                wage = self.mparam.eta / price
-                e0 = -self.mparam.GAMY * price * k_cross + self.mparam.BETA * self.init_ds.unnormalize_data(value(full_state_dict), withth=True)
+                basic_s_tmp_pre = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
+                basic_s_tmp_e0 = self.init_ds.normalize_data(basic_s_tmp_pre, key="basic_s", withtf=True)
+                full_state_dict_e0 = {
+                    "basic_s": basic_s_tmp_e0,
+                    "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
+                }
+                wage = self.mparam.eta / price#この下のvalueはk_cross, gmも必要。
+                e0 = -self.mparam.GAMY * price * k_cross + self.mparam.BETA * self.init_ds.unnormalize_data(value(full_state_dict_e0), withth=True)
                 a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
                 a_tmp = torch.unsqueeze(a_tmp, 2)
                 basic_s_tmp = torch.cat([torch.unsqueeze(k_cross_pre, axis=-1), a_tmp], axis=-1)
+                basic_s_tmp_e1 = self.init_ds.normalize_data(basic_s_tmp, key="basic_s", withtf=True)
                 full_state_dict_e1 = {
                     "basic_s": basic_s_tmp,
                     "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross_pre, axis=-1), key="agt_s", withtf=True)
@@ -267,8 +275,9 @@ class KTPolicyTrainer(PolicyTrainer):
                 value = 0
                 true_policy = alpha * k_cross + (1 - alpha) * (1-self.mparam.delta) * k_cross_pre
                 
+                
                 full_state_dict_loss = {
-                    "basic_s": basic_s_tmp,
+                    "basic_s": basic_s_tmp_e1,
                     "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
                 }
                 
@@ -347,16 +356,21 @@ class KTPolicyTrainer(PolicyTrainer):
     def loss_price_init(self, data, policy_fn, price_fn, mparam):
         ashock = data[:,50:]#128,1
         k_cross = data[:, :50]#128,50
-        k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#1,50,1
-        price = price_fn(data)
+        k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#128,50,1
+        k_mean_mean = torch.mean(k_mean, dim=(0,1))
+        k_mean_std = torch.std(k_mean, dim=(0,1))
+        
+        price = self.init_ds.unnormalize_data(price_fn(self.init_ds.normalize_data(data), key="basic_s", withtf=True), key="basic_s", withtf=True)
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta
         n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))
         k_tmp = k_cross.unsqueeze(2)#128,50,1
         a_tmp = ashock.repeat(1, 50).unsqueeze(2)#128,50,1
-        basic_s = torch.cat([k_tmp, a_tmp, k_mean], dim=-1)
-        k_new = policy_fn(basic_s).squeeze(2)
+        basic_s = self.init_ds.normalize_data(torch.cat([k_tmp, a_tmp], dim=-1), key="basic_s", withtf=True)
+        k_mean_tmp = (k_mean - k_mean_mean)/k_mean_std
+        full_state_dict = torch.cat([basic_s, k_mean_tmp], dim=-1)
+        k_new = self.init_ds.unnormalize_data_k_cross(policy_fn(full_state_dict).squeeze(2), key="basic_s", withtf=True)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
