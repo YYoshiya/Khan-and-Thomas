@@ -112,7 +112,36 @@ def init_policy_fn_tf(init_policy, k_cross, k_mean, ashock):
 
     return output
 
-
+def create_stats_init(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if shocks is not None:
+        ashock = shocks
+        assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
+        assert T == ashock.shape[1], "T is inconsistent with given shocks."
+        if state_init:
+            assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
+                "Shock inputs are inconsistent with state_init"
+    else:
+        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
+    
+    n_agt = mparam.n_agt
+    k_cross = np.zeros((n_sample, n_agt, T))
+    k_mean = np.zeros((n_sample, T))
+    basic_s = np.zeros(shape=[0, n_agt, 2])
+    if state_init:
+        assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
+        k_cross[:, :, 0] = state_init["k_cross"]
+    else:
+        k_cross[:, :, 0] = np.array(mparam.k_ss)
+    k_mean[:, 0] = k_cross[:, :, 0].mean(axis=1)
+    if policy_type == "nn_share":
+        for t in range(1, T):
+            k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
+            a_tmp = np.repeat(ashock[:, None, t-1:t], n_agt, axis=1)
+            k_tmp = k_cross[:,:,t-1:t]
+            basic_s_tmp = np.concatenate([k_tmp, a_tmp], axis=-1)
+            basic_s = np.concatenate([basic_s, basic_s_tmp])
+    return basic_s
 
 def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -156,7 +185,7 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
         "v0": v0,
         "k_cross": k_cross,
         "ashock": ashock
-    }
+    } 
     
     return simul_data
 

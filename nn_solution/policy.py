@@ -190,6 +190,8 @@ class KTPolicyTrainer(PolicyTrainer):
         else:
             init_policy = self.init_ds.c_policy_const_share
             policy_type = "nn_share"
+        data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
+        init_ds.update_stats(data_stats, key="basic_s", ma=0)
         self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.price_model, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None)
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_model, init=True, update_init=False)
         
@@ -360,7 +362,7 @@ class KTPolicyTrainer(PolicyTrainer):
         k_mean_mean = torch.mean(k_mean, dim=(0,1))
         k_mean_std = torch.std(k_mean, dim=(0,1))
         
-        price = self.init_ds.unnormalize_data(price_fn(self.init_ds.normalize_data(data, key="basic_s", withtf=True), key="basic_s", withtf=True))
+        price = self.init_ds.unnormalize_data_k_cross(price_fn(self.init_ds.normalize_data_price(data, key="basic_s", withtf=True)), key="basic_s", withtf=True)
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta

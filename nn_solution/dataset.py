@@ -99,6 +99,27 @@ class DataSetwithStats(BasicDataSet):
             mean, std = self.stats_dict[key]
         return (data - mean) / std
     
+    def normalize_data_price(self, data, key, withtf=False):
+        if withtf:
+            mean, std = self.stats_dict_tf[key]
+            mean = mean.to(data.device)
+            std = std.to(data.device)
+        else:
+            mean, std = self.stats_dict[key]
+
+        # 50個まで（0から50番目のデータ）には mean[0] と std[0] を使用
+        # 51個目には mean[1] と std[1] を使用
+        normalized_data = torch.empty_like(data)  # data と同じサイズのテンソルを作成
+
+        # 50個のデータの標準化
+        normalized_data[:, :50] = (data[:, :50] - mean[0]) / std[0]
+
+        # 51個目のデータの標準化
+        normalized_data[:, 50] = (data[:, 50] - mean[1]) / std[1]
+
+        return normalized_data
+
+    
     def normalize_data_ashock(self, data, key, withtf=False):
         if withtf:
             mean, std = self.stats_dict_tf[key]
