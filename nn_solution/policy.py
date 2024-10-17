@@ -307,7 +307,7 @@ class KTPolicyTrainer(PolicyTrainer):
         init=None,
         state_init=None,
         shocks=None,
-        num_epochs=3
+        num_epochs=1
     ):
         
         
