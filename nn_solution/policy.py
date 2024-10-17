@@ -191,8 +191,8 @@ class KTPolicyTrainer(PolicyTrainer):
             init_policy = self.init_ds.c_policy_const_share
             policy_type = "nn_share"
         data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
-        init_ds.update_stats(data_stats, key="basic_s", ma=0)
-        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.price_model, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None)
+        init_ds.update_stats(data_stats, key="basic_s", ma=1)
+        self.price_loss_training_loop(self.n_sample_price, 100, self.mparam, init_ds.policy_init_only, "nn_share", self.price_model, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None) #self.price_config["T"]
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_model, init=True, update_init=False)
         
 
@@ -359,8 +359,6 @@ class KTPolicyTrainer(PolicyTrainer):
         ashock = data[:,50:]#128,1
         k_cross = data[:, :50]#128,50
         k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#128,50,1
-        k_mean_mean = torch.mean(k_mean, dim=(0,1))
-        k_mean_std = torch.std(k_mean, dim=(0,1))
         
         price = self.init_ds.unnormalize_data_k_cross(price_fn(self.init_ds.normalize_data_price(data, key="basic_s", withtf=True)), key="basic_s", withtf=True)
         wage = mparam.eta / price
@@ -369,10 +367,9 @@ class KTPolicyTrainer(PolicyTrainer):
         n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))
         k_tmp = k_cross.unsqueeze(2)#128,50,1
         a_tmp = ashock.repeat(1, 50).unsqueeze(2)#128,50,1
-        basic_s = self.init_ds.normalize_data(torch.cat([k_tmp, a_tmp], dim=-1), key="basic_s", withtf=True)
-        k_mean_tmp = (k_mean - k_mean_mean)/k_mean_std
-        full_state_dict = torch.cat([basic_s, k_mean_tmp], dim=-1)
-        k_new = self.init_ds.unnormalize_data_k_cross(policy_fn(full_state_dict).squeeze(2), key="basic_s", withtf=True)
+        basic_s = self.init_ds.normalize_data(torch.cat([k_tmp, k_mean, a_tmp], dim=-1), key="basic_s", withtf=True)
+
+        k_new = self.init_ds.unnormalize_data_k_cross(policy_fn(basic_s).squeeze(2), key="basic_s", withtf=True)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)

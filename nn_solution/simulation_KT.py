@@ -22,7 +22,7 @@ def simul_shocks(n_sample, T, Z, Pi, state_init=None):
     Pi = Pi / Pi.sum(axis=1, keepdims=True)
 
     if state_init is not None:
-        ashock[:, 0] = state_init  # 初期状態を設定
+        ashock[:, 0:1] = state_init["ashock"]  # 初期状態を設定
     else:
         # 初期状態をランダムに決定（均等分布）
         ashock[:, 0] = np.random.choice(nz, size=n_sample)
@@ -127,7 +127,7 @@ def create_stats_init(n_sample, T, mparam, policy, policy_type, price_fn, state_
     n_agt = mparam.n_agt
     k_cross = np.zeros((n_sample, n_agt, T))
     k_mean = np.zeros((n_sample, T))
-    basic_s = np.zeros(shape=[0, n_agt, 2])
+    basic_s = np.zeros(shape=[0, n_agt, 3])  # Updated to accommodate the additional element
     if state_init:
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
         k_cross[:, :, 0] = state_init["k_cross"]
@@ -136,12 +136,18 @@ def create_stats_init(n_sample, T, mparam, policy, policy_type, price_fn, state_
     k_mean[:, 0] = k_cross[:, :, 0].mean(axis=1)
     if policy_type == "nn_share":
         for t in range(1, T):
-            k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
+            k_cross[:, :, t:t+1] = init_policy_fn(
+                policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]
+            ).detach().cpu().numpy()
             a_tmp = np.repeat(ashock[:, None, t-1:t], n_agt, axis=1)
-            k_tmp = k_cross[:,:,t-1:t]
-            basic_s_tmp = np.concatenate([k_tmp, a_tmp], axis=-1)
+            k_tmp = k_cross[:, :, t-1:t]
+            k_mean_tmp = np.mean(k_tmp, axis=1, keepdims=True)
+            k_mean_tmp_expanded = np.tile(k_mean_tmp, (1, n_agt, 1))
+            basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp_expanded, a_tmp], axis=-1)
             basic_s = np.concatenate([basic_s, basic_s_tmp])
     return basic_s
+
+
 
 def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -176,7 +182,7 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
-            v0 = v0_temp * price[:, t-1:t]
+            v0[:,:,t-1] = v0_temp * price[:, t-1:t]
             k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
             k_mean[:, t] = k_cross[:, :, t].mean(axis=1)
     

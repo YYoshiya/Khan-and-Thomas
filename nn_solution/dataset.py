@@ -115,7 +115,7 @@ class DataSetwithStats(BasicDataSet):
         normalized_data[:, :50] = (data[:, :50] - mean[0]) / std[0]
 
         # 51個目のデータの標準化
-        normalized_data[:, 50] = (data[:, 50] - mean[1]) / std[1]
+        normalized_data[:, 50] = (data[:, 50] - mean[2]) / std[2]
 
         return normalized_data
 
@@ -127,7 +127,7 @@ class DataSetwithStats(BasicDataSet):
             std = std.to(data.device)
         else:
             mean, std = self.stats_dict[key]
-        return (data - mean[1]) / std[1]
+        return (data - mean[2]) / std[2]
 
     def unnormalize_data(self, data, key, withtf=False):
         if withtf:
@@ -154,7 +154,7 @@ class DataSetwithStats(BasicDataSet):
             std = std.to(data.device)
         else:
             mean, std = self.stats_dict[key]
-        return data * std[1] + mean[1]
+        return data * std[2] + mean[2]
     
     def save_stats(self, path):
         with open(os.path.join(path, "stats.json"), "w") as fp:
@@ -310,8 +310,8 @@ class KTInitDataSet(InitDataSet):
         while t_idx + t_count < value_config["T"] - 1:
             k_tmp = k_cross[:, :, t_idx:t_idx+1]
             k_mean_tmp = np.repeat(k_mean[:, :, t_idx:t_idx+1], self.mparam.n_agt, axis=1)
-            a_tmp = np.repeat(ashock[:, t_idx:t_idx+1], self.mparam.n_agt, axis=1)
-            basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp, a_tmp], axis=-1, keepdims=True)
+            a_tmp = np.repeat(ashock[:, None, t_idx:t_idx+1], self.mparam.n_agt, axis=1)
+            basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp, a_tmp], axis=-1)
             v_tmp = np.sum(profit[..., t_idx:t_idx+t_count] * discount, axis=-1, keepdims=True)
             basic_s = np.concatenate([basic_s, basic_s_tmp], axis=0)
             agt_s = np.concatenate([agt_s, k_tmp], axis=0)
