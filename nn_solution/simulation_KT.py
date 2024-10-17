@@ -177,14 +177,14 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
     if policy_type == "nn_share":
         for t in range(1, T):
             price_data = torch.cat((torch.tensor(k_cross[:, :, t-1], dtype=TORCH_DTYPE), torch.tensor(ashock[:, t-1:t], dtype=TORCH_DTYPE)), dim=1)
-            price[:, t-1] = price_fn(price_data.to(device)).detach().cpu().numpy().squeeze(-1)
+            price[:, t-1] = price_fn(price_data.to(device)).detach().cpu().clamp(min=0.01).numpy().squeeze(-1)
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
             v0[:,:,t-1] = v0_temp * price[:, t-1:t]
-            k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
+            k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().clamp(min=0.1).numpy()
             k_mean[:, t] = k_cross[:, :, t].mean(axis=1)
     
     simul_data = {

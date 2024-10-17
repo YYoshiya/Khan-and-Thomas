@@ -89,7 +89,7 @@ class PolicyTrainer():
             )
         self.optimizer_price = optim.Adam(
                 self.price_model.parameters(),
-                lr=self.policy_config["lr_beg"],
+                lr=self.price_config["lr"],
                 betas=(0.99, 0.99),
                 eps=1e-8
             )
@@ -360,7 +360,7 @@ class KTPolicyTrainer(PolicyTrainer):
         k_cross = data[:, :50]#128,50
         k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#128,50,1
         
-        price = self.init_ds.unnormalize_data_k_cross(price_fn(self.init_ds.normalize_data_price(data, key="basic_s", withtf=True)), key="basic_s", withtf=True)
+        price = torch.clamp(self.init_ds.unnormalize_data_k_cross(price_fn(self.init_ds.normalize_data_price(data, key="basic_s", withtf=True)), key="basic_s", withtf=True), min=0.01)
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta

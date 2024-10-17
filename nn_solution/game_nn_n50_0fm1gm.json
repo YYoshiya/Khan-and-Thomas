@@ -60,11 +60,12 @@
         "n_path": 64,
         "T": 1000,
         "n_sample": 384,
-        "net_width": [24, 24],
+        "net_width": [64, 64],
         "activation": "tanh",
-        "d_in": 50,
+        "d_in": 51,
         "d_out": 1,
-        "num_epoch": 1
+        "num_epoch": 1,
+        "lr": 1e-4
     },
     
     "simul_config": {
