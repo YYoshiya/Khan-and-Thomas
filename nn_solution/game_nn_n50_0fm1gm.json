@@ -60,7 +60,7 @@
         "n_path": 64,
         "T": 1000,
         "n_sample": 384,
-        "net_width": [64, 32, 32, 8],
+        "net_width": [128, 64, 32, 16],
         "activation": "tanh",
         "d_in": 51,
         "d_out": 1,
