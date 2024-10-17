@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+import matplotlib.pyplot as plt
 
 
 DTYPE = "float32"
@@ -86,7 +87,7 @@ def init_policy_fn(init_policy, k_cross, k_mean, ashock):
     # NumPyで処理する
     k_mean_tmp = np.repeat(k_mean, 50, axis=1)[:, :, np.newaxis]
     ashock_tmp = np.repeat(ashock, 50, axis=1)[:, :, np.newaxis]
-    basic_s = np.concatenate([k_cross, ashock_tmp, k_mean_tmp], axis=2)
+    basic_s = np.concatenate([k_cross, k_mean_tmp, ashock_tmp], axis=2)
     
     # GPUでNNの計算を実行
     basic_s_torch = torch.tensor(basic_s, device="cuda", dtype=TORCH_DTYPE)
@@ -101,7 +102,7 @@ def init_policy_fn_tf(init_policy, k_cross, k_mean, ashock):
     # PyTorchで処理する
     k_mean_tmp = k_mean.repeat(1, 50).unsqueeze(2)  # axis=1をPyTorchで再現
     ashock_tmp = ashock.repeat(1, 50).unsqueeze(2)  # axis=1をPyTorchで再現
-    basic_s = torch.cat([k_cross, ashock_tmp, k_mean_tmp], dim=2)  # NumPyのconcatenateをtorch.catで再現
+    basic_s = torch.cat([k_cross, k_mean_tmp,ashock_tmp], dim=2)  # NumPyのconcatenateをtorch.catで再現
     
     # GPUでNNの計算を実行
     basic_s_torch = basic_s.to("cuda")  # GPUに移動
@@ -132,7 +133,7 @@ def create_stats_init(n_sample, T, mparam, policy, policy_type, price_fn, state_
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
         k_cross[:, :, 0] = state_init["k_cross"]
     else:
-        k_cross[:, :, 0] = np.array(mparam.k_ss)
+        k_cross[:, :, 0:1] = mparam.k_ss
     k_mean[:, 0] = k_cross[:, :, 0].mean(axis=1)
     if policy_type == "nn_share":
         for t in range(1, T):
@@ -170,7 +171,7 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
         k_cross[:, :, 0] = state_init["k_cross"]
     else:
-        k_cross[:, :, 0] = np.array(mparam.k_ss)
+        k_cross[:, :, 0:1] = mparam.k_ss
     k_mean[:, 0] = k_cross[:, :, 0].mean(axis=1)
 
     if policy_type == "nn_share":
@@ -244,10 +245,11 @@ def initial_policy(model, mparam, num_epochs=200, batch_size=50):
     optimizer = optim.Adam(model.parameters(), lr=0.005)
     model.to(device)
     # 学習ループの実装
+    t=0
     for epoch in range(num_epochs):
         model.train()
-        epoch_loss = 0.0
         for batch_X, batch_y in dataloader:
+            t+=1
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
 
             # フォワードパス
@@ -259,9 +261,54 @@ def initial_policy(model, mparam, num_epochs=200, batch_size=50):
             loss.backward()
             optimizer.step()
 
-            epoch_loss += loss.item() * batch_X.size(0)
+            if t % 10 == 0:
+                print(f'Step [{t}], Loss: {loss.item()}')
 
-        epoch_loss /= len(dataloader.dataset)
-        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}')
 
-    
+def plot_policy(model, mparam, grid_K_fixed=3.0, ashock_fixed=1.0):
+    """
+    モデルの出力を grid_k に対してプロットする関数
+
+    Parameters:
+    - model: 学習済みのPyTorchモデル
+    - mparam: モデルパラメータオブジェクト（ZやPiなどを含む）
+    - grid_K_fixed: 固定する grid_K の値
+    - ashock_fixed: 固定する ashock の値
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.eval()
+
+    # grid_k の範囲を設定
+    grid_k = np.linspace(0.1, 3.0, 100)
+
+    # grid_K と ashock を固定してデータを作成
+    grid_K = np.full_like(grid_k, grid_K_fixed)
+    ashock = np.full_like(grid_k, ashock_fixed)
+
+    # 入力データを結合
+    data = np.column_stack([grid_k, grid_K, ashock])
+
+    # カスタムデータセットとデータローダーの作成
+    dataset = PolicyDataset(data)
+    dataloader = DataLoader(dataset, batch_size=100, shuffle=False)
+
+    outputs = []
+
+    with torch.no_grad():
+        for batch_X, _ in dataloader:
+            batch_X = batch_X.to(device)
+            out = model(batch_X).squeeze().cpu().numpy()
+            outputs.append(out)
+
+    # 予測結果を結合
+    outputs = np.concatenate(outputs)
+
+    # プロットの作成
+    plt.figure(figsize=(10, 6))
+    plt.plot(grid_k, outputs, label='Model Output')
+    plt.xlabel('grid_k')
+    plt.ylabel('Output')
+    plt.title('Policy Output vs grid_k')
+    plt.legend()
+    plt.grid(True)
+    plt.show()

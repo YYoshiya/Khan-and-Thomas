@@ -19,4 +19,6 @@ class KTParam():
                                 [0.0014, 0.0690, 0.8593, 0.0690, 0.0014],
                                 [0.0001, 0.0042, 0.1035, 0.8579, 0.0344],
                                 [0.0000, 0.0002, 0.0083, 0.1377, 0.8537]])
-        self.k_ss = np.linspace(0.1, 3.0, n_agt)
+        # 基本となるlinspace配列を作成し、次元を追加
+        k_ss_single = np.linspace(0.1, 3.0, n_agt).reshape(1, n_agt, 1)  # 形状: (1, n_agt, 1)
+        self.k_ss = np.repeat(k_ss_single, 384, axis=0)  # 形状: (384, n_agt, 1)
