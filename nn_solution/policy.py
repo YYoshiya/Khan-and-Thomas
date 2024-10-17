@@ -11,6 +11,7 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import Dataset, DataLoader, random_split
 from tqdm import tqdm
 import os
+import matplotlib.pyplot as plt
 
 
 DTYPE = "float32"
@@ -293,42 +294,91 @@ class KTPolicyTrainer(PolicyTrainer):
         return loss
     
 
-    import torch
-
-    def price_loss_training_loop(self, n_sample, T, mparam, policy_fn, policy_type, price_fn, optimizer, batch_size=128, init=None, state_init=None, shocks=None):
-        # データ生成
-        if init is not None:
-            input_data = KT.init_simul_k(n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None)
-            loss_fn = self.loss_price_init  # init=Trueの場合、loss_price_initを使用
-        else:
-            input_data = KT.simul_k(n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None)
-            loss_fn = self.loss_price  # init=Falseの場合、loss_priceを使用
+    def price_loss_training_loop(
+        self,
+        n_sample,
+        T,
+        mparam,
+        policy_fn,
+        policy_type,
+        price_fn,
+        optimizer,
+        batch_size=64,
+        init=None,
+        state_init=None,
+        shocks=None,
+        num_epochs=3
+    ):
+        
+        
+        # データ生成（1回だけ実行）
+        with torch.no_grad():
+            if init is not None:
+                input_data = KT.init_simul_k(
+                    n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None
+                )
+                loss_fn = self.loss_price_init
+                for param in policy_fn.parameters():
+                    param.requires_grad = False
+            else:
+                input_data = KT.simul_k(
+                    n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None
+                )
+                loss_fn = self.loss_price
 
         # データの整形
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
         k_tmp = np.reshape(k_cross, (-1, 50))  # 384*T, 50
-        a_tmp = np.reshape(ashock, (-1, 1))  # 384*T, 1
-        basic_s = torch.tensor(np.concatenate([k_tmp, a_tmp], axis=1), dtype=TORCH_DTYPE)  # データを結合
+        a_tmp = np.reshape(ashock, (-1, 1))    # 384*T, 1
+        basic_s = torch.tensor(
+            np.concatenate([k_tmp, a_tmp], axis=1),
+            dtype=TORCH_DTYPE
+        ).to(self.device)  # データを結合し、デバイスに移動
 
         # データセットの作成
         dataset = PriceDataset(basic_s)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-        # トレーニングループ
-        for batch_idx, data in enumerate(dataloader):
-            data = data.to(self.device)
-            optimizer.zero_grad()
+        losses = []  # ロスを保存するリスト
 
-            # ロス関数の計算
-            loss = loss_fn(data, policy_fn, price_fn, mparam)
+        # エポックループの追加
+        for epoch in range(num_epochs):
+            print(f"Epoch {epoch + 1}/{num_epochs}")
+            epoch_loss = 0.0
 
-            # ステップとそのステップでのlossの出力
-            print(f"Step {batch_idx + 1}, Loss: {loss.item()}")
+            # 各エポック内のバッチループ
+            for batch_idx, data in enumerate(dataloader):
+                data = data.to(self.device)
+                optimizer.zero_grad()
 
-            # 損失の逆伝播と最適化
-            loss.backward()
-            optimizer.step()
+                # ロス関数の計算
+                loss = loss_fn(data, policy_fn, price_fn, mparam)
+
+                # 損失の逆伝播と最適化
+                loss.backward()
+                optimizer.step()
+
+                # ロスの累積と保存
+                epoch_loss += loss.item()
+                losses.append(loss.item())
+
+                # ロスの出力
+                print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
+
+            # エポックごとの平均ロスを表示
+            avg_epoch_loss = epoch_loss / len(dataloader)
+            print(f"Epoch {epoch + 1} の平均ロス: {avg_epoch_loss}\n")
+
+        print("トレーニング完了")
+
+        # トレーニング後にロスをプロット
+        plt.plot(losses)
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.title('Training Loss')
+        plt.show()
+
 
     
     def loss_price(self, data, policy_fn, price_fn, mparam):
