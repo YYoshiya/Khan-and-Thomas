@@ -427,15 +427,15 @@ class KTPolicyTrainer(PolicyTrainer):
         k_mean = torch.repeat_interleave(k_mean, self.mparam.n_agt, dim=1)#384,50,1
         ashock = torch.repeat_interleave(ashock, self.mparam.n_agt, dim=1).unsqueeze(-1)#384,50,1
         basic_s = torch.cat([k_cross, k_mean, ashock], dim=-1)#
-        basic_s = self.normalize_data(basic_s, key="basic_s", withtf=True)
-        agt_s = self.normalize_data(k_cross, key="agt_s", withtf=True)
+        basic_s = self.normalize_data(basic_s, key="basic_s", withtf=True).to(self.device)
+        agt_s = self.normalize_data(k_cross, key="agt_s", withtf=True).to(self.device)    
         
         full_state_dict = {
             "basic_s": basic_s,
             "agt_s": agt_s
         }
         
-        output = self.policy_fn_true(full_state_dict)
+        output = self.init_ds.unnormalize(self.policy_fn_true(full_state_dict), withtf=True)
         return output
     
     def get_valuedataset(self, update_init=False):
