@@ -103,8 +103,9 @@ class PolicyTrainer():
         self.discount = torch.pow(self.mparam.beta, torch.arange(self.t_unroll)).to(self.device)
         self.policy_ds = None
     
-    def sampler(self, batch_size, update_init=False):
-        self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_model, update_init)
+    def sampler(self, batch_size, init=False, update_init=False):
+        if init is False:
+            self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_model, update_init)
         dataset = CustomDataset(self.policy_ds.datadict)
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
         first_batch = next(iter(train_loader))
@@ -148,15 +149,15 @@ class PolicyTrainer():
     def train(self, n_epoch, batch_size=None):
         valid_data = {k: torch.tensor(self.init_ds.datadict[k], dtype=TORCH_DTYPE) for k in self.init_ds.keys}
         ashock = KT.simul_shocks(
-            self.valid_size, self.t_unroll, self.mparam,
+            self.valid_size, self.t_unroll, self.mparam.Z, self.mparam.Pi,
             state_init=self.init_ds.datadict
         )
         valid_data["ashock"] = torch.tensor(ashock, dtype=TORCH_DTYPE)
         valid_data = {k: v.to(self.device) for k, v in valid_data.items()}
-        
+        init=True
         update_init = False
         for n in tqdm(range(n_epoch), desc="Training Progress"):
-            train_datasets = self.sampler(batch_size, update_init)
+            train_datasets = self.sampler(batch_size, init, update_init)
             for train_data in train_datasets:
                 train_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
                 # トレーニングステップを実行
@@ -373,11 +374,11 @@ class KTPolicyTrainer(PolicyTrainer):
         print("トレーニング完了")
 
         # トレーニング後にロスをプロット
-        plt.plot(losses)
-        plt.xlabel('Iteration')
-        plt.ylabel('Loss')
-        plt.title('Training Loss')
-        plt.show()
+        #plt.plot(losses)
+        #plt.xlabel('Iteration')
+        #plt.ylabel('Loss')
+        #plt.title('Training Loss')
+        #plt.show()
 
 
     

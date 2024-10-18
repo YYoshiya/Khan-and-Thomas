@@ -56,8 +56,7 @@ class ValueTrainer():
                     train_data = {key: value.to(device=self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
                     self.optimizer.zero_grad()  # 勾配をゼロリセット
                     loss_dict = self.loss(train_data)  # lossメソッドを使用して損失を計算
-                    loss = loss_dict["loss"]
-                    loss.backward()  # 勾配計算
+                    loss_dict.backward()  # 勾配計算
                     self.optimizer.step()  # パラメータ更新
 
                 # Validation loop
@@ -66,8 +65,7 @@ class ValueTrainer():
                         for valid_data in valid_dataset:
                             valid_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in valid_data.items()}
                             val_loss_dict = self.loss(valid_data)  # lossメソッドを使用
-                            val_loss = val_loss_dict["loss"]
-                            print(f"Value function learning epoch: {epoch}, validation loss: {val_loss.item()}")
+                            print(f"Value function learning epoch: {epoch}, validation loss: {val_loss_dict}")
 
     def save_model(self, path="value_model.pth"):
     # モデルの重みを保存
