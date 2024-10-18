@@ -29,7 +29,7 @@ EPSILON = torch.tensor(1e-3, dtype=TORCH_DTYPE, device=device)
 class CustomDataset(Dataset):
     def __init__(self, policy_ds):
         self.policy_ds = policy_ds
-        self.keys = list(policy_ds.keys())  # データのキー (e.g., "k_cross", "ashock", "ishock")
+        self.keys = list(policy_ds.keys())
         self.data_length = len(policy_ds[self.keys[0]])  # データセットのサイズを取得
 
     def __len__(self):
@@ -69,7 +69,7 @@ class PolicyTrainer():
         self.n_sample_price = self.price_config["n_sample"]
         self.T_price = self.price_config["T"]
         d_in = self.config["n_basic"] + self.config["n_fm"] + self.config["n_gm"]
-        self.policy = util.FeedforwardModel(d_in, 1, self.policy_config, name="p_net").to(self.device)
+        self.policy = util.FeedforwardModel(2, 1, self.policy_config, name="p_net").to(self.device)
         self.policy_true = util.FeedforwardModel(d_in, 1, self.policy_config, "p_net_true").to(self.device)
         self.gm_model = util.GeneralizedMomModel(1, self.config["gm_config"], name="v_gm").to(self.device)
         self.price_model = util.PriceModel(51, 1, self.config["price_config"], name="price_net").to(self.device)
@@ -108,7 +108,7 @@ class PolicyTrainer():
             self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_model, update_init)
         dataset = CustomDataset(self.policy_ds.datadict)
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-        return new_train_loader
+        return train_loader
         
         
         
@@ -121,10 +121,12 @@ class PolicyTrainer():
     def policy_fn(self, input_data):
         state = self.prepare_state(input_data)
         policy = self.policy(state)#unnormalize_data必要と思う。
+        return policy
     
     def policy_fn_true(self, input_data):
         state = self.prepare_state(input_data)
         policy = self.policy_true(state)#こっちもunnormalize_data必要と思う。
+        return policy_true
     
     def loss(self, input_data):
         raise NotImplementedError
@@ -204,22 +206,30 @@ class KTPolicyTrainer(PolicyTrainer):
         price = input_data["price"]
         for t in range(self.t_unroll):
             price = price[:, t:t+1]
+            k_tmp = torch.unsqueeze(k_cross, 2)
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
             basic_s_tmp = self.init_ds.normalize_data_ashock(a_tmp, key="basic_s", withtf=True)
             full_state_dict = {
                 "basic_s": basic_s_tmp,
-                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
-            }
+                "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
+            }#こっちはbatch,2でいいはず。いや結局50人分いるからbatch,50,1になる。
             if t == self.t_unroll - 1:
+                k_mean_tmp = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50)
+                basic_s_tmp_v = torch.cat([k_tmp, k_mean_tmp, a_tmp], axis=-1)
+                basic_s_v = self.init_ds.normalize_data(basic_s_tmp_v, key="basic_s", withtf=True)
+                full_state_dict_v = {
+                    "basic_s": basic_s_v,
+                    "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
+                }
                 value = 0
                 for vtr in self.vtrainers:
                     value += self.init_ds.unnormalize_data(
-                        vtr.value_fn(full_state_dict)[..., 0], key="value", withtf=True)
+                        vtr.value_fn(full_state_dict_v)[..., 0], key="value", withtf=True)
                 value /= self.num_vnet
                 util_sum += -price * k_cross + self.discount[t] * value
                 continue
-            k_cross = self.policy_fn(full_state_dict)
+            k_cross = self.init_ds.unnormalize_data_ashock(self.policy_fn(full_state_dict), key="basic_s", withtf=True).squeeze(-1)
 
         loss1 = util_sum
         return loss1
@@ -233,6 +243,7 @@ class KTPolicyTrainer(PolicyTrainer):
         ashock = input_data["ashock"]
         price = input_data["price"]
         for t in range(self.t_unroll):
+            k_mean_tmp = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#384,50,1
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
             basic_s_tmp = a_tmp
@@ -243,7 +254,7 @@ class KTPolicyTrainer(PolicyTrainer):
             }
             
             if t == self.t_unroll - 1:
-                basic_s_tmp_pre = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
+                basic_s_tmp_pre = torch.cat([torch.unsqueeze(k_cross, axis=-1), k_mean_tmp,a_tmp], axis=-1)
                 basic_s_tmp_e0 = self.init_ds.normalize_data(basic_s_tmp_pre, key="basic_s", withtf=True)
                 full_state_dict_e0 = {
                     "basic_s": basic_s_tmp_e0,

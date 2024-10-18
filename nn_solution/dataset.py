@@ -278,7 +278,7 @@ class InitDataSet(DataSetwithStats):
 class KTInitDataSet(InitDataSet):
     def __init__(self, mparam, config):
         super().__init__(mparam, config)
-        self.keys = ["k_cross", "ashock"]
+        self.keys = ["k_cross", "ashock", "price", "v0"]
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.policy_init_only = util.FeedforwardModel(3, 1, config["policy_config"], name="init_model").to(self.device)
         self.price_init_only = util.PriceModel(51, 1, config["price_config"], name="init_price").to(self.device)

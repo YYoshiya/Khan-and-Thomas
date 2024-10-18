@@ -60,7 +60,7 @@ def main():
     train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.price_model, init=True, update_init=False)
     
     for vtr in vtrainers:
-        vtr.train(train_vds, valid_vds, value_config["num_epoch"], value_config["batch_size"])
+        vtr.train(train_vds, valid_vds, 50, value_config["batch_size"])
     
     ptrainer.train(200, policy_config["batch_size"])
     

@@ -30,7 +30,7 @@ class GeneralizedMomModel(FeedforwardModel):
         return self.dense_layers(x)
 
     def forward(self, x):
-        x = self.basis_fn(x)  # [batch_size, 1]
+        x = self.basis_fn(x)  
         gm = torch.mean(x, dim=-2, keepdim=True)  # 平均を計算
         gm = gm.repeat(1, x.shape[-2], 1)  # 必要に応じて繰り返し
         return gm
