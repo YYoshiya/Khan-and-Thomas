@@ -52,27 +52,30 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
         ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init).to(device)
     
     n_agt = mparam.n_agt
-    k_cross = torch.zeros(n_sample, n_agt, T, device=device)
+    k_cross = np.zeros((n_sample, n_agt, T))
+    price = np.zeros((n_sample, T))
+    v0 = np.zeros((n_sample, n_agt, T-1))
     
     if state_init:
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
-        k_cross[:, :, 0] = torch.tensor(state_init["k_cross"], device=device)
+        k_cross[:, :, 0] = state_init["k_cross"]
     else:
-        k_cross[:, :, 0] = mparam.k_ss.to(device)
+        k_cross[:, :, 0:1] = mparam.k_ss
     
     #price_fn.to(device)  
     #policy.to(device)  policy_fnにするときに面倒だからここじゃなくて最初に送っとくべき。
     
     if policy_type == "nn_share":
         for t in range(1, T):
-            price = price_fn(k_cross[:, :, t-1])
-            wage = mparam.eta / price
-            yterm = ashock[:, t-1].unsqueeze(1) * k_cross[:, :, t-1]**mparam.theta
-            n = (mparam.nu * yterm / wage.unsqueeze(1))**(1 / (1 - mparam.nu))
+            price_data = torch.cat((torch.tensor(k_cross[:, :, t-1], dtype=TORCH_DTYPE), torch.tensor(ashock[:, t-1:t], dtype=TORCH_DTYPE)), dim=1)
+            price[:, t-1] = price_fn(price_data.to(device)).detach().cpu().clamp(min=0.01).numpy().squeeze(-1)
+            wage = mparam.eta / price[:, t-1:t]#384,1
+            yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
+            n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
-            v0_temp = y - wage.unsqueeze(1) * n + (1 - mparam.delta) * k_cross[:, :, t-1]
-            v0 = v0_temp * price.unsqueeze(1)
-            k_cross[:, :, t] = policy_fn_true(k_cross[:, :, t - 1], ashock[:, t - 1])
+            v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
+            v0[:,:,t-1] = v0_temp * price[:, t-1:t]
+            k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t])
     
     simul_data = {
         "price": price.cpu().numpy(),

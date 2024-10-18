@@ -108,20 +108,6 @@ class PolicyTrainer():
             self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_model, update_init)
         dataset = CustomDataset(self.policy_ds.datadict)
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-        first_batch = next(iter(train_loader))
-        ashock = KT.simul_shocks(batch_size, self.t_unroll, self.mparam.Z, self.mparam.Pi, state_init=None)
-        new_data = {
-            "k_cross": torch.tensor(first_batch["k_cross"],dtype=TORCH_DTYPE),
-            "ashock": torch.tensor(ashock, dtype=TORCH_DTYPE)
-        }
-        
-        for train_data in train_loader:
-            ashock = KT.simul_shocks(batch_size, self.t_unroll, self.mparam.Z, self.mparam.Pi, state_init=None)
-            new_data["k_cross"] = torch.cat([new_data["k_cross"], train_data["k_cross"]], dim=0)
-            new_data["ashock"] = torch.cat([new_data["ashock"], torch.tensor(ashock, dtype=TORCH_DTYPE)], dim=0)
-        
-        new_dataset = CustomDataset(new_data)
-        new_train_loader = torch.utils.data.DataLoader(new_dataset, batch_size=batch_size, shuffle=True)
         return new_train_loader
         
         
@@ -134,11 +120,11 @@ class PolicyTrainer():
     
     def policy_fn(self, input_data):
         state = self.prepare_state(input_data)
-        policy = torch.sigmoid(self.policy(state))
+        policy = self.policy(state)#unnormalize_data必要と思う。
     
     def policy_fn_true(self, input_data):
         state = self.prepare_state(input_data)
-        policy = torch.sigmoid(self.policy_true(state))
+        policy = self.policy_true(state)#こっちもunnormalize_data必要と思う。
     
     def loss(self, input_data):
         raise NotImplementedError
@@ -158,6 +144,7 @@ class PolicyTrainer():
         update_init = False
         for n in tqdm(range(n_epoch), desc="Training Progress"):
             train_datasets = self.sampler(batch_size, init, update_init)
+            init=False
             for train_data in train_datasets:
                 train_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
                 # トレーニングステップを実行
@@ -436,10 +423,10 @@ class KTPolicyTrainer(PolicyTrainer):
 
     
     def current_policy(self, k_cross, ashock):
-        k_mean = torch.mean(k_cross, dim=1, keepdim=True)
-        k_mean = torch.repeat_interleave(k_mean, self.mparam.n_agt, dim=1)
-        ashock = torch.repeat_interleave(ashock, self.mparam.n_agt, dim=1)
-        basic_s = torch.cat([k_cross, k_mean, ashock], dim=-1)
+        k_mean = torch.mean(k_cross, dim=1, keepdim=True)#384,1,1
+        k_mean = torch.repeat_interleave(k_mean, self.mparam.n_agt, dim=1)#384,50,1
+        ashock = torch.repeat_interleave(ashock, self.mparam.n_agt, dim=1).unsqueeze(-1)#384,50,1
+        basic_s = torch.cat([k_cross, k_mean, ashock], dim=-1)#
         basic_s = self.normalize_data(basic_s, key="basic_s", withtf=True)
         agt_s = self.normalize_data(k_cross, key="agt_s", withtf=True)
         
@@ -448,7 +435,7 @@ class KTPolicyTrainer(PolicyTrainer):
             "agt_s": agt_s
         }
         
-        output = self.policy_fn_true(full_state_dict)[..., 0]
+        output = self.policy_fn_true(full_state_dict)
         return output
     
     def get_valuedataset(self, update_init=False):
