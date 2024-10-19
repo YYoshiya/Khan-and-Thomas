@@ -62,11 +62,13 @@ class PolicyTrainer():
         self.valid_size = self.policy_config["valid_size"]
         self.sgm_scale = self.policy_config["sgm_scale"] # scaling param in sigmoid
         self.init_ds = init_ds
+        self.vtrainers = vtrainers
         self.value_sampling = self.config["dataset_config"]["value_sampling"]
         self.num_vnet = len(vtrainers)
         self.decay_rate = self.policy_config["lr_end"] / self.policy_config["lr_beg"]
         self.mparam = init_ds.mparam
         self.n_sample_price = self.price_config["n_sample"]
+        self.ashock_num = self.price_config["T"] * 384
         self.T_price = self.price_config["T"]
         d_in = self.config["n_basic"] + self.config["n_fm"] + self.config["n_gm"]
         self.policy = util.FeedforwardModel(2, 1, self.policy_config, name="p_net").to(self.device)
@@ -106,6 +108,8 @@ class PolicyTrainer():
     def sampler(self, batch_size, init=False, update_init=False):
         if init is False:
             self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_model, update_init)
+        ashock = KT.simul_shocks(self.ashock_num, self.t_unroll, self.mparam.Z, self.mparam.Pi)
+        self.policy_ds.datadict["ashock"] = torch.tensor(ashock, dtype=TORCH_DTYPE)
         dataset = CustomDataset(self.policy_ds.datadict)
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
         return train_loader
@@ -151,7 +155,8 @@ class PolicyTrainer():
                 train_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
                 # トレーニングステップを実行
                 self.optimizer.zero_grad()
-                loss1 = self.loss1(train_data)
+                output_dict = self.loss1(train_data)
+                loss1 = output_dict["m_util"]
                 loss1.backward()
                 self.optimizer.step()
             for train_data in train_datasets:#データセットはシャッフルしなくてよい？
@@ -204,18 +209,18 @@ class KTPolicyTrainer(PolicyTrainer):
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
         price = input_data["price"]
+        util_sum = 0
         for t in range(self.t_unroll):
             price = price[:, t:t+1]
             k_tmp = torch.unsqueeze(k_cross, 2)
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
-            basic_s_tmp = self.init_ds.normalize_data_ashock(a_tmp, key="basic_s", withtf=True)
-            full_state_dict = {
-                "basic_s": basic_s_tmp,
-                "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
-            }#こっちはbatch,2でいいはず。いや結局50人分いるからbatch,50,1になる。
+        
             if t == self.t_unroll - 1:
-                k_mean_tmp = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50)
+                price_data_tmp = torch.cat([k_cross, ashock[:,t:t+1]], axis=-1)
+                price_data = self.init_ds.normalize_data_price(price_data_tmp, key="basic_s", withtf=True)
+                price = self.init_ds.unnormalize_data_k_cross(self.price_model(price_data), key="basic_s", withtf=True)
+                k_mean_tmp = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50,1)
                 basic_s_tmp_v = torch.cat([k_tmp, k_mean_tmp, a_tmp], axis=-1)
                 basic_s_v = self.init_ds.normalize_data(basic_s_tmp_v, key="basic_s", withtf=True)
                 full_state_dict_v = {
@@ -229,10 +234,16 @@ class KTPolicyTrainer(PolicyTrainer):
                 value /= self.num_vnet
                 util_sum += -price * k_cross + self.discount[t] * value
                 continue
+            basic_s_tmp = self.init_ds.normalize_data_ashock(a_tmp, key="basic_s", withtf=True)
+            full_state_dict = {
+                "basic_s": basic_s_tmp,
+                "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
+            }
             k_cross = self.init_ds.unnormalize_data_ashock(self.policy_fn(full_state_dict), key="basic_s", withtf=True).squeeze(-1)
 
-        loss1 = util_sum
-        return loss1
+        output_dict = {"m_util": -torch.mean(util_sum[:, 0]), "k_end": torch.mean(k_cross)}
+        
+        return output_dict
             
 
 

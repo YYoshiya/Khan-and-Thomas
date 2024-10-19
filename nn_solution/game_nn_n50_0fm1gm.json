@@ -32,7 +32,7 @@
     "policy_config": {
         "opt_type": "game",
         "update_init": true,
-        "t_unroll": 150,
+        "t_unroll": 2,
         "num_step": 10000,
         "freq_update_v": 2000,
         "lr_beg": 4e-4,
