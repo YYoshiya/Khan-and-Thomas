@@ -9,7 +9,7 @@
     "init_with_bchmk": false,
     "dataset_config": {
         "n_path": 384,
-        "t_burn": 500,
+        "t_burn":6000,
         "value_sampling": "nn",
         "moving_average": 1.0
     },
@@ -58,14 +58,14 @@
 
     "price_config": {
         "n_path": 64,
-        "T": 1000,
+        "T": 500,
         "n_sample": 384,
         "net_width": [128, 64, 32, 16],
         "activation": "tanh",
         "d_in": 51,
         "d_out": 1,
         "num_epoch": 1,
-        "lr": 4e-4
+        "lr": 1e-3
     },
     
     "simul_config": {

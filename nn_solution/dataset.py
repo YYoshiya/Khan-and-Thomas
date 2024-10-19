@@ -245,7 +245,7 @@ class InitDataSet(DataSetwithStats):
     def get_policydataset(self, policy, policy_type, price_fn, init=None, update_init=False):
         policy_config = self.config["policy_config"]
         simul_data = self.simul_k_func(
-            self.n_path, policy_config["T"], self.mparam, policy, policy_type, price_fn, init=init,
+            self.n_path, policy_config["T"], self.mparam, policy, policy_type, price_fn, init,
             state_init=self.datadict
         )
         if update_init:

@@ -49,7 +49,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
             assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device)) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init).to(device)
+        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
     
     n_agt = mparam.n_agt
     k_cross = np.zeros((n_sample, n_agt, T))
@@ -67,22 +67,21 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
     
     if policy_type == "nn_share":
         for t in range(1, T):
-            price_data = torch.cat((torch.tensor(k_cross[:, :, t-1], dtype=TORCH_DTYPE), torch.tensor(ashock[:, t-1:t], dtype=TORCH_DTYPE)), dim=1)
-            price[:, t-1] = price_fn(price_data.to(device)).detach().cpu().clamp(min=0.01).numpy().squeeze(-1)
+            price_data_tmp = np.concatenate((k_cross[:, :, t-1], ashock[:, t-1:t]), axis=1)
+            price[:, t-1] = price_fn(price_data_tmp).detach().cpu().clamp(min=0.01).numpy().squeeze(-1)
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
             v0[:,:,t-1] = v0_temp * price[:, t-1:t]
-            k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
-    
+            k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t]).detach().cpu().clamp(min=0.01).numpy()
     simul_data = {
-        "price": price.cpu().numpy(),
-        "v0": v0.cpu().numpy(),
-        "k_cross": k_cross.cpu().numpy(),
-        "ashock": ashock.cpu().numpy()
-    }
+        "price": price,
+        "v0": v0,
+        "k_cross": k_cross,
+        "ashock": ashock
+    } 
     
     return simul_data
 

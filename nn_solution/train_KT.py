@@ -16,7 +16,6 @@ parser.add_argument('--save_files', action='store_true', help='If set, files wil
 
 # コマンドライン引数を解析
 args = parser.parse_args()
-
 def main():
     # 解析した引数にアクセス
     config_path = args.config_path
@@ -60,7 +59,7 @@ def main():
     train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.price_model, init=True, update_init=False)
     
     for vtr in vtrainers:
-        vtr.train(train_vds, valid_vds, 10, value_config["batch_size"])
+        vtr.train(train_vds, valid_vds, 200, value_config["batch_size"])
     
     ptrainer.train(200, policy_config["batch_size"])
     
