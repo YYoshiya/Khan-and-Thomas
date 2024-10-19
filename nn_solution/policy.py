@@ -164,9 +164,9 @@ class PolicyTrainer():
                 loss2.backward()
                 self.optimizer_true.step()#この後にpriceの学習入れるべきじゃない？
             self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=128)
-            if n > 0 and n % 10 == 0:
+            if n > 0 and n % 3 == 0:
                 update_init = self.policy_config["update_init"]
-                train_vds, valid_vds = self.get_valuedataset(update_init)
+                train_vds, valid_vds = self.get_valuedataset(init, update_init)
                 for vtr in self.vtrainers:
                     vtr.train(
                         train_vds, valid_vds,
@@ -383,7 +383,7 @@ class KTPolicyTrainer(PolicyTrainer):
                 losses.append(loss.item())
 
                 # ロスの出力
-                print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
+                #print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
 
             # エポックごとの平均ロスを表示
             avg_epoch_loss = epoch_loss / len(dataloader)
@@ -407,13 +407,13 @@ class KTPolicyTrainer(PolicyTrainer):
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta
-        n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))
+        n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))#最右項は*2
         k_tmp = k_cross.unsqueeze(2)#128,50,1
         k_new = policy_fn(k_tmp, ashock, withtf=True).clamp(min=0.01).squeeze(2)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
-        #print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}")
+        print(f"k_cross:{k_cross[100,25]}, price:{price[100,0]}, yterm:{yterm[100,0]}, Cnow:{Cnow[100,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
         loss = mse_loss_fn(price, price_target)
@@ -481,8 +481,8 @@ class KTPolicyTrainer(PolicyTrainer):
         output = self.init_ds.unnormalize_data_k_cross(self.policy_fn_true(full_state_dict), "basic_s", withtf=True)
         return output
     
-    def get_valuedataset(self, update_init=False):
-        return self.init_ds.get_valuedataset(self.current_c_policy, "nn_share", self.price_fn, update_init)
+    def get_valuedataset(self, init=None, update_init=False):
+        return self.init_ds.get_valuedataset(self.current_policy, "nn_share", self.price_fn, init, update_init)
     
     def init_policy_fn_tf(self, k_cross, k_mean, ashock):
         # PyTorchで処理する
@@ -503,7 +503,7 @@ class KTPolicyTrainer(PolicyTrainer):
         data_tmp = torch.tensor(input_data, dtype=TORCH_DTYPE)
         data_tmp = data_tmp.to(self.device)
         price_data = self.init_ds.normalize_data_price(data_tmp, key="basic_s", withtf=True)
-        price = self.init_ds.unnormalize_data_k_cross(self.price_model(price_data), key="basic_s", withtf=True)
+        price = self.init_ds.unnormalize_data_k_cross(self.price_model(price_data), key="basic_s", withtf=True).clamp(min=0.01)
         return price
             
 
