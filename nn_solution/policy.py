@@ -164,9 +164,9 @@ class PolicyTrainer():
                 loss2.backward()
                 self.optimizer_true.step()#この後にpriceの学習入れるべきじゃない？
             self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=128)
-            if n > 0 and n % 20 == 0:
+            if n > 0 and n % 10 == 0:
                 update_init = self.policy_config["update_init"]
-                train_vds, valid_vds = self.get_valuedataset(self.currenct_policy, "nn_share", self.price_model, update_init)
+                train_vds, valid_vds = self.get_valuedataset(update_init)
                 for vtr in self.vtrainers:
                     vtr.train(
                         train_vds, valid_vds,
@@ -328,7 +328,7 @@ class KTPolicyTrainer(PolicyTrainer):
         init=None,
         state_init=None,
         shocks=None,
-        num_epochs=1
+        num_epochs=2
     ):
         
         
@@ -383,7 +383,7 @@ class KTPolicyTrainer(PolicyTrainer):
                 losses.append(loss.item())
 
                 # ロスの出力
-                #print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
+                print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
 
             # エポックごとの平均ロスを表示
             avg_epoch_loss = epoch_loss / len(dataloader)
@@ -413,7 +413,7 @@ class KTPolicyTrainer(PolicyTrainer):
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
-        print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}")
+        #print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
         loss = mse_loss_fn(price, price_target)
@@ -482,7 +482,7 @@ class KTPolicyTrainer(PolicyTrainer):
         return output
     
     def get_valuedataset(self, update_init=False):
-        return self.init_ds.get_valuedataset(self.current_c_policy, "nn_share", self.price_model, update_init)
+        return self.init_ds.get_valuedataset(self.current_c_policy, "nn_share", self.price_fn, update_init)
     
     def init_policy_fn_tf(self, k_cross, k_mean, ashock):
         # PyTorchで処理する
