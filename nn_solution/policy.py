@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from tqdm import tqdm
 import os
 import matplotlib.pyplot as plt
+import math
 
 
 DTYPE = "float32"
@@ -414,7 +415,7 @@ class KTPolicyTrainer(PolicyTrainer):
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
-        print(f"k_cross:{k_cross[100,25]}, price:{price[100,0]}, yterm:{yterm[100,0]}, Cnow:{Cnow[100,0]}")
+        print(f"k_cross:{k_cross[100,25]}, price:{price[100,0]}, n:{n[100,0]} yterm:{yterm[100,0]}, Cnow:{Cnow[100,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
         loss = mse_loss_fn(price, price_target)
@@ -426,7 +427,7 @@ class KTPolicyTrainer(PolicyTrainer):
         k_cross = data[:, :50]#128,50
         k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#128,50,1
         
-        price = torch.clamp(self.init_ds.unnormalize_data_k_cross(price_fn(self.init_ds.normalize_data_price(data, key="basic_s", withtf=True)), key="basic_s", withtf=True), min=0.01)
+        price = torch.clamp(self.init_ds.unnormalize_data_k_cross(price_fn(self.init_ds.normalize_data_price(data, key="basic_s", withtf=True)), key="basic_s", withtf=True), min=1.0)
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta
@@ -439,6 +440,7 @@ class KTPolicyTrainer(PolicyTrainer):
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
+        Cnow = Cnow.clamp(min=0.1)
 
         price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
@@ -504,7 +506,7 @@ class KTPolicyTrainer(PolicyTrainer):
         data_tmp = torch.tensor(input_data, dtype=TORCH_DTYPE)
         data_tmp = data_tmp.to(self.device)
         price_data = self.init_ds.normalize_data_price(data_tmp, key="basic_s", withtf=True)
-        price = self.init_ds.unnormalize_data_k_cross(self.price_model(price_data), key="basic_s", withtf=True).clamp(min=0.01)
+        price = self.init_ds.unnormalize_data_k_cross(self.price_model(price_data), key="basic_s", withtf=True).clamp(min=1.0)
         return price
             
 
