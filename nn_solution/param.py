@@ -22,3 +22,4 @@ class KTParam():
         # 基本となるlinspace配列を作成し、次元を追加
         k_ss_single = np.linspace(0.1, 3.0, n_agt).reshape(1, n_agt, 1)  # 形状: (1, n_agt, 1)
         self.k_ss = np.repeat(k_ss_single, 384, axis=0)  # 形状: (384, n_agt, 1)
+        
