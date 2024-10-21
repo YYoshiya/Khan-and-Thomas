@@ -12,7 +12,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from tqdm import tqdm
 import os
 import matplotlib.pyplot as plt
-
+import math
 
 DTYPE = "float32"
 if DTYPE == "float64":
@@ -164,7 +164,8 @@ class PolicyTrainer():
                 loss2.backward()
                 self.optimizer_true.step()#この後にpriceの学習入れるべきじゃない？
             self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=128)
-            if n > 0 and n % 3 == 0:
+            update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
+            if n > 0 and n % update_frequency == 0:
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init, update_init)
                 for vtr in self.vtrainers:
