@@ -186,7 +186,7 @@ class KTPolicyTrainer(PolicyTrainer):
             policy_type = "nn_share"
         data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
         init_ds.update_stats(data_stats, key="basic_s", ma=1)
-        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.price_model, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None) #self.price_config["T"]
+        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.price_model, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None, num_epochs= 5) #self.price_config["T"]
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_model, init=True, update_init=False)
         
 
@@ -439,7 +439,7 @@ class KTPolicyTrainer(PolicyTrainer):
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
-
+        print(f"k_cross:{k_cross[100,25]}, price:{price[100,0]}, yterm:{yterm[100,0]}, Cnow:{Cnow[100,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
         loss = mse_loss_fn(price, price_target)
