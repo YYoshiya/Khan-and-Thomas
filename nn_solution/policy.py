@@ -302,6 +302,7 @@ class KTPolicyTrainer(PolicyTrainer):
                 }
                 
                 loss = torch.mean((true_policy - self.policy_fn_true(full_state_dict_loss).squeeze(-1))**2)
+                
                 continue
             
             basic_s_tmp = self.init_ds.normalize_data_ashock(a_tmp, key="basic_s", withtf=True)
@@ -416,9 +417,8 @@ class KTPolicyTrainer(PolicyTrainer):
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=1e-5)
         print(f"k_cross:{k_cross[100,25]}, price:{price[100,0]}, yterm:{yterm[100,0]}, Cnow:{Cnow[100,0]}")
-        price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
-        loss = mse_loss_fn(price, price_target)
+        loss = mse_loss_fn(price*Cnow, torch.ones_like(price))
         return loss
 
 
@@ -442,9 +442,8 @@ class KTPolicyTrainer(PolicyTrainer):
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=1e-5)
         print(f"k_cross:{k_cross[100,25]}, price:{price[100,0]}, yterm:{yterm[100,0]}, Cnow:{Cnow[100,0]}")
-        price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
-        loss = mse_loss_fn(price, price_target)
+        loss = mse_loss_fn(price*Cnow, torch.ones_like(price))
         return loss
 
 
