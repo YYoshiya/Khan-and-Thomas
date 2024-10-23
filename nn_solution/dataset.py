@@ -40,6 +40,7 @@ class BasicDataSet():
     def __init__(self, datadict=None):
         self.datadict, self.keys = None, None
         self.size, self.idx_in_epoch, self.epoch_used = None, None, None
+        self.value_mean = []
         if datadict:
             self.update_datadict(datadict)
     
@@ -83,10 +84,12 @@ class DataSetwithStats(BasicDataSet):
         if self.stats_dict[key] is None:
             mean, std = data.mean(axis=axis_for_mean), data.std(axis=axis_for_mean)
             if key == "value":
+                self.value_mean.append(mean)
                 print("Average of total utility %f." % (mean))
         else:
             mean_new, std_new = data.mean(axis=axis_for_mean), data.std(axis=axis_for_mean)
             if key == "value":
+                self.value_mean.append(mean_new)
                 print("Average of total utility %f." % (mean_new))
             mean, std = self.stats_dict[key]
             mean = mean * ma + mean_new * (1-ma)

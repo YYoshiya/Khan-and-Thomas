@@ -141,6 +141,7 @@ class PolicyTrainer():
         raise NotImplementedError
     
     def train(self, n_epoch, batch_size=None):
+        loss1_list = []
         valid_data = {k: torch.tensor(self.init_ds.datadict[k], dtype=TORCH_DTYPE) for k in self.init_ds.keys}
         ashock = KT.simul_shocks(
             self.valid_size, self.t_unroll, self.mparam.Z, self.mparam.Pi,
@@ -151,6 +152,7 @@ class PolicyTrainer():
         init=True
         update_init = False
         for n in tqdm(range(n_epoch), desc="Training Progress"):
+            epoch_loss1 = 0.0
             train_datasets = self.sampler(batch_size, init, update_init)
             init=None
             for train_data in train_datasets:
@@ -161,10 +163,15 @@ class PolicyTrainer():
                 loss1 = output_dict["m_util"]
                 loss1.backward()
                 self.optimizer.step()
+                epoch_loss1 += loss1.item()
+                
                 self.optimizer_true.zero_grad()
                 loss2 = self.loss2(train_data)
                 loss2.backward()
                 self.optimizer_true.step()#この後にpriceの学習入れるべきじゃない？
+            
+            avg_loss1 = epoch_loss1 / len(train_datasets)
+            loss1_list.append(avg_loss1)
             self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=64,  num_epochs=2)
             update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             if n > 0 and n % update_frequency == 0:
@@ -176,7 +183,26 @@ class PolicyTrainer():
                         self.config["value_config"]["num_epoch"],
                         self.config["value_config"]["batch_size"]
                     )
-    
+        
+        plt.figure(figsize=(12, 5))
+        # Loss1のプロット
+        plt.subplot(1, 2, 1)
+        plt.plot(loss1_list, label='Loss1')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss1')
+        plt.title('Loss1 over Epochs')
+        plt.legend()
+        
+        plt.subplot(1, 2, 2)
+        plt.plot(self.init_ds.value_mean, label='Value', color='orange')
+        plt.xlabel('Update Step')
+        plt.ylabel('Value')
+        plt.title('Value over Update Steps')
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+        
 class KTPolicyTrainer(PolicyTrainer):
     def __init__(self, vtrainers, init_ds, policy_path=None):
         super(KTPolicyTrainer, self).__init__(vtrainers, init_ds, policy_path)
