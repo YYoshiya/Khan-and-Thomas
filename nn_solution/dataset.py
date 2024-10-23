@@ -89,6 +89,8 @@ class DataSetwithStats(BasicDataSet):
             std = std * ma + std_new * (1-ma)
         self.stats_dict[key] = mean, std
         self.stats_dict_tf[key] = torch.tensor([mean, std], dtype=TORCH_DTYPE)
+        if key == "value":
+            print("Average of total utility %f." % (mean_new))
 
     def normalize_data(self, data, key, withtf=False):
         if withtf:
@@ -225,7 +227,6 @@ class InitDataSet(DataSetwithStats):
             array = array[~idx_nan].astype(NP_DTYPE)
             self.update_stats(array, key, ma)
             v_datadict[key] = self.normalize_data(array, key)
-        print("Average of total utility %f." % (self.stats_dict["value"][0][0]))
 
         valid_size = self.config["value_config"]["valid_size"]
         n_sample = v_datadict["value"].shape[0]
