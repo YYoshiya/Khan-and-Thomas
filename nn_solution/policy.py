@@ -337,18 +337,18 @@ class KTPolicyTrainer(PolicyTrainer):
                 input_data = KT.init_simul_k(
                     n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None)
                 loss_fn = self.loss_price_init
-                for param in policy_fn.parameters():
-                    param.requires_grad = False
+                #for param in policy_fn.parameters():
+                    #param.requires_grad = False
             else:
                 input_data = KT.simul_k(
                     n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=self.init_ds.datadict)
                 loss_fn = self.loss_price
-                for param in self.policy.parameters():
-                    param.requires_grad = False
-                for param in self.gm_model.parameters():
-                    param.requires_grad = False
-                for param in self.policy_true.parameters():
-                    param.requires_grad = False
+                #for param in self.policy.parameters():
+                    #param.requires_grad = False
+                #for param in self.gm_model.parameters():
+                    #param.requires_grad = False
+                #for param in self.policy_true.parameters():
+                    #param.requires_grad = False
 
         # データの整形
         k_cross = input_data["k_cross"]
@@ -421,7 +421,7 @@ class KTPolicyTrainer(PolicyTrainer):
         Cnow = Cnow.clamp(min=0.1)
         print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
-        mse_loss_fn = nn.MSELoss()
+        mse_loss_fn = nn.L1Loss()
         loss = mse_loss_fn(price, price_target)
         return loss
 
@@ -445,7 +445,7 @@ class KTPolicyTrainer(PolicyTrainer):
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
         price_target = 1 / Cnow
-        mse_loss_fn = nn.MSELoss()
+        mse_loss_fn = nn.L1Loss()
         loss = mse_loss_fn(price, price_target)
         if torch.isnan(loss):
             print("Loss is NaN")
