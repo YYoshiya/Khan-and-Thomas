@@ -195,7 +195,7 @@ class InitDataSet(DataSetwithStats):
             state_init = self.datadict
         simul_data = self.simul_k_func(
             self.n_path, t_burn, self.mparam,
-            policy, policy_type, price_fn, init=True, state_init=state_init
+            policy, policy_type, price_fn, update_from=True, init=True, state_init=state_init
         )
         self.update_from_simul(simul_data)
     
@@ -242,10 +242,10 @@ class InitDataSet(DataSetwithStats):
         
         return train_vdataset, valid_vdataset
     
-    def get_policydataset(self, policy, policy_type, price_fn, init=None, update_init=False):
+    def get_policydataset(self, policy, policy_type, price_fn, update_from=None, init=None, update_init=False):
         policy_config = self.config["policy_config"]
         simul_data = self.simul_k_func(
-            self.n_path, policy_config["T"], self.mparam, policy, policy_type, price_fn, init,
+            self.n_path, policy_config["T"], self.mparam, policy, policy_type, price_fn, update_from, init,
             state_init=self.datadict
         )
         if update_init:
@@ -287,12 +287,12 @@ class KTInitDataSet(InitDataSet):
     
     
 
-    def get_valuedataset(self, policy, policy_type, price_fn, init=None, update_init=False):
+    def get_valuedataset(self, policy, policy_type, price_fn, update_from=None, init=None, update_init=False):
         value_config = self.config["value_config"]
         t_count = value_config["t_count"]
         t_skip = value_config["t_skip"]
         simul_data = self.simul_k_func(
-            self.n_path, value_config["T"], self.mparam, policy, policy_type, price_fn, init=init,
+            self.n_path, value_config["T"], self.mparam, policy, policy_type, price_fn, update_from, init=init,
             state_init=self.datadict)
         if update_init:
             self.update_from_simul(simul_data)
@@ -322,8 +322,10 @@ class KTInitDataSet(InitDataSet):
         train_vdataset, valid_vdataset = self.process_vdatadict(v_datadict)
         return train_vdataset, valid_vdataset
     
-    def simul_k_func(self, n_sample, T, mparam, policy, policy_type, price_fn, init=None, state_init=None, shocks=None):
-        if init is not None:
+    def simul_k_func(self, n_sample, T, mparam, policy, policy_type, price_fn, update_from=None, init=None, state_init=None, shocks=None):
+        if init is not None and update_from is not None:
+            return KT.simul_k_init_update(n_sample, T, mparam, policy, policy_type, price_fn, state_init, shocks)
+        elif init is not None and update_from is None:
             return KT.init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init, shocks)
         else:
             return KT.simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init, shocks)

@@ -44,7 +44,8 @@ class PriceModel(nn.Module):
             layers.append(nn.Linear(d_in, w))
             layers.append(nn.Tanh())  # Tanh アクティベーションを追加
             d_in = w  # 次のレイヤーの入力は現在の出力次元になる
-        layers.append(nn.Linear(d_in, d_out))  # 最終出力層はアクティベーションなし
+        layers.append(nn.Linear(d_in, d_out)) 
+        layers.append(nn.Softplus())
         self.dense_layers = nn.Sequential(*layers)
 
     def forward(self, x):

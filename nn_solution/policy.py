@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from tqdm import tqdm
 import os
 import matplotlib.pyplot as plt
+from param import KTParam
 
 
 DTYPE = "float32"
@@ -107,7 +108,7 @@ class PolicyTrainer():
     
     def sampler(self, batch_size, init=None, update_init=False):
         if init is None:
-            self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_fn, init, update_init)
+            self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.prepare_price_input, init=init, update_init=update_init)
         ashock = KT.simul_shocks(self.ashock_num, self.t_unroll, self.mparam.Z, self.mparam.Pi)
         self.policy_ds.datadict["ashock"] = torch.tensor(ashock, dtype=TORCH_DTYPE)
         dataset = CustomDataset(self.policy_ds.datadict)
@@ -163,10 +164,10 @@ class PolicyTrainer():
                 loss2 = self.loss2(train_data)
                 loss2.backward()
                 self.optimizer_true.step()#この後にpriceの学習入れるべきじゃない？
-            self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=128)
+            self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=128)
             if n > 0 and n % 3 == 0:
                 update_init = self.policy_config["update_init"]
-                train_vds, valid_vds = self.get_valuedataset(init, update_init)
+                train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
                     vtr.train(
                         train_vds, valid_vds,
@@ -185,8 +186,8 @@ class KTPolicyTrainer(PolicyTrainer):
             policy_type = "nn_share"
         data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
         init_ds.update_stats(data_stats, key="basic_s", ma=1)
-        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.price_model, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None) #self.price_config["T"]
-        self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_model, init=True, update_init=False)
+        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None) #self.price_config["T"]
+        self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.prepare_price_input, init=True, update_init=False)
         
 
     def create_data(self, input_data):
@@ -214,9 +215,7 @@ class KTPolicyTrainer(PolicyTrainer):
             a_tmp = torch.unsqueeze(a_tmp, 2)
         
             if t == self.t_unroll - 1:
-                price_data_tmp = torch.cat([k_cross, ashock[:,t:t+1]], axis=-1)
-                price_data = self.init_ds.normalize_data_price(price_data_tmp, key="basic_s", withtf=True)
-                price = self.init_ds.unnormalize_data_k_cross(self.price_model(price_data), key="basic_s", withtf=True)
+                price = self.prepare_price_input(k_cross, ashock[:, t:t+1])
                 k_mean_tmp = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50,1)
                 basic_s_tmp_v = torch.cat([k_tmp, k_mean_tmp, a_tmp], axis=-1)
                 basic_s_v = self.init_ds.normalize_data(basic_s_tmp_v, key="basic_s", withtf=True)
@@ -239,7 +238,7 @@ class KTPolicyTrainer(PolicyTrainer):
             k_cross = self.init_ds.unnormalize_data_ashock(self.policy_fn(full_state_dict), key="basic_s", withtf=True).clamp(min=0.01).squeeze(-1)
 
         output_dict = {"m_util": -torch.mean(util_sum[:, 0]), "k_end": torch.mean(k_cross)}
-        
+        print(f"loss1:{-output_dict['m_util']}")
         return output_dict
             
 
@@ -260,9 +259,7 @@ class KTPolicyTrainer(PolicyTrainer):
             if t == self.t_unroll - 1:
                 value0 = 0
                 value1 = 0
-                price_data_tmp = torch.cat([k_cross, ashock[:,t:t+1]], axis=-1)
-                price_data = self.init_ds.normalize_data_price(price_data_tmp, key="basic_s", withtf=True)
-                price = self.init_ds.unnormalize_data_k_cross(self.price_model(price_data), key="basic_s", withtf=True)
+                price = self.prepare_price_input(k_cross, ashock[:, t:t+1])
                 
                 basic_s_tmp_pre = torch.cat([k_tmp, k_mean_tmp,a_tmp], axis=-1)
                 basic_s_tmp_e0 = self.init_ds.normalize_data(basic_s_tmp_pre, key="basic_s", withtf=True)
@@ -311,7 +308,7 @@ class KTPolicyTrainer(PolicyTrainer):
             
             k_cross_pre = k_cross
             k_cross = self.init_ds.unnormalize_data_ashock(self.policy_fn(full_state_dict), key="basic_s", withtf=True).clamp(min=0.01).squeeze(-1)
-        
+        print(f"loss2:{loss}")
         return loss
     
 
@@ -344,6 +341,12 @@ class KTPolicyTrainer(PolicyTrainer):
                 input_data = KT.simul_k(
                     n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=self.init_ds.datadict)
                 loss_fn = self.loss_price
+                for param in self.policy.parameters():
+                    param.requires_grad = False
+                for param in self.gm_model.parameters():
+                    param.requires_grad = False
+                for param in self.policy_true.parameters():
+                    param.requires_grad = False
 
         # データの整形
         k_cross = input_data["k_cross"]
@@ -403,7 +406,7 @@ class KTPolicyTrainer(PolicyTrainer):
     def loss_price(self, data, policy_fn, price_fn, mparam):
         ashock = data[:,50:].to(self.device)#128,1
         k_cross = data[:, :50].to(self.device)#128,50
-        price = price_fn(data)
+        price = price_fn(k_cross, ashock)
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta
@@ -424,8 +427,7 @@ class KTPolicyTrainer(PolicyTrainer):
         ashock = data[:,50:]#128,1
         k_cross = data[:, :50]#128,50
         k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#128,50,1
-        
-        price = torch.clamp(self.init_ds.unnormalize_data_k_cross(price_fn(self.init_ds.normalize_data_price(data, key="basic_s", withtf=True)), key="basic_s", withtf=True), min=0.01)
+        price = price_fn(k_cross, ashock)
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta
@@ -481,8 +483,8 @@ class KTPolicyTrainer(PolicyTrainer):
         output = self.init_ds.unnormalize_data_k_cross(self.policy_fn_true(full_state_dict), "basic_s", withtf=True)
         return output
     
-    def get_valuedataset(self, init=None, update_init=False):
-        return self.init_ds.get_valuedataset(self.current_policy, "nn_share", self.price_fn, init, update_init)
+    def get_valuedataset(self, update_from=None, init=None, update_init=False):
+        return self.init_ds.get_valuedataset(self.current_policy, "nn_share", self.prepare_price_input, update_from, init, update_init)
     
     def init_policy_fn_tf(self, k_cross, k_mean, ashock):
         # PyTorchで処理する
@@ -500,13 +502,51 @@ class KTPolicyTrainer(PolicyTrainer):
         return output
 
     def price_fn(self, input_data):
-        data_tmp = torch.tensor(input_data, dtype=TORCH_DTYPE)
-        data_tmp = data_tmp.to(self.device)
         price_data = self.init_ds.normalize_data_price(data_tmp, key="basic_s", withtf=True)
         price = self.init_ds.unnormalize_data_k_cross(self.price_model(price_data), key="basic_s", withtf=True).clamp(min=0.01)
         return price
+    
+    def get_bin_edges(self, num_bins=50, min_val=0.0, max_val=3.0):
+        return torch.linspace(min_val, max_val, steps=num_bins+1)
             
-
+    def assign_bins(self, k_cross, bin_edges):
+        bin_indices = torch.bucketize(k_cross, bin_edges, right=False) - 1  # shape: (batch_size, num_agents)
+        bin_indices = torch.clamp(bin_indices, 0, len(bin_edges) - 2) 
+        return bin_indices
+    
+    def count_bins(self, bin_indices, num_bins=50):
+        """
+        bin_indices: Tensor of shape (batch_size, num_agents)
+        """
+        # ワンホットエンコーディング
+        one_hot = F.one_hot(bin_indices, num_classes=num_bins)  # shape: (batch_size, num_agents, num_bins)
+        
+        # エージェント数をカウント
+        bin_counts = one_hot.sum(dim=1).float()  # shape: (batch_size, num_bins)
+        
+        return bin_counts
+    
+    def prepare_price_input(self, k_cross, ashock, num_bins=50):
+        """
+        k_cross: Tensor of shape (batch_size, num_agents)
+        ashock: Tensor of shape (batch_size, 1)
+        """
+        k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE).to(self.device)
+        ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).to(self.device)
+        # ビンエッジを定義
+        bin_edges = self.get_bin_edges().to(self.device)
+        
+        # ビンに割り当て
+        bin_indices = self.assign_bins(k_cross, bin_edges)
+        
+        # ビンごとのカウント
+        bin_counts = self.count_bins(bin_indices, num_bins)
+        
+        # ashockと結合
+        price_input = torch.cat([bin_counts, ashock], dim=1)  # shape: (batch_size, num_bins + 1)
+        
+        price = self.price_model(price_input)  # shape: (batch_size, 1)
+        return price
 # value, policyが学習されないようにする必要あり。
 # 真のpolicyがalphaを考慮してるからここでは真のpolicyを流してよさそう。
 #k_crossを384, 50, 32にして32*384, 50

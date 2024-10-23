@@ -9,7 +9,7 @@
     "init_with_bchmk": false,
     "dataset_config": {
         "n_path": 384,
-        "t_burn":6000,
+        "t_burn":100,
         "value_sampling": "nn",
         "moving_average": 1.0
     },
@@ -60,7 +60,7 @@
         "n_path": 64,
         "T": 500,
         "n_sample": 384,
-        "net_width": [128, 64, 32, 16],
+        "net_width": [64, 32, 8],
         "activation": "tanh",
         "d_in": 51,
         "d_out": 1,
