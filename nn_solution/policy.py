@@ -419,7 +419,7 @@ class KTPolicyTrainer(PolicyTrainer):
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
-        print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
+        #print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.L1Loss()
         loss = mse_loss_fn(price, price_target)
