@@ -54,16 +54,36 @@ def main():
         init_policy = init_ds.c_policy_const_share
         policy_type = "nn_share"
         
-    vtrainers = [ValueTrainer(config) for i in range(value_config["num_vnet"])]
-    policy_config = config["policy_config"]
-    price_config = config["price_config"]
-    ptrainer = KTPolicyTrainer(vtrainers, init_ds)
-    train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.prepare_price_input, init=True, update_init=False)
     
-    for vtr in vtrainers:
-        vtr.train(train_vds, valid_vds, 200, value_config["batch_size"])
+    param_list = [
+        {"batch_size": 32, "num_epochs": 2},
+        {"batch_size": 32, "num_epochs": 5},
+        {"batch_size": 32, "num_epochs": 10},
+        {"batch_size": 64, "num_epochs": 2},
+        {"batch_size": 64, "num_epochs": 5},
+        {"batch_size": 64, "num_epochs": 10},
+        {"batch_size": 128, "num_epochs": 2},
+        {"batch_size": 128, "num_epochs": 5},
+        {"batch_size": 128, "num_epochs": 10},
+        # 他のパラメータも追加できます
+    ]
+
+    for params in param_list:
+        vtrainers = [ValueTrainer(config) for i in range(value_config["num_vnet"])]
+        policy_config = config["policy_config"]
+        price_config = config["price_config"]
+        ptrainer = KTPolicyTrainer(vtrainers, init_ds)
+        train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.prepare_price_input, init=True, update_init=False)
+        
+        for vtr in vtrainers:
+            vtr.train(train_vds, valid_vds, 100, value_config["batch_size"])
+        
+        plt = ptrainer.train(40, params["batch_size"], params["num_epochs"])
+        filename = f"results_batch{params['batch_size']}_epochs{params['num_epochs']}.png"
+        plt.savefig(filename)
+        plt.close()
     
-    ptrainer.train(25, policy_config["batch_size"])
+    
     
     if save_files:
         with open(os.path.join(model_path, "config.json"), 'w') as f:

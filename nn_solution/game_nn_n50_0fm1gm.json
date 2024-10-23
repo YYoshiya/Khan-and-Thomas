@@ -58,7 +58,7 @@
 
     "price_config": {
         "n_path": 64,
-        "T": 500,
+        "T": 1000,
         "n_sample": 384,
         "net_width": [128, 128, 64, 32],
         "activation": "ReLU",

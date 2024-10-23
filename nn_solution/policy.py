@@ -140,8 +140,9 @@ class PolicyTrainer():
     def get_valuedataset(self, update_init=False):
         raise NotImplementedError
     
-    def train(self, n_epoch, batch_size=None):
+    def train(self, n_epoch, batch_size, num_epochs):
         loss1_list = []
+        loss_price_list = []
         valid_data = {k: torch.tensor(self.init_ds.datadict[k], dtype=TORCH_DTYPE) for k in self.init_ds.keys}
         ashock = KT.simul_shocks(
             self.valid_size, self.t_unroll, self.mparam.Z, self.mparam.Pi,
@@ -153,7 +154,7 @@ class PolicyTrainer():
         update_init = False
         for n in tqdm(range(n_epoch), desc="Training Progress"):
             epoch_loss1 = 0.0
-            train_datasets = self.sampler(batch_size, init, update_init)
+            train_datasets = self.sampler(384, init, update_init)
             init=None
             for train_data in train_datasets:
                 train_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -172,7 +173,8 @@ class PolicyTrainer():
             
             avg_loss1 = epoch_loss1 / len(train_datasets)
             loss1_list.append(avg_loss1)
-            self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=64,  num_epochs=2)
+            loss_price = self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size,  init=None, shocks=None, num_epochs=num_epochs)
+            loss_price_list.append(loss_price)
             update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             if n > 0 and n % update_frequency == 0:
                 update_init = self.policy_config["update_init"]
@@ -184,23 +186,31 @@ class PolicyTrainer():
                         self.config["value_config"]["batch_size"]
                     )
         
-        plt.figure(figsize=(12, 5))
+        plt.figure(figsize=(18, 5))
         # Loss1のプロット
-        plt.subplot(1, 2, 1)
+        plt.subplot(1, 3, 1)
         plt.plot(loss1_list, label='Loss1')
         plt.xlabel('Epoch')
         plt.ylabel('Loss1')
         plt.title('Loss1 over Epochs')
         plt.legend()
         
-        plt.subplot(1, 2, 2)
+        plt.subplot(1, 3, 2)
         plt.plot(self.init_ds.value_mean, label='Value', color='orange')
         plt.xlabel('Update Step')
         plt.ylabel('Value')
         plt.title('Value over Update Steps')
         plt.legend()
         plt.tight_layout()
-        plt.show()
+        
+        plt.subplot(1,3,3)
+        plt.plot(loss_price_list, label='Loss Price', color='green')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss Price')
+        plt.title('Loss Price over Epochs')
+        plt.legend()
+        plt.tight_layout()
+        return plt
 
         
 class KTPolicyTrainer(PolicyTrainer):
@@ -214,7 +224,7 @@ class KTPolicyTrainer(PolicyTrainer):
             policy_type = "nn_share"
         data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
         init_ds.update_stats(data_stats, key="basic_s", ma=1)
-        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None, num_epochs=10) #self.price_config["T"]
+        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, shocks=None, num_epochs=5) #self.price_config["T"]
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.prepare_price_input, init=True, update_init=False)
         
 
@@ -351,7 +361,6 @@ class KTPolicyTrainer(PolicyTrainer):
         optimizer,
         batch_size=64,
         init=None,
-        state_init=None,
         shocks=None,
         num_epochs=3
     ):
@@ -411,17 +420,17 @@ class KTPolicyTrainer(PolicyTrainer):
 
                 # ロスの累積と保存
                 epoch_loss += loss.item()
-                losses.append(loss.item())
 
                 # ロスの出力
                 #print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
 
             # エポックごとの平均ロスを表示
             avg_epoch_loss = epoch_loss / len(dataloader)
+            losses.append(avg_epoch_loss)
             print(f"Epoch {epoch + 1} の平均ロス: {avg_epoch_loss}\n")
 
         print("トレーニング完了")
-
+        return torch.tensor(losses).mean().item() if losses else 0.0
         # トレーニング後にロスをプロット
         #plt.plot(losses)
         #plt.xlabel('Iteration')
