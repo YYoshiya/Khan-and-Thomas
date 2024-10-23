@@ -2,6 +2,7 @@ import json
 import os
 import time
 import argparse
+import simulation_KT as KT
 from param import KTParam
 from dataset import KTInitDataSet
 from value import ValueTrainer
@@ -14,6 +15,7 @@ parser.add_argument('--config_path', type=str, default='game_nn_n50_0fm1gm.json'
 parser.add_argument('--exp_name', type=str, default='test', help='The suffix used in model_path for save.')
 parser.add_argument('--save_files', action='store_true', help='If set, files will be saved.')
 
+KT.seed_everything(42)
 # コマンドライン引数を解析
 args = parser.parse_args()
 def main():
@@ -59,9 +61,9 @@ def main():
     train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.prepare_price_input, init=True, update_init=False)
     
     for vtr in vtrainers:
-        vtr.train(train_vds, valid_vds, 10, value_config["batch_size"])
+        vtr.train(train_vds, valid_vds, 200, value_config["batch_size"])
     
-    ptrainer.train(200, policy_config["batch_size"])
+    ptrainer.train(50, policy_config["batch_size"])
     
     if save_files:
         with open(os.path.join(model_path, "config.json"), 'w') as f:

@@ -13,6 +13,7 @@ from tqdm import tqdm
 import os
 import matplotlib.pyplot as plt
 from param import KTParam
+import math
 
 
 DTYPE = "float32"
@@ -164,8 +165,9 @@ class PolicyTrainer():
                 loss2 = self.loss2(train_data)
                 loss2.backward()
                 self.optimizer_true.step()#この後にpriceの学習入れるべきじゃない？
-            self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=128)
-            if n > 0 and n % 3 == 0:
+            self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=64,  num_epochs=2)
+            update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
+            if n > 0 and n % update_frequency == 0:
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
@@ -186,7 +188,7 @@ class KTPolicyTrainer(PolicyTrainer):
             policy_type = "nn_share"
         data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
         init_ds.update_stats(data_stats, key="basic_s", ma=1)
-        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=128, init=True, state_init=None, shocks=None) #self.price_config["T"]
+        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None, num_epochs=10) #self.price_config["T"]
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.prepare_price_input, init=True, update_init=False)
         
 
@@ -325,7 +327,7 @@ class KTPolicyTrainer(PolicyTrainer):
         init=None,
         state_init=None,
         shocks=None,
-        num_epochs=2
+        num_epochs=3
     ):
         
         
@@ -416,7 +418,8 @@ class KTPolicyTrainer(PolicyTrainer):
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
-        print(f"k_cross:{k_cross[100,25]}, price:{price[100,0]}, yterm:{yterm[100,0]}, Cnow:{Cnow[100,0]}")
+        Cnow = Cnow.clamp(min=0.1)
+        print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
         loss = mse_loss_fn(price, price_target)
@@ -440,10 +443,16 @@ class KTPolicyTrainer(PolicyTrainer):
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
-
+        Cnow = Cnow.clamp(min=0.1)
         price_target = 1 / Cnow
         mse_loss_fn = nn.MSELoss()
         loss = mse_loss_fn(price, price_target)
+        if torch.isnan(loss):
+            print("Loss is NaN")
+            print(f"price: {price}")
+            print(f"k_cross: {k_cross}")
+            print(f"Cnow: {Cnow}")
+    
         return loss
 
 

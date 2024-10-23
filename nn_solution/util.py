@@ -12,7 +12,7 @@ class FeedforwardModel(nn.Module):
             layers.append(nn.Linear(d_in, w))
             layers.append(nn.Tanh())  # Tanh アクティベーションを追加
             d_in = w  # 次のレイヤーの入力は現在の出力次元になる
-        layers.append(nn.Linear(d_in, d_out))  # 最終出力層はアクティベーションなし
+        layers.append(nn.Linear(d_in, d_out))
         self.dense_layers = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -42,15 +42,24 @@ class PriceModel(nn.Module):
         layers = []
         for w in config["net_width"]:
             layers.append(nn.Linear(d_in, w))
-            layers.append(nn.Tanh())  # Tanh アクティベーションを追加
-            d_in = w  # 次のレイヤーの入力は現在の出力次元になる
-        layers.append(nn.Linear(d_in, d_out)) 
+            layers.append(nn.Tanh())
+            d_in = w
+        layers.append(nn.Linear(d_in, d_out))
         layers.append(nn.Softplus())
         self.dense_layers = nn.Sequential(*layers)
+        
+        # 重みの初期化を追加
+        self._initialize_weights()
 
     def forward(self, x):
-
         return self.dense_layers(x)
+    
+    def _initialize_weights(self):
+        for layer in self.dense_layers:
+            if isinstance(layer, nn.Linear):
+                # Xavier（Glorot）初期化を使用
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
 
     
     

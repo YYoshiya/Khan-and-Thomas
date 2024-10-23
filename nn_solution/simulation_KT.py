@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
+import random
 
 
 DTYPE = "float32"
@@ -360,3 +361,15 @@ def plot_policy(model, mparam, grid_K_fixed=3.0, ashock_fixed=1.0):
     plt.legend()
     plt.grid(True)
     plt.show()
+
+
+def seed_everything(seed=42):
+    torch.manual_seed(seed)  # PyTorchのCPU乱数シードを固定
+    torch.cuda.manual_seed_all(seed)  # PyTorchのGPU乱数シードを固定
+    np.random.seed(seed)  # NumPyの乱数シードを固定
+    random.seed(seed)  # Pythonの乱数シードを固定
+
+    # CuDNNの再現性を確保
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
