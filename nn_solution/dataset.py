@@ -82,8 +82,12 @@ class DataSetwithStats(BasicDataSet):
         axis_for_mean = tuple(range(len(data.shape)-1))
         if self.stats_dict[key] is None:
             mean, std = data.mean(axis=axis_for_mean), data.std(axis=axis_for_mean)
+            if key == "value":
+                print("Average of total utility %f." % (mean))
         else:
             mean_new, std_new = data.mean(axis=axis_for_mean), data.std(axis=axis_for_mean)
+            if key == "value":
+                print("Average of total utility %f." % (mean_new))
             mean, std = self.stats_dict[key]
             mean = mean * ma + mean_new * (1-ma)
             std = std * ma + std_new * (1-ma)
@@ -225,7 +229,6 @@ class InitDataSet(DataSetwithStats):
             array = array[~idx_nan].astype(NP_DTYPE)
             self.update_stats(array, key, ma)
             v_datadict[key] = self.normalize_data(array, key)
-        print("Average of total utility %f." % (self.stats_dict["value"][0][0]))
 
         valid_size = self.config["value_config"]["valid_size"]
         n_sample = v_datadict["value"].shape[0]
