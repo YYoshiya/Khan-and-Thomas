@@ -82,15 +82,17 @@ class DataSetwithStats(BasicDataSet):
         axis_for_mean = tuple(range(len(data.shape)-1))
         if self.stats_dict[key] is None:
             mean, std = data.mean(axis=axis_for_mean), data.std(axis=axis_for_mean)
+            if key == "value":
+                print("Average of total utility %f." % (mean))
         else:
             mean_new, std_new = data.mean(axis=axis_for_mean), data.std(axis=axis_for_mean)
+            if key == "value":
+                print("Average of total utility %f." % (mean_new))
             mean, std = self.stats_dict[key]
             mean = mean * ma + mean_new * (1-ma)
             std = std * ma + std_new * (1-ma)
         self.stats_dict[key] = mean, std
         self.stats_dict_tf[key] = torch.tensor([mean, std], dtype=TORCH_DTYPE)
-        if key == "value":
-            print("Average of total utility %f." % (mean_new))
 
     def normalize_data(self, data, key, withtf=False):
         if withtf:
