@@ -142,6 +142,7 @@ class PolicyTrainer():
     
     def train(self, n_epoch, batch_size=None):
         loss1_list = []
+        loss_price_list = []
         valid_data = {k: torch.tensor(self.init_ds.datadict[k], dtype=TORCH_DTYPE) for k in self.init_ds.keys}
         ashock = KT.simul_shocks(
             self.valid_size, self.t_unroll, self.mparam.Z, self.mparam.Pi,
@@ -172,7 +173,8 @@ class PolicyTrainer():
             
             avg_loss1 = epoch_loss1 / len(train_datasets)
             loss1_list.append(avg_loss1)
-            self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=64,  num_epochs=2)
+            loss_price = self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=64,  num_epochs=2)
+            loss_price_list.append(loss_price)
             update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             if n > 0 and n % update_frequency == 0:
                 update_init = self.policy_config["update_init"]
@@ -184,24 +186,31 @@ class PolicyTrainer():
                         self.config["value_config"]["batch_size"]
                     )
         
-        plt.figure(figsize=(12, 5))
+        plt.figure(figsize=(18, 5))
         # Loss1のプロット
-        plt.subplot(1, 2, 1)
+        plt.subplot(1, 3, 1)
         plt.plot(loss1_list, label='Loss1')
         plt.xlabel('Epoch')
         plt.ylabel('Loss1')
         plt.title('Loss1 over Epochs')
         plt.legend()
         
-        plt.subplot(1, 2, 2)
+        plt.subplot(1, 3, 2)
         plt.plot(self.init_ds.value_mean, label='Value', color='orange')
         plt.xlabel('Update Step')
         plt.ylabel('Value')
         plt.title('Value over Update Steps')
         plt.legend()
         plt.tight_layout()
+        
+        plt.subplot(1,3,3)
+        plt.plot(loss_price_list, label='Loss Price', color='green')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss Price')
+        plt.title('Loss Price over Epochs')
+        plt.legend()
+        plt.tight_layout()
         plt.show()
-
         
 class KTPolicyTrainer(PolicyTrainer):
     def __init__(self, vtrainers, init_ds, policy_path=None):
@@ -411,17 +420,18 @@ class KTPolicyTrainer(PolicyTrainer):
 
                 # ロスの累積と保存
                 epoch_loss += loss.item()
-                losses.append(loss.item())
+                
 
                 # ロスの出力
                 #print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
 
             # エポックごとの平均ロスを表示
             avg_epoch_loss = epoch_loss / len(dataloader)
+            losses.append(avg_epoch_loss)
             print(f"Epoch {epoch + 1} の平均ロス: {avg_epoch_loss}\n")
 
         print("トレーニング完了")
-
+        return torch.tensor(losses).mean().item() if losses else 0.0
         # トレーニング後にロスをプロット
         #plt.plot(losses)
         #plt.xlabel('Iteration')
