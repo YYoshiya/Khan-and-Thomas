@@ -183,7 +183,7 @@ class PolicyTrainer():
             loss1_list.append(avg_loss1)
             update_frequency = min(25, max(15, int(math.sqrt(n + 1))))
             if n > 0 and n % update_frequency == 0:
-                loss_price = self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=128,  num_epochs=15)
+                loss_price = self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=64,  num_epochs=5)
                 loss_price_list.append(loss_price)
                 with torch.no_grad():
                     self.set_requires_grad([self.policy, self.gm_model, self.policy_true], True)
