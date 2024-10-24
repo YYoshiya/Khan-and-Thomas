@@ -166,8 +166,8 @@ def simul_k_init_update(n_sample, T, mparam, policy, policy_type, price_fn, stat
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
-            v0[:,:,t-1] = v0_temp * price[:, t-1:t]
             k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().clamp(min=0.1).numpy()
+            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t], v0_temp*price[:,t-1:t]-price[:, t-1:t]*wage*xi-price[:, t-1:t]*k_cross[:,:,t])
             k_mean[:, t] = k_cross[:, :, t].mean(axis=1)
     
     simul_data = {
