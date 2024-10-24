@@ -227,20 +227,6 @@ class KTPolicyTrainer(PolicyTrainer):
         self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, shocks=None, num_epochs=5) #self.price_config["T"]
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.prepare_price_input, init=True, update_init=False)
         
-
-    def create_data(self, input_data):
-        k_cross = input_data["k_cross"]
-        ashock = input_data["ashock"]
-        for t in range(self.t_unroll):
-            a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)
-            a_tmp = torch.unsqueeze(a_tmp, 2)
-            basic_s_tmp = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
-            full_state_dict = {
-                "basic_s": basic_s_tmp,
-                "agt_s": self.init_ds.normalize_data(torch.unsqueeze(k_cross, axis=-1), key="agt_s", withtf=True)
-            }
-        return full_state_dict
-
     def loss1(self, input_data): #vを最大にするpolicyを学習するためのlossを計算。
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
@@ -273,7 +259,7 @@ class KTPolicyTrainer(PolicyTrainer):
                 "basic_s": basic_s_tmp,
                 "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
             }
-            k_cross = self.init_ds.unnormalize_data_ashock(self.policy_fn(full_state_dict), key="basic_s", withtf=True).clamp(min=0.01).squeeze(-1)
+            k_cross = self.init_ds.unnormalize_data_ashock(self.policy_fn(full_state_dict), key="basic_s", withtf=True).squeeze(-1)
 
         output_dict = {"m_util": -torch.mean(util_sum[:, 0]), "k_end": torch.mean(k_cross)}
         print(f"loss1:{-output_dict['m_util']}")

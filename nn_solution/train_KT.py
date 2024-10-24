@@ -56,15 +56,8 @@ def main():
         
     
     param_list = [
-        {"batch_size": 32, "num_epochs": 2},
-        {"batch_size": 32, "num_epochs": 5},
-        {"batch_size": 32, "num_epochs": 10},
-        {"batch_size": 64, "num_epochs": 2},
-        {"batch_size": 64, "num_epochs": 5},
-        {"batch_size": 64, "num_epochs": 10},
-        {"batch_size": 128, "num_epochs": 2},
+        {"batch_size": 64, "num_epochs": 3},
         {"batch_size": 128, "num_epochs": 5},
-        {"batch_size": 128, "num_epochs": 10},
         # 他のパラメータも追加できます
     ]
 
