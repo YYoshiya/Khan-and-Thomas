@@ -439,11 +439,9 @@ class KTPolicyTrainer(PolicyTrainer):
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
-        Cnow = Cnow.clamp(min=0.1)
         #print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
-        price_target = 1 / Cnow
-        mse_loss_fn = nn.L1Loss()
-        loss = mse_loss_fn(price, price_target)
+        mse_loss_fn = nn.MSELoss()
+        loss = mse_loss_fn(price*Cnow, torch.ones_like(price))
         return loss
 
 
@@ -464,10 +462,10 @@ class KTPolicyTrainer(PolicyTrainer):
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
-        Cnow = Cnow.clamp(min=0.1)
-        price_target = 1 / Cnow
-        mse_loss_fn = nn.L1Loss()
-        loss = mse_loss_fn(price, price_target)
+       
+       
+        mse_loss_fn = nn.MSELoss()
+        loss = mse_loss_fn(price*Cnow, torch.ones_like(price))
         if torch.isnan(loss):
             print("Loss is NaN")
             print(f"price: {price}")
