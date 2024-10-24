@@ -58,12 +58,13 @@ def main():
     policy_config = config["policy_config"]
     price_config = config["price_config"]
     ptrainer = KTPolicyTrainer(vtrainers, init_ds)
-    train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.prepare_price_input, init=True, update_init=False)
+    train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.price_fn, init=True, update_init=False)
     
     for vtr in vtrainers:
-        vtr.train(train_vds, valid_vds, 200, value_config["batch_size"])
+        vtr.train(train_vds, valid_vds, 100, value_config["batch_size"])
     
-    ptrainer.train(50, policy_config["batch_size"])
+    plt = ptrainer.train(50, policy_config["batch_size"])
+    plt.show()
     
     if save_files:
         with open(os.path.join(model_path, "config.json"), 'w') as f:

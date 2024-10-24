@@ -68,7 +68,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
     
     if policy_type == "nn_share":
         for t in range(1, T):
-            price[:,t-1:t] = price_fn(k_cross[:,:,t-1], ashock[:, t-1:t]).detach().cpu().numpy()
+            price[:,t-1:t] = price_fn(k_cross[:,:,t-1]).detach().cpu().numpy()
             xi = np.random.uniform(0, mparam.B, size=(n_sample, n_agt))
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
@@ -113,7 +113,7 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
 
     if policy_type == "nn_share":
         for t in range(1, T):
-            price[:,t-1:t] = price_fn(k_cross[:,:,t-1], ashock[:, t-1:t]).detach().cpu().numpy()
+            price[:,t-1:t] = price_fn(k_cross[:,:,t-1]).detach().cpu().numpy()
             xi = np.random.uniform(0, mparam.B, size=(n_sample, n_agt))
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
@@ -210,7 +210,7 @@ def init_policy_fn_tf(init_policy, k_cross, k_mean, ashock):
 
     return output
 
-def create_stats_init(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
+def create_stats_init(n_sample, T, mparam, policy, policy_type, state_init=None, shocks=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if shocks is not None:
         ashock = shocks
@@ -243,7 +243,7 @@ def create_stats_init(n_sample, T, mparam, policy, policy_type, price_fn, state_
             k_mean_tmp_expanded = np.tile(k_mean_tmp, (1, n_agt, 1))
             basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp_expanded, a_tmp], axis=-1)
             basic_s = np.concatenate([basic_s, basic_s_tmp])
-    return basic_s
+    return basic_s, k_cross[:,:,0:1]
 
 
 
