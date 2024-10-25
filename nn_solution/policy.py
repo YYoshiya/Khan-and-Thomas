@@ -162,7 +162,8 @@ class PolicyTrainer():
         for n in tqdm(range(n_epoch), desc="Training Progress"):
             self.set_requires_grad([self.price_model, self.gm_model_p], False)
             epoch_loss1 = 0.0
-            train_datasets = self.sampler(batch_size, init, update_init)
+            with torch.no_grad():
+                train_datasets = self.sampler(batch_size, init, update_init)
             init=None
             for train_data in train_datasets:
                 train_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -183,7 +184,7 @@ class PolicyTrainer():
             loss1_list.append(avg_loss1)
             update_frequency = min(25, max(15, int(math.sqrt(n + 1))))
             if n > 0 and n % update_frequency == 0:
-                loss_price = self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=64,  num_epochs=5)
+                loss_price = self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=64,  num_epochs=2)
                 loss_price_list.append(loss_price)
                 with torch.no_grad():
                     self.set_requires_grad([self.policy, self.gm_model, self.policy_true], True)
@@ -463,7 +464,7 @@ class KTPolicyTrainer(PolicyTrainer):
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         #y_ag = ynow.sum(dim=1, keepdim=True)
         #i_ag = inow.sum(dim=1, keepdim=True)
-        Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
+        Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
         print(f"n:{n[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, ynow:{ynow[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
