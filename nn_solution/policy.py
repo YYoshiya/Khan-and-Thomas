@@ -346,6 +346,8 @@ class KTPolicyTrainer(PolicyTrainer):
                 input_data = KT.simul_k(
                     n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=self.init_ds.datadict)
                 loss_fn = self.loss_price
+                for param in self.policy_true.parameters():
+                    param.requires_grad = False
 
         # データの整形
         k_cross = input_data["k_cross"]
