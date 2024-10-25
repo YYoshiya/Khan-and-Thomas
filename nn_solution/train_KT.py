@@ -63,7 +63,7 @@ def main():
     for vtr in vtrainers:
         vtr.train(train_vds, valid_vds, 100, value_config["batch_size"])
     
-    plt = ptrainer.train(200, policy_config["batch_size"])
+    plt = ptrainer.train(60, policy_config["batch_size"])
     plt.show()
     
     if save_files:
