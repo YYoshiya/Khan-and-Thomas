@@ -68,10 +68,10 @@ class PriceModel(nn.Module):
         layers = []
         for w in config["net_width"]:
             layers.append(nn.Linear(d_in, w))
-            layers.append(nn.Tanh())
+            layers.append(nn.ReLU())
             d_in = w
         layers.append(nn.Linear(d_in, d_out))
-        layers.append(nn.Softplus())
+        layers.append(nn.ReLU())
         self.dense_layers = nn.Sequential(*layers)
         
         # 重みの初期化を追加

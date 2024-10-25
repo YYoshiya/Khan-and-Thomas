@@ -60,12 +60,12 @@
         "n_path": 64,
         "T": 500,
         "n_sample": 384,
-        "net_width": [64, 32],
+        "net_width": [64, 32, 16],
         "activation": "ReLU",
         "d_in": 51,
         "d_out": 1,
         "num_epoch": 1,
-        "lr": 5e-3
+        "lr": 1e-4
     },
     
     "simul_config": {
