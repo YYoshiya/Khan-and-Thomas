@@ -162,6 +162,7 @@ class PolicyTrainer():
         for n in tqdm(range(n_epoch), desc="Training Progress"):
             self.set_requires_grad([self.price_model, self.gm_model_p], False)
             epoch_loss1 = 0.0
+            update_init = self.policy_config["update_init"]
             with torch.no_grad():
                 train_datasets = self.sampler(batch_size, init, update_init)
             init=None
@@ -184,12 +185,12 @@ class PolicyTrainer():
             loss1_list.append(avg_loss1)
             #update_frequency = min(25, max(15, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
-            if n % 10 == 0:
-                loss_price = self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=256, num_epochs=1)
+            if n!= 0 and n % 7 == 0:
+                loss_price = self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=128, num_epochs=2)
                 loss_price_list.append(loss_price)
-                with torch.no_grad():
-                    self.set_requires_grad([self.policy, self.gm_model, self.policy_true], True)
-                update_init = self.policy_config["update_init"]
+                #with torch.no_grad():
+                    #self.set_requires_grad([self.policy, self.gm_model, self.policy_true], True)
+                
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
                     vtr.train(
@@ -387,12 +388,12 @@ class KTPolicyTrainer(PolicyTrainer):
                 input_data = KT.init_simul_k(
                     n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None)
                 loss_fn = self.loss_price_init
-                self.set_requires_grad([policy_fn], False)
+                #self.set_requires_grad([policy_fn], False)
             else:
                 input_data = KT.simul_k(
                     n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=self.init_ds.datadict)
                 loss_fn = self.loss_price
-                self.set_requires_grad([self.policy, self.gm_model, self.policy_true], False)
+                #self.set_requires_grad([self.policy, self.gm_model, self.policy_true], False)
                 self.set_requires_grad([self.price_model, self.gm_model_p], True)
 
         # データの整形
@@ -490,7 +491,7 @@ class KTPolicyTrainer(PolicyTrainer):
         k_new = self.init_ds.unnormalize_data_k_cross(policy_fn(basic_s).squeeze(2), key="basic_s", withtf=True)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
-        Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
+        Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
         print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
