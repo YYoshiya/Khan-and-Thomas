@@ -1,5 +1,15 @@
 import numpy as np
 import torch
+
+DTYPE = "float64"
+if DTYPE == "float64":
+    NP_DTYPE = np.float64
+    TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定
+elif DTYPE == "float32":
+    NP_DTYPE = np.float32
+    TORCH_DTYPE = torch.float32  # PyTorchのデータ型を指定
+else:
+    raise ValueError("Unknown dtype.")
 class KTParam():
     def __init__(self, n_agt, beta, mats_path):
         self.mats_path = mats_path
@@ -22,4 +32,4 @@ class KTParam():
         # 基本となるlinspace配列を作成し、次元を追加
         k_ss_single = np.linspace(0.1, 3.0, n_agt).reshape(1, n_agt, 1)  # 形状: (1, n_agt, 1)
         self.k_ss = np.repeat(k_ss_single, 384, axis=0)  # 形状: (384, n_agt, 1)
-        self.edge = torch.linspace(0.0, 3.0, steps=51)
+        self.edge = torch.linspace(0.0, 3.0, steps=51, dtype=TORCH_DTYPE)

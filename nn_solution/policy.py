@@ -16,7 +16,7 @@ from param import KTParam
 import math
 
 
-DTYPE = "float32"
+DTYPE = "float64"
 if DTYPE == "float64":
     NP_DTYPE = np.float64
     TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定
@@ -38,7 +38,7 @@ class CustomDataset(Dataset):
         return self.data_length
 
     def __getitem__(self, idx):
-        sample = {key: torch.tensor(self.policy_ds[key][idx]) for key in self.keys}
+        sample = {key: torch.tensor(self.policy_ds[key][idx], dtype=TORCH_DTYPE) for key in self.keys}
         return sample
 
 class PriceDataset(Dataset):
@@ -168,7 +168,7 @@ class PolicyTrainer():
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
             if n > 0 and n % 7 == 0:
-                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=64,  num_epochs=2)
+                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=256,  num_epochs=5)
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
@@ -290,7 +290,7 @@ class KTPolicyTrainer(PolicyTrainer):
                 value1 /= self.num_vnet
                 e1 = -price * (1-self.mparam.delta) * k_cross_pre + self.mparam.BETA * value1
                 xitemp = (e0 - e1)/(price * wage)
-                xi = torch.min(torch.tensor(self.mparam.B), torch.max(torch.tensor(0.0), xitemp))
+                xi = torch.min(torch.tensor(self.mparam.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0.0, dtype=TORCH_DTYPE), xitemp))
                 alpha = xi / self.mparam.B
                 true_policy = alpha * k_cross + (1 - alpha) * (1-self.mparam.delta) * k_cross_pre
                 
@@ -386,16 +386,28 @@ class KTPolicyTrainer(PolicyTrainer):
 
                 # ロスの累積と保存
                 epoch_loss += loss.item()
-                losses.append(loss.item())
 
                 # ロスの出力
                 #print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
 
             # エポックごとの平均ロスを表示
             avg_epoch_loss = epoch_loss / len(dataloader)
-            print(f"Epoch {epoch + 1} の平均ロス: {avg_epoch_loss}\n")
+            losses.append(avg_epoch_loss)
 
         print("トレーニング完了")
+        for epoch_num, loss in enumerate(losses, start=1):  
+            print(f"Epoch {epoch_num}: Loss = {loss}")
+        
+        self.plot_losses(losses)
+
+    def plot_losses(self, losses):
+        plt.plot(range(1, len(losses) + 1), losses, marker='o', linestyle='-')
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Training Loss per Epoch")
+        plt.grid(True)
+        plt.show()
+
 
         # トレーニング後にロスをプロット
         #plt.plot(losses)

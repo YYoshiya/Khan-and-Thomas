@@ -7,8 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
 import random
 
-
-DTYPE = "float32"
+DTYPE = "float64"
 if DTYPE == "float64":
     NP_DTYPE = np.float64
     TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定
@@ -43,11 +42,11 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     if shocks is not None:
-        ashock = torch.tensor(shocks, device=device)
+        ashock = torch.tensor(shocks, device=device, dtype=TORCH_DTYPE)
         assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
         assert T == ashock.shape[1], "T is inconsistent with given shocks."
         if state_init:
-            assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device)) and \
+            assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device, dtype=TORCH_DTYPE)) and \
                 "Shock inputs are inconsistent with state_init"
     else:
         ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
