@@ -168,7 +168,7 @@ class PolicyTrainer():
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
             if n > 0 and n % 7 == 0:
-                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=64,  num_epochs=2)
+                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=256,  num_epochs=10)
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
@@ -386,16 +386,20 @@ class KTPolicyTrainer(PolicyTrainer):
 
                 # ロスの累積と保存
                 epoch_loss += loss.item()
-                losses.append(loss.item())
 
                 # ロスの出力
                 #print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
 
             # エポックごとの平均ロスを表示
             avg_epoch_loss = epoch_loss / len(dataloader)
-            print(f"Epoch {epoch + 1} の平均ロス: {avg_epoch_loss}\n")
+            losses.append(avg_epoch_loss)
+            
 
         print("トレーニング完了")
+        for epoch_num, loss in enumerate(losses, start=1):  
+            print(f"Epoch {epoch_num}: Loss = {loss}")
+        
+        self.plot_losses(losses)
 
         # トレーニング後にロスをプロット
         #plt.plot(losses)
@@ -405,7 +409,15 @@ class KTPolicyTrainer(PolicyTrainer):
         #plt.show()
 
 
-    
+    def plot_losses(self, losses):
+        plt.plot(range(1, len(losses) + 1), losses, marker='o', linestyle='-')
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Training Loss per Epoch")
+        plt.grid(True)
+        plt.show()
+
+
     def loss_price(self, data, policy_fn, price_fn, mparam):
         ashock = data[:,50:].to(self.device)#128,1
         k_cross = data[:, :50].to(self.device)#128,50
