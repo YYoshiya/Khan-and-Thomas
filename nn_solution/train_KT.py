@@ -18,6 +18,7 @@ parser.add_argument('--save_files', action='store_true', help='If set, files wil
 KT.seed_everything(42)
 # コマンドライン引数を解析
 args = parser.parse_args()
+
 def main():
     # 解析した引数にアクセス
     config_path = args.config_path
@@ -31,11 +32,12 @@ def main():
     mparam = KTParam(config["n_agt"], config["beta"], config["mats_path"])
     
     base_model_path = r"C:\Users\Owner\OneDrive\デスクトップ\Github\Khan-and-Thomas\results"
-    model_path = os.path.join(base_model_path, "{}_{}_n{}_{}".format(
+    base_model_path_yuka = r"C:\Users\yuka\Yoshiya\Khan and Thomas result\1026_51_ver"
+    model_path = os.path.join(base_model_path_yuka, "{}_{}_n{}_{}".format(
         "game" if config["policy_config"]["opt_type"] == "game" else "sp",
         config["dataset_config"]["value_sampling"],
         config["n_agt"],
-        args.exp_name,  # FLAGS.exp_name の代わりに args.exp_name を使用
+        args.exp_name,  
     ))
     
     if save_files:

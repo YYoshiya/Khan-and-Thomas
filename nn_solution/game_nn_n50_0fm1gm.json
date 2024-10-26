@@ -65,7 +65,7 @@
         "d_in": 51,
         "d_out": 1,
         "num_epoch": 1,
-        "lr": 2e-4
+        "lr": 1e-3
     },
     
     "simul_config": {
