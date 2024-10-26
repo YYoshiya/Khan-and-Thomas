@@ -76,7 +76,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
             k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
-            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t], v0_temp-price[:, t-1:t]*wage*xi-price[:, t-1:t]*k_cross[:,:,t])
+            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t], v0_temp*price[:, t-1:t]-price[:, t-1:t]*wage*xi-price[:, t-1:t]*k_cross[:,:,t])
     
     simul_data = {
         "price": price,
