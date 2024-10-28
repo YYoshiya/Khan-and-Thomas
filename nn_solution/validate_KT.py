@@ -29,8 +29,29 @@ model_dir = r"C:\Users\yuka\Yoshiya\Khan and Thomas result\1026_51_ver\game_nn_n
 policy_path = model_dir + r"\policy.pth"
 policy_true_path = model_dir + r"\policy_true.pth"
 policy_gm_path = model_dir + r"\policy_gm.pth"
-policy_price_path = model_dir + r"\policy_price.pth"
+price_path = model_dir + r"\policy_price.pth"
 value_path = model_dir + r"\value0.pth"
 value_gm_path = model_dir + r"\value0_gm.pth"
 
+policy.load_state_dict(torch.load(policy_path, map_location=device))
+policy_true.load_state_dict(torch.load(policy_true_path, map_location=device))
+policy_gm.load_state_dict(torch.load(policy_gm_path, map_location=device))
+price_model.load_state_dict(torch.load(price_path, map_location=device))
+value.load_state_dict(torch.load(value_path, map_location=device))
+value_gm.load_state_dict(torch.load(value_gm_path, map_location=device))
+# 評価モードに設定
+policy.eval()
+policy_true.eval()
+policy_gm.eval()
+price_model.eval()
+value.eval()
+value_gm.eval()
 
+
+
+def valid_simul(T):
+        k_cross = np.zeros((1,50,T))
+        price = np.zeros((1, T))
+
+        for t in range(T):
+                price
