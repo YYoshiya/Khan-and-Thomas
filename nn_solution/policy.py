@@ -176,7 +176,7 @@ class PolicyTrainer():
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
             if n > 0 and n % 7 == 0:
-                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=256,  num_epochs=5)
+                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=256,  num_epochs=5, validation_size=32)
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
@@ -323,65 +323,83 @@ class KTPolicyTrainer(PolicyTrainer):
         return loss
     
 
+
+
     def price_loss_training_loop(
-        self,
-        n_sample,
-        T,
-        mparam,
-        policy_fn,
-        policy_type,
-        price_fn,
-        optimizer,
-        batch_size=64,
-        init=None,
-        state_init=None,
-        shocks=None,
-        num_epochs=3
-    ):
-        
-        
+            self,
+            n_sample,
+            T,
+            mparam,
+            policy_fn,
+            policy_type,
+            price_fn,
+            optimizer,
+            batch_size=64,
+            init=None,
+            state_init=None,
+            shocks=None,
+            num_epochs=3,
+            validation_size=32  # Added parameter for validation size
+        ):
+            
         # データ生成（1回だけ実行）
         with torch.no_grad():
             if init is not None:
                 input_data = KT.init_simul_k(
                     n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None)
                 loss_fn = self.loss_price_init
-                #for param in policy_fn.parameters():
-                    #param.requires_grad = False
+                # Optionally freeze policy_fn parameters if needed
+                # for param in policy_fn.parameters():
+                #     param.requires_grad = False
             else:
                 input_data = KT.simul_k(
                     n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=self.init_ds.datadict)
                 loss_fn = self.loss_price
-                #for param in self.policy.parameters():
-                    #param.requires_grad = False
-                #for param in self.gm_model.parameters():
-                    #param.requires_grad = False
-                #for param in self.policy_true.parameters():
-                    #param.requires_grad = False
+                # Optionally freeze other model parameters if needed
+                # for param in self.policy.parameters():
+                #     param.requires_grad = False
+                # for param in self.gm_model.parameters():
+                #     param.requires_grad = False
+                # for param in self.policy_true.parameters():
+                #     param.requires_grad = False
 
         # データの整形
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
-        k_tmp = np.reshape(k_cross, (-1, 50))  # 384*T, 50
-        a_tmp = np.reshape(ashock, (-1, 1))    # 384*T, 1
+        k_tmp = np.reshape(k_cross, (-1, 50))  # Example shape: (n_sample*T, 50)
+        a_tmp = np.reshape(ashock, (-1, 1))    # Example shape: (n_sample*T, 1)
         basic_s = torch.tensor(
             np.concatenate([k_tmp, a_tmp], axis=1),
             dtype=TORCH_DTYPE
-        ).to(self.device)  # データを結合し、デバイスに移動
+        ).to(self.device)  # Combined data tensor
 
         # データセットの作成
         dataset = PriceDataset(basic_s)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-        losses = []  # ロスを保存するリスト
+        # 確認: Ensure that the dataset has more than 32 samples
+        if len(dataset) <= validation_size:
+            raise ValueError(f"Dataset size ({len(dataset)}) must be larger than validation size ({validation_size}).")
+
+        # データの分割（トレーニングとバリデーション）
+        train_size = len(dataset) - validation_size
+        train_dataset, val_dataset = random_split(dataset, [train_size, validation_size])
+
+        # データローダーの作成
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=validation_size, shuffle=False)  # Typically, shuffle=False for validation
+
+        # ロスを保存するリスト
+        train_losses = []
+        val_losses = []
 
         # エポックループの追加
         for epoch in range(num_epochs):
             print(f"Epoch {epoch + 1}/{num_epochs}")
-            epoch_loss = 0.0
+            epoch_train_loss = 0.0
 
-            # 各エポック内のバッチループ
-            for batch_idx, data in enumerate(dataloader):
+            # トレーニングフェーズ
+            self.price_model.train()  # Set model to training mode
+            for batch_idx, data in enumerate(train_loader):
                 data = data.to(self.device)
                 optimizer.zero_grad()
 
@@ -392,26 +410,40 @@ class KTPolicyTrainer(PolicyTrainer):
                 loss.backward()
                 optimizer.step()
 
-                # ロスの累積と保存
-                epoch_loss += loss.item()
+                # ロスの累積
+                epoch_train_loss += loss.item()
 
-                # ロスの出力
-                #print(f"Epoch {epoch + 1}, Step {batch_idx + 1}, Loss: {loss.item()}")
+            # トレーニングの平均ロス
+            avg_train_loss = epoch_train_loss / len(train_loader)
+            train_losses.append(avg_train_loss)
 
-            # エポックごとの平均ロスを表示
-            avg_epoch_loss = epoch_loss / len(dataloader)
-            losses.append(avg_epoch_loss)
-            #print(f"Epoch {epoch + 1} の平均ロス: {avg_epoch_loss}\n")
+            # バリデーションフェーズ
+            self.price_model.eval()  # Set model to evaluation mode
+            epoch_val_loss = 0.0
+            with torch.no_grad():
+                for val_data in val_loader:
+                    val_data = val_data.to(self.device)
+                    
+                    # ロス関数の計算
+                    val_loss = loss_fn(val_data, policy_fn, price_fn, mparam)
+                    
+                    # ロスの累積
+                    epoch_val_loss += val_loss.item()
+
+            # バリデーションの平均ロス
+            avg_val_loss = epoch_val_loss / len(val_loader)
+            val_losses.append(avg_val_loss)
+
+            # ロスの出力
+            print(f"  Training Loss: {avg_train_loss:.4f} | Validation Loss: {avg_val_loss:.4f}")
 
         print("トレーニング完了")
-        for epoch_num, loss in enumerate(losses, start=1):  
-            print(f"Epoch {epoch_num}: Loss = {loss}")
-        # トレーニング後にロスをプロット
-        #plt.plot(losses)
-        #plt.xlabel('Iteration')
-        #plt.ylabel('Loss')
-        #plt.title('Training Loss')
-        #plt.show()
+        for epoch_num, (train_loss, val_loss) in enumerate(zip(train_losses, val_losses), start=1):  
+            print(f"Epoch {epoch_num}: Training Loss = {train_loss:.4f}, Validation Loss = {val_loss:.4f}")
+
+        # Optionally, return the losses for further analysis
+        return train_losses, val_losses
+
 
 
     
@@ -429,7 +461,7 @@ class KTPolicyTrainer(PolicyTrainer):
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
-        print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
+        #print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.L1Loss()
         loss = mse_loss_fn(price, price_target)
