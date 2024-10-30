@@ -176,7 +176,7 @@ class PolicyTrainer():
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
             if n > 0 and n % 7 == 0:
-                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.optimizer_price, batch_size=256,  num_epochs=5, validation_size=32)
+                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.value_simul_k, self.optimizer_price, batch_size=256,  num_epochs=5, validation_size=32)
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
@@ -198,7 +198,7 @@ class KTPolicyTrainer(PolicyTrainer):
         data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
         init_ds.update_stats(data_stats, key="basic_s", ma=1)
         init_ds.stats_dict["agt_s"], init_ds.stats_dict_tf["agt_s"] = [x[0] for x in init_ds.stats_dict["basic_s"]], [x[0] for x in init_ds.stats_dict_tf["basic_s"]]
-        init_ds.stats_dict["value"], init_ds.stats_dict_tf["value"] = (10, 2), (torch.tensor(10, dtype=TORCH_DTYPE), torch.tensor(2, dtype=TORCH_DTYPE))
+        init_ds.stats_dict["value"], init_ds.stats_dict_tf["value"] = (5, 2), (torch.tensor(5, dtype=TORCH_DTYPE), torch.tensor(2, dtype=TORCH_DTYPE))
         #self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None, num_epochs=10) #self.price_config["T"]
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.prepare_price_input, self.value_simul_k, init=True, update_init=False)
         
@@ -335,6 +335,7 @@ class KTPolicyTrainer(PolicyTrainer):
             policy_fn,
             policy_type,
             price_fn,
+            value,
             optimizer,
             batch_size=64,
             init=None,
@@ -348,14 +349,14 @@ class KTPolicyTrainer(PolicyTrainer):
         with torch.no_grad():
             if init is not None:
                 input_data = KT.init_simul_k(
-                    n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=None, shocks=None)
+                    n_sample, T, mparam, policy_fn, policy_type, price_fn, value, state_init=None, shocks=None)
                 loss_fn = self.loss_price_init
                 # Optionally freeze policy_fn parameters if needed
                 # for param in policy_fn.parameters():
                 #     param.requires_grad = False
             else:
                 input_data = KT.simul_k(
-                    n_sample, T, mparam, policy_fn, policy_type, price_fn, state_init=self.init_ds.datadict)
+                    n_sample, T, mparam, policy_fn, policy_type, price_fn, value, state_init=self.init_ds.datadict)
                 loss_fn = self.loss_price
                 # Optionally freeze other model parameters if needed
                 # for param in self.policy.parameters():

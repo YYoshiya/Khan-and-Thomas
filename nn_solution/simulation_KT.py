@@ -82,7 +82,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, value, s
             e0 = -mparam.GAMY * price[:,t-1:t] * k_cross[:,:,t] + mparam.BETA * value0
             e1 = -price[:,t-1:t] * (1-mparam.delta) * k_cross[:,:,t-1] + mparam.BETA * value1
             xitemp = (e0 - e1)/(price[:,t-1:t] * wage)
-            xi = np.min(mparam.B, np.max(0.0, xitemp))
+            xi = np.minimum(mparam.B, np.maximum(0.0, xitemp))
             xi_ex = price[:, t-1:t]*wage*(xi**2) / (2*mparam.B)
             v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t] - xi_ex, v0_temp*price[:, t-1:t]-xi_ex-price[:, t-1:t]*k_cross[:,:,t])
     

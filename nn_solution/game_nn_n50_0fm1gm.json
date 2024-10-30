@@ -11,7 +11,7 @@
         "n_path": 384,
         "t_burn":100,
         "value_sampling": "nn",
-        "moving_average": 0.5
+        "moving_average": 0.8
     },
 
     "value_config": {
