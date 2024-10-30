@@ -29,7 +29,8 @@ config_path = 'game_nn_n50_0fm1gm.json'
 with open(config_path, 'r') as f:
         config = json.load(f)
 
-model_dir = r"C:\Users\yuka\Yoshiya\Khan and Thomas result\1026_51_ver\game_nn_n50_test"
+model_dir_yuka = r"C:\Users\yuka\Yoshiya\Khan and Thomas result\1026_51_ver\game_nn_n50_test"
+model_dir = r"C:\Users\Owner\OneDrive\デスクトップ\Github\Khan-and-Thomas\results\game_nn_n50_test"
 
 mparam = KTParam(50, 0.9540, None)
 init_ds = KTInitDataSet(mparam, config)
@@ -54,20 +55,20 @@ ptrainer.policy_true.load_state_dict(torch.load(policy_true_path, map_location=d
 ptrainer.gm_model.load_state_dict(torch.load(policy_gm_path, map_location=device))
 ptrainer.price_model.load_state_dict(torch.load(price_path, map_location=device))
 
-data = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.prepare_price_input, init=True, update_init=False)
+data = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.prepare_price_input, ptrainer.value_simul_k, init=True, update_init=False)
 
 ykSS = (mparam.GAMY - mparam.beta * (1 - mparam.delta)) / mparam.beta / mparam.theta
 ckSS = ykSS + (1 - mparam.GAMY - mparam.delta)
 ycSS = ykSS / ckSS
 nSS = mparam.nu / mparam.eta * ycSS
 kSS = (ykSS * nSS ** (-mparam.nu)) ** (1 / (mparam.theta - 1))
-
+grid = np.linspace(0.1, 3.0, 50).reshape(1, 50, 1)
 
 def valid_simul(T, mparam):
     # 初期化: 時間ステップT+1に拡張
     k_cross = np.zeros((1, 50, T+1))
     
-    k_cross[:, :, 0] = np.full(k_cross[:, :, 0].shape, kSS)
+    k_cross[:, :, 0:1] = grid
     
     price = np.zeros((1, T))
     n = np.zeros((1, 50, T))

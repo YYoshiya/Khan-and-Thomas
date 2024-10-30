@@ -76,10 +76,10 @@ class ValueTrainer():
 
     def load_model(self, path):
     # モデルの重みをCPU上にロード
-        self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-        self.model.to(torch.device('cpu'))  # モデル自体もCPUに移動
+        self.model.load_state_dict(torch.load(path, map_location=self.device))
+        self.model.to(self.device)  # モデル自体もCPUに移動
         
         # n_gmが0より大きい場合、gm_modelも読み込み
         if self.config["n_gm"] > 0:
-            self.gm_model.load_state_dict(torch.load(path.replace(".pth", "_gm.pth"), map_location=torch.device('cpu')))
-            self.gm_model.to(torch.device('cpu'))  # gm_modelもCPUに移動
+            self.gm_model.load_state_dict(torch.load(path.replace(".pth", "_gm.pth"), map_location=self.device))
+            self.gm_model.to(self.device)  # gm_modelもCPUに移動

@@ -33,7 +33,7 @@ def main():
     
     base_model_path = r"C:\Users\Owner\OneDrive\デスクトップ\Github\Khan-and-Thomas\results"
     base_model_path_yuka = r"C:\Users\yuka\Yoshiya\Khan and Thomas result\1026_51_ver"
-    model_path = os.path.join(base_model_path_yuka, "{}_{}_n{}_{}".format(
+    model_path = os.path.join(base_model_path, "{}_{}_n{}_{}".format(
         "game" if config["policy_config"]["opt_type"] == "game" else "sp",
         config["dataset_config"]["value_sampling"],
         config["n_agt"],
@@ -62,10 +62,11 @@ def main():
     ptrainer = KTPolicyTrainer(vtrainers, init_ds)
     train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.prepare_price_input, ptrainer.value_simul_k, init=True, update_init=False)
     
+    init_ds.ma = 1.0
     for vtr in vtrainers:
         vtr.train(train_vds, valid_vds, 100, value_config["batch_size"])
     
-    ptrainer.train(50, policy_config["batch_size"])
+    ptrainer.train(60, policy_config["batch_size"])
     
     if save_files:
         with open(os.path.join(model_path, "config.json"), 'w') as f:

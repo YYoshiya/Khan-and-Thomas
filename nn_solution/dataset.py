@@ -188,6 +188,7 @@ class InitDataSet(DataSetwithStats):
         self.n_path = config["dataset_config"]["n_path"]
         self.t_burn = config["dataset_config"]["t_burn"]
         self.c_policy_const_share = lambda *args: config["init_const_share"]
+        self.ma = self.config["dataset_config"]["moving_average"]
         if not config["init_with_bchmk"]:
             assert config["policy_config"]["update_init"], \
                 "Must update init data during learning if bchmk policy is not used for sampling init"
@@ -224,10 +225,10 @@ class InitDataSet(DataSetwithStats):
             np.isnan(v_datadict["basic_s"]).any(axis=(1, 2)),
             np.isnan(v_datadict["value"]).any(axis=(1, 2))
         )
-        ma = self.config["dataset_config"]["moving_average"]
+        
         for key, array in v_datadict.items():
             array = array[~idx_nan].astype(NP_DTYPE)
-            self.update_stats(array, key, ma)
+            self.update_stats(array, key, self.ma)
             v_datadict[key] = self.normalize_data(array, key)
 
         valid_size = self.config["value_config"]["valid_size"]
