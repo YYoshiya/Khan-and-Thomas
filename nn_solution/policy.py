@@ -177,6 +177,7 @@ class PolicyTrainer():
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
             if n > 0 and n % 7 == 0:
+                self.optimizer_price = torch.optim.Adam(self.price_model.parameters(), lr=self.price_config["lr"])
                 self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.value_simul_k, self.optimizer_price, batch_size=256,  num_epochs=5, validation_size=32, threshold=threshold)
                 threshold = 2e-4
                 update_init = self.policy_config["update_init"]
@@ -443,12 +444,12 @@ class KTPolicyTrainer(PolicyTrainer):
             val_losses.append(avg_val_loss)
 
             # ロスの出力
-            print(f"  Training Loss: {avg_train_loss:.4f} | Validation Loss: {avg_val_loss:.4f}")
+            print(f"  Training Loss: {avg_train_loss:.6f} | Validation Loss: {avg_val_loss:.6f}")
             
             
         print("トレーニング完了")
         for epoch_num, (train_loss, val_loss) in enumerate(zip(train_losses, val_losses), start=1):  
-            print(f"Epoch {epoch_num}: Training Loss = {train_loss:.4f}, Validation Loss = {val_loss:.4f}")
+            print(f"Epoch {epoch_num}: Training Loss = {train_loss:.6f}, Validation Loss = {val_loss:.6f}")
 
         # Optionally, return the losses for further analysis
         return train_losses, val_losses
