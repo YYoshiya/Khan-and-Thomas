@@ -60,7 +60,7 @@ def main():
     policy_config = config["policy_config"]
     price_config = config["price_config"]
     ptrainer = KTPolicyTrainer(vtrainers, init_ds)
-    train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.prepare_price_input, ptrainer.value_simul_k, init=True, update_init=False)
+    train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.price_fn, ptrainer.value_simul_k, init=True, update_init=False)
     
     init_ds.ma = 1.0
     for vtr in vtrainers:

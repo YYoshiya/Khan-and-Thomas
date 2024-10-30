@@ -34,6 +34,32 @@ class GeneralizedMomModel(FeedforwardModel):
         gm = torch.mean(x, dim=-2, keepdim=True)  
         gm = gm.repeat(1, x.shape[-2], 1)  #384,50,1
         return gm
+    
+    def _initialize_weights(self):
+        for layer in self.dense_layers:
+            if isinstance(layer, nn.Linear):
+                # Xavier（Glorot）初期化を使用
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+
+class GeneralizedMomPrice(FeedforwardModel):
+    def __init__(self, d_in, config, name="generalizedmomentmodel"):
+        super(GeneralizedMomPrice, self).__init__(d_in, d_out=1, config=config, name=name)
+
+    def basis_fn(self, x):
+        return self.dense_layers(x)
+
+    def forward(self, x):
+        x = self.basis_fn(x)  
+        gm = torch.mean(x, dim=-2)  
+        return gm
+    
+    def _initialize_weights(self):
+        for layer in self.dense_layers:
+            if isinstance(layer, nn.Linear):
+                # Xavier（Glorot）初期化を使用
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
 
     
 class PriceModel(nn.Module):
