@@ -77,8 +77,8 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, value, s
             k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
             k_mean = np.mean(k_cross[:,:, t], axis=1, keepdims=True)#二次元であってほしい
             k_mean_pre = np.mean(k_cross[:,:,t-1], axis=1, keepdims=True)
-            value0 = value(k_cross[:,:,t], k_mean, ashock[:,t:t+1])
-            value1 = value(k_cross[:,:,t-1], k_mean_pre, ashock[:,t:t+1])
+            value0 = value(k_cross[:,:,t], k_mean, ashock[:,t:t+1]).detach().cpu().numpy()
+            value1 = value(k_cross[:,:,t-1], k_mean_pre, ashock[:,t:t+1]).detach().cpu().numpy()
             e0 = -mparam.GAMY * price[:,t-1:t] * k_cross[:,:,t] + mparam.BETA * value0
             e1 = -price[:,t-1:t] * (1-mparam.delta) * k_cross[:,:,t-1] + mparam.BETA * value1
             xitemp = (e0 - e1)/(price[:,t-1:t] * wage)
