@@ -109,7 +109,7 @@ class PolicyTrainer():
     
     def sampler(self, batch_size, init=None, update_init=False):
         if init is None:
-            self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.prepare_price_input, init=init, update_init=update_init)
+            self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.prepare_price_input, self.value_simul_k, init=init, update_init=update_init)
         ashock = KT.simul_shocks(self.ashock_num, self.t_unroll, self.mparam.Z, self.mparam.Pi)
         self.policy_ds.datadict["ashock"] = torch.tensor(ashock, dtype=TORCH_DTYPE)
         dataset = CustomDataset(self.policy_ds.datadict)
@@ -197,8 +197,10 @@ class KTPolicyTrainer(PolicyTrainer):
             policy_type = "nn_share"
         data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
         init_ds.update_stats(data_stats, key="basic_s", ma=1)
+        init_ds.stats_dict["agt_s"], init_ds.stats_dict_tf["agt_s"] = [x[0] for x in init_ds.stats_dict["basic_s"]], [x[0] for x in init_ds.stats_dict_tf["basic_s"]]
+        init_ds.stats_dict["value"], init_ds.stats_dict_tf["value"] = (10, 2), (torch.tensor(10, dtype=TORCH_DTYPE), torch.tensor(2, dtype=TORCH_DTYPE))
         #self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None, num_epochs=10) #self.price_config["T"]
-        self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.prepare_price_input, init=True, update_init=False)
+        self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.prepare_price_input, self.value_simul_k, init=True, update_init=False)
         
 
     def create_data(self, input_data):
@@ -535,7 +537,7 @@ class KTPolicyTrainer(PolicyTrainer):
         return output
     
     def get_valuedataset(self, update_from=None, init=None, update_init=False):
-        return self.init_ds.get_valuedataset(self.current_policy, "nn_share", self.prepare_price_input, update_from, init, update_init)
+        return self.init_ds.get_valuedataset(self.current_policy, "nn_share", self.prepare_price_input, self.value_simul_k, update_from, init, update_init)
     
     def init_policy_fn_tf(self, k_cross, k_mean, ashock):
         # PyTorchで処理する
@@ -598,6 +600,27 @@ class KTPolicyTrainer(PolicyTrainer):
         
         price = self.price_model(price_input)  # shape: (batch_size, 1)
         return price
+    
+    def value_simul_k(self, k_cross, k_mean, ashock):
+        k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE).to(self.device)
+        k_mean = torch.tensor(k_mean, dtype=TORCH_DTYPE).to(self.device)
+        ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).to(self.device)
+        k_tmp = k_cross.unsqueeze(2)
+        k_mean_tmp = k_mean.repeat(1, 50).unsqueeze(2)
+        a_tmp = ashock.repeat(1, 50).unsqueeze(2)
+        basic_s_tmp = torch.cat([k_tmp, k_mean_tmp, a_tmp], dim=2)
+        basic_s = self.init_ds.normalize_data(basic_s_tmp, key="basic_s", withtf=True)
+        full_state_dict = {
+            "basic_s": basic_s,
+            "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
+        }
+        value = 0
+        for vtr in self.vtrainers:
+            value += self.init_ds.unnormalize_data(
+                vtr.value_fn(full_state_dict)[..., 0], key="value", withtf=True)
+        value /= self.num_vnet
+        return value
+        
 # value, policyが学習されないようにする必要あり。
 # 真のpolicyがalphaを考慮してるからここでは真のpolicyを流してよさそう。
 #k_crossを384, 50, 32にして32*384, 50

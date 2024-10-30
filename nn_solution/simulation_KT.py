@@ -39,7 +39,7 @@ def simul_shocks(n_sample, T, Z, Pi, state_init=None):
     return ashock_values
 
 #CPUに移すのとか忘れずに。
-def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_init=None, shocks=None): 
+def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, value, state_init=None, shocks=None): 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     if shocks is not None:
@@ -69,14 +69,22 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
     if policy_type == "nn_share":
         for t in range(1, T):
             price[:,t-1:t] = price_fn(k_cross[:,:,t-1], ashock[:, t-1:t]).detach().cpu().numpy()
-            xi = np.random.uniform(0, mparam.B, size=(n_sample, n_agt))
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
             k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
-            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t], v0_temp*price[:, t-1:t]-price[:, t-1:t]*wage*xi-price[:, t-1:t]*k_cross[:,:,t])
+            k_mean = np.mean(k_cross[:,:, t], dim=1, keepdims=True)#二次元であってほしい
+            k_mean_pre = np.mean(k_cross[:,:,t-1], dim=1, keepdims=True)
+            value0 = value(k_cross[:,:,t], k_mean, ashock[:,t:t+1])
+            value1 = value(k_cross[:,:,t-1], k_mean_pre, ashock[:,t:t+1])
+            e0 = -mparam.GAMY * price[:,t-1:t] * k_cross[:,:,t] + mparam.BETA * value0
+            e1 = -price[:,t-1:t] * (1-mparam.delta) * k_cross[:,:,t-1] + mparam.BETA * value1
+            xitemp = (e0 - e1)/(price[:,t-1:t] * wage)
+            xi = np.min(mparam.B, np.max(0.0, xitemp))
+            xi_ex = price[:, t-1:t]*wage*(xi**2) / (2*mparam.B)
+            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t] - xi_ex, v0_temp*price[:, t-1:t]-xi_ex-price[:, t-1:t]*k_cross[:,:,t])
     
     simul_data = {
         "price": price,
@@ -87,7 +95,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
     
     return simul_data
 
-def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
+def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, value, state_init=None, shocks=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if shocks is not None:
         ashock = shocks
@@ -121,8 +129,15 @@ def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, state_init=
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
             k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().clamp(min=0.1).numpy()
-            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t], v0_temp-price[:, t-1:t]*wage*xi-price[:, t-1:t]*k_cross[:,:,t])
             k_mean[:, t] = k_cross[:, :, t].mean(axis=1)
+            value0 = value(k_cross[:,:,t], k_mean[:,t:t+1], ashock[:,t:t+1]).detach().cpu().numpy()
+            value1 = value(k_cross[:,:,t-1], k_mean[:,t-1:t], ashock[:,t:t+1]).detach().cpu().numpy()
+            e0 = -mparam.GAMY * price[:,t-1:t] * k_cross[:,:,t] + mparam.BETA * value0
+            e1 = -price[:,t-1:t] * (1-mparam.delta) * k_cross[:,:,t-1] + mparam.BETA * value1
+            xitemp = (e0 - e1)/(price[:,t-1:t] * wage)
+            xi = np.minimum(mparam.B, np.maximum(0.0, xitemp))
+            xi_ex = price[:, t-1:t]*wage*(xi**2) / (2*mparam.B)
+            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t] - xi_ex, v0_temp*price[:, t-1:t]-xi_ex-price[:, t-1:t]*k_cross[:,:,t])
     
     simul_data = {
         "price": price,
