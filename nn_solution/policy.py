@@ -158,6 +158,7 @@ class PolicyTrainer():
         valid_data = {k: v.to(self.device) for k, v in valid_data.items()}
         init=True
         update_init = False
+        threshold = 4e-3
         for n in tqdm(range(n_epoch), desc="Training Progress"):
             train_datasets = self.sampler(batch_size, init, update_init)
             init=None
@@ -176,7 +177,8 @@ class PolicyTrainer():
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
             if n > 0 and n % 7 == 0:
-                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.value_simul_k, self.optimizer_price, batch_size=256,  num_epochs=5, validation_size=32)
+                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.prepare_price_input, self.value_simul_k, self.optimizer_price, batch_size=256,  num_epochs=5, validation_size=32, threshold=threshold)
+                threshold = 2e-4
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
@@ -342,7 +344,8 @@ class KTPolicyTrainer(PolicyTrainer):
             state_init=None,
             shocks=None,
             num_epochs=3,
-            validation_size=32  # Added parameter for validation size
+            validation_size=32,  # Added parameter for validation size
+            threshold = 4e-3
         ):
             
         # データ生成（1回だけ実行）
@@ -394,10 +397,12 @@ class KTPolicyTrainer(PolicyTrainer):
         # ロスを保存するリスト
         train_losses = []
         val_losses = []
-
+        epoch = 0
+        avg_val_loss = 1.0
         # エポックループの追加
-        for epoch in range(num_epochs):
-            print(f"Epoch {epoch + 1}/{num_epochs}")
+        while avg_val_loss > threshold or epoch < num_epochs:
+            
+            epoch += 1
             epoch_train_loss = 0.0
 
             # トレーニングフェーズ
@@ -439,7 +444,8 @@ class KTPolicyTrainer(PolicyTrainer):
 
             # ロスの出力
             print(f"  Training Loss: {avg_train_loss:.4f} | Validation Loss: {avg_val_loss:.4f}")
-
+            
+            
         print("トレーニング完了")
         for epoch_num, (train_loss, val_loss) in enumerate(zip(train_losses, val_losses), start=1):  
             print(f"Epoch {epoch_num}: Training Loss = {train_loss:.4f}, Validation Loss = {val_loss:.4f}")
@@ -466,7 +472,7 @@ class KTPolicyTrainer(PolicyTrainer):
         Cnow = Cnow.clamp(min=0.1)
         #print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
-        mse_loss_fn = nn.L1Loss()
+        mse_loss_fn = nn.MSELoss()
         loss = mse_loss_fn(price, price_target)
         return loss
 
