@@ -43,16 +43,26 @@ class GeneralizedMomModel(FeedforwardModel):
                 nn.init.zeros_(layer.bias)
 
 class GeneralizedMomPrice(FeedforwardModel):
-    def __init__(self, d_in, config, name="generalizedmomentmodel"):
+    def __init__(self, d_in, config, name="generalizedmomprice"):
         super(GeneralizedMomPrice, self).__init__(d_in, d_out=1, config=config, name=name)
 
+        self.price_layer = nn.Sequential(
+            nn.Linear(1, 12),
+            nn.Tanh(),
+            nn.Linear(12, 1),
+            nn.Softplus()       
+        )
+        # 重みの初期化を追加
+        self._initialize_weights()
+        
     def basis_fn(self, x):
         return self.dense_layers(x)
-
+    
     def forward(self, x):
         x = self.basis_fn(x)  
-        gm = torch.mean(x, dim=-2)  
-        return gm
+        gm = torch.mean(x, dim=-2)
+        price = self.price_layer(gm)
+        return price
     
     def _initialize_weights(self):
         for layer in self.dense_layers:

@@ -79,23 +79,23 @@ class PolicyTrainer():
         self.gm_model_p = util.GeneralizedMomPrice(1, self.config["gm_config"], name="p_gm").to(self.device)
         self.price_model = util.PriceModel(1, 1, self.config["price_config"], name="price_net").to(self.device)
         # 両方のモデルのパラメータを集める
-        params = list(self.policy.parameters()) + list(self.gm_model.parameters())
-        params_true = list(self.policy_true.parameters()) + list(self.gm_model.parameters())
-        params_price = list(self.price_model.parameters()) + list(self.gm_model_p.parameters())
+        self.params = list(self.policy.parameters()) + list(self.gm_model.parameters())
+        self.params_true = list(self.policy_true.parameters()) + list(self.gm_model.parameters())
+        self.params_price = list(self.price_model.parameters()) + list(self.gm_model_p.parameters())
         self.optimizer = optim.Adam(
-                params,
+                self.params,
                 lr=self.policy_config["lr_beg"],
                 betas=(0.99, 0.99),
                 eps=1e-8
             )
         self.optimizer_true = optim.Adam(
-                params_true,
+                self.params_true,
                 lr=self.policy_config["lr_beg"],
                 betas=(0.99, 0.99),
                 eps=1e-8
             )
         self.optimizer_price = optim.Adam(
-                params_price,
+                self.gm_model_p.parameters(),
                 lr=self.price_config["lr"],
                 betas=(0.99, 0.99),
                 eps=1e-8
@@ -180,8 +180,8 @@ class PolicyTrainer():
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
             if n > 0 and n % 7 == 0:
-                self.optimizer_price = torch.optim.Adam(self.price_model.parameters(), lr=self.price_config["lr"])
-                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.value_simul_k, self.optimizer_price, batch_size=256,  num_epochs=5, validation_size=32, threshold=threshold)
+                self.optimizer_price = torch.optim.Adam(self.gm_model_p.parameters(), lr=self.price_config["lr"])
+                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.value_simul_k, self.optimizer_price, batch_size=256,  num_epochs=10, validation_size=32, threshold=threshold)
                 threshold = 2e-4
                 update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
@@ -404,13 +404,14 @@ class KTPolicyTrainer(PolicyTrainer):
         epoch = 0
         avg_val_loss = 1.0
         # エポックループの追加
-        while avg_val_loss > threshold or epoch < num_epochs:
+        while epoch < num_epochs: #avg_val_loss > threshold or epoch < num_epochs:
             
             epoch += 1
             epoch_train_loss = 0.0
 
             # トレーニングフェーズ
             self.price_model.train()  # Set model to training mode
+            self.gm_model_p.train()
             for batch_idx, data in enumerate(train_loader):
                 data = data.to(self.device)
                 optimizer.zero_grad()
@@ -431,6 +432,7 @@ class KTPolicyTrainer(PolicyTrainer):
 
             # バリデーションフェーズ
             self.price_model.eval()  # Set model to evaluation mode
+            self.gm_model_p.eval()
             epoch_val_loss = 0.0
             with torch.no_grad():
                 for val_data in val_loader:
@@ -497,7 +499,7 @@ class KTPolicyTrainer(PolicyTrainer):
         k_new = self.init_ds.unnormalize_data_k_cross(policy_fn(basic_s).squeeze(2), key="basic_s", withtf=True)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
-        Cnow = ynow.sum(dim=1, keepdim=True) - inow.sum(dim=1, keepdim=True)
+        Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
         price_target = 1 / Cnow
         mse_loss_fn = nn.L1Loss()
@@ -569,10 +571,12 @@ class KTPolicyTrainer(PolicyTrainer):
         if isinstance(input_data, np.ndarray):
             input_data = torch.tensor(input_data, dtype=TORCH_DTYPE)  # ndarrayをTensorに変換
         input_data = input_data.unsqueeze(2).to(self.device)
+        #input_data = input_data.to(self.device)
+        #price_data = torch.mean(input_data, dim=1, keepdim=True)
         price_data = self.init_ds.normalize_data(input_data, key="agt_s", withtf=True)
         gm_data = self.gm_model_p(price_data)
-        price = self.price_model(gm_data)
-        return price
+        #price = self.price_model(gm_data)
+        return gm_data
 
     #def price_fn(self, input_data):
         #price_data = self.init_ds.normalize_data_price(data_tmp, key="basic_s", withtf=True)
