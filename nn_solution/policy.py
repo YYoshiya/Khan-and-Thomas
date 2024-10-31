@@ -570,10 +570,10 @@ class KTPolicyTrainer(PolicyTrainer):
     def price_fn(self, input_data):
         if isinstance(input_data, np.ndarray):
             input_data = torch.tensor(input_data, dtype=TORCH_DTYPE)  # ndarrayをTensorに変換
-        input_data = input_data.unsqueeze(2).to(self.device)
-        #input_data = input_data.to(self.device)
-        #price_data = torch.mean(input_data, dim=1, keepdim=True)
-        price_data = self.init_ds.normalize_data(input_data, key="agt_s", withtf=True)
+        #input_data = input_data.unsqueeze(2).to(self.device)
+        input_data = input_data.to(self.device)
+        price_data = torch.mean(input_data, dim=1, keepdim=True)
+        #price_data = self.init_ds.normalize_data(input_data, key="agt_s", withtf=True)
         gm_data = self.gm_model_p(price_data)
         #price = self.price_model(gm_data)
         return gm_data

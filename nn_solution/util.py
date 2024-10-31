@@ -48,26 +48,37 @@ class GeneralizedMomPrice(FeedforwardModel):
 
         self.price_layer = nn.Sequential(
             nn.Linear(1, 12),
-            nn.Tanh(),
+            nn.ReLU(),
+            nn.Linear(12, 12),
+            nn.ReLU(),
+            nn.Linear(12,1),
+            nn.Softplus()
+        )
+        self.dense_layers = nn.Sequential(
+            nn.Linear(1, 12),
+            nn.ReLU(),
+            nn.Linear(12, 12),
+            nn.ReLU(),
             nn.Linear(12, 1),
-            nn.Softplus()       
         )
         # 重みの初期化を追加
         self._initialize_weights()
         
-    def basis_fn(self, x):
-        return self.dense_layers(x)
     
     def forward(self, x):
-        x = self.basis_fn(x)  
-        gm = torch.mean(x, dim=-2)
-        price = self.price_layer(gm)
+        #x = self.dense_layers(x)
+        #gm = torch.mean(x, dim=-2)
+        price = self.price_layer(x)
         return price
     
     def _initialize_weights(self):
         for layer in self.dense_layers:
             if isinstance(layer, nn.Linear):
                 # Xavier（Glorot）初期化を使用
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+        for layer in self.price_layer:
+            if isinstance(layer, nn.Linear):
                 nn.init.xavier_uniform_(layer.weight)
                 nn.init.zeros_(layer.bias)
 
