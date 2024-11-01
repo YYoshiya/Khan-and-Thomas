@@ -18,7 +18,7 @@ elif DTYPE == "float32":
 else:
     raise ValueError("Unknown dtype.")
 
-def simul_shocks(n_sample, T, Z, Pi, state_init=None):
+def simul_shocks(n_sample, T, Z, Pi, mparam, state_init=None):
     nz = len(Z)
     ashock = np.zeros([n_sample, T], dtype=int)  # ショックインデックスの格納用
     Pi = Pi / Pi.sum(axis=1, keepdims=True)
@@ -41,7 +41,7 @@ def simul_shocks(n_sample, T, Z, Pi, state_init=None):
     return ashock_values, xi
 
 #CPUに移すのとか忘れずに。
-def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, value, state_init=None, shocks=None): 
+def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, policy, price_fn, state_init=None, shocks=None): 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     if shocks is not None:
@@ -52,7 +52,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, value, s
             assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device)) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock, xi = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
+        ashock, xi = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, mparam, state_init)
     
     n_agt = mparam.n_agt
     k_cross = np.zeros((n_sample, n_agt, T))

@@ -112,8 +112,9 @@ class PolicyTrainer():
     def sampler(self, batch_size, init=None, update_init=False):
         if init is None:
             self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_fn, self.value_simul_k, init=init, update_init=update_init)
-        ashock = KT.simul_shocks(self.ashock_num, self.t_unroll, self.mparam.Z, self.mparam.Pi)
+        ashock, xi = KT.simul_shocks(self.ashock_num, self.t_unroll, self.mparam.Z, self.mparam.Pi)
         self.policy_ds.datadict["ashock"] = torch.tensor(ashock, dtype=TORCH_DTYPE)
+        self.policy_ds.datadict["xi"] = torch.tensor(xi, dtype=TORCH_DTYPE)
         dataset = CustomDataset(self.policy_ds.datadict)
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
         return train_loader
@@ -225,6 +226,7 @@ class KTPolicyTrainer(PolicyTrainer):
     def loss1(self, input_data): #vを最大にするpolicyを学習するためのlossを計算。
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
+        xi = input_data["xi"]
         price = input_data["price"]
         util_sum = 0
         for t in range(self.t_unroll):
@@ -232,11 +234,12 @@ class KTPolicyTrainer(PolicyTrainer):
             k_tmp = torch.unsqueeze(k_cross, 2)
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
+            xi_tmp = xi[:,:,t:t+1]
         
             if t == self.t_unroll - 1:
                 price = self.price_fn(k_cross)
                 k_mean_tmp = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50,1)
-                basic_s_tmp_v = torch.cat([k_tmp, k_mean_tmp, a_tmp], axis=-1)
+                basic_s_tmp_v = torch.cat([k_tmp, k_mean_tmp, a_tmp, xi_tmp], axis=-1)
                 basic_s_v = self.init_ds.normalize_data(basic_s_tmp_v, key="basic_s", withtf=True)
                 full_state_dict_v = {
                     "basic_s": basic_s_v,
@@ -267,20 +270,21 @@ class KTPolicyTrainer(PolicyTrainer):
     def loss2(self, input_data):
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
+        xi = input_data["xi"]
         price = input_data["price"]
         for t in range(self.t_unroll):
             k_tmp = torch.unsqueeze(k_cross, 2)
             k_mean_tmp = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50, 1)
             a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
-            
+            xi_tmp = xi[:,:,t:t+1]
             
             if t == self.t_unroll - 1:
                 value0 = 0
                 value1 = 0
                 price = self.price_fn(k_cross)
                 
-                basic_s_tmp_pre = torch.cat([k_tmp, k_mean_tmp,a_tmp], axis=-1)
+                basic_s_tmp_pre = torch.cat([k_tmp, k_mean_tmp,a_tmp, xi_tmp], axis=-1)
                 basic_s_tmp_e0 = self.init_ds.normalize_data(basic_s_tmp_pre, key="basic_s", withtf=True)
                 full_state_dict_e0 = {
                     "basic_s": basic_s_tmp_e0,
@@ -292,9 +296,9 @@ class KTPolicyTrainer(PolicyTrainer):
                         vtr.value_fn(full_state_dict_e0)[..., 0], key="value", withtf=True)
                 value0 /= self.num_vnet
                 e0 = -self.mparam.GAMY * price * k_cross + self.mparam.BETA * value0
-                a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
-                a_tmp = torch.unsqueeze(a_tmp, 2)
-                basic_s_tmp = torch.cat([torch.unsqueeze(k_cross_pre, axis=-1), k_mean_tmp, a_tmp], axis=-1)
+                #a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
+                #a_tmp = torch.unsqueeze(a_tmp, 2)
+                basic_s_tmp = torch.cat([torch.unsqueeze(k_cross_pre, axis=-1), k_mean_tmp, a_tmp, xi_tmp], axis=-1)
                 basic_s_tmp_e1 = self.init_ds.normalize_data(basic_s_tmp, key="basic_s", withtf=True)
                 full_state_dict_e1 = {
                     "basic_s": basic_s_tmp,
@@ -305,18 +309,14 @@ class KTPolicyTrainer(PolicyTrainer):
                         vtr.value_fn(full_state_dict_e1)[..., 0], key="value", withtf=True)
                 value1 /= self.num_vnet
                 e1 = -price * (1-self.mparam.delta) * k_cross_pre + self.mparam.BETA * value1
-                xitemp = (e0 - e1)/(price * wage)
-                xi = torch.min(torch.tensor(self.mparam.B), torch.max(torch.tensor(0.0), xitemp))
-                alpha = xi / self.mparam.B
-                true_policy = alpha * k_cross + (1 - alpha) * (1-self.mparam.delta) * k_cross_pre
-                
                 
                 full_state_dict_loss = {
                     "basic_s": basic_s_tmp_e1,
                     "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
                 }
-                
-                loss = torch.mean((true_policy - self.policy_fn_true(full_state_dict_loss).squeeze(-1))**2)
+                loss_fn = nn.BCELoss
+                bigger = torch.where(e0>=e1, torch.tensor([1], dtype=TORCH_DTYPE), torch.tensor([0], dtype=TORCH_DTYPE))
+                loss = loss_fn(self.policy_fn_true(full_state_dict_loss), bigger)
                 continue
             
             basic_s_tmp = self.init_ds.normalize_data_ashock(a_tmp, key="basic_s", withtf=True)
