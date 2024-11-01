@@ -18,11 +18,11 @@ elif DTYPE == "float32":
 else:
     raise ValueError("Unknown dtype.")
 
-def simul_shocks(n_sample, T, Z, Pi, mparam, state_init=None):
-    nz = len(Z)
+def simul_shocks(n_sample, T, mparam, state_init=None):
+    nz = len(mparam.Z)
     ashock = np.zeros([n_sample, T], dtype=int)  # ショックインデックスの格納用
-    Pi = Pi / Pi.sum(axis=1, keepdims=True)
-
+    mparam.Pi = mparam.Pi / mparam.Pi.sum(axis=1, keepdims=True)
+    n_agt = mparam.n_agt
     if state_init is not None:
         ashock[:, 0:1] = state_init["ashock"]  # 初期状態を設定
     else:
@@ -31,17 +31,17 @@ def simul_shocks(n_sample, T, Z, Pi, mparam, state_init=None):
 
     for t in range(1, T):
         current_states = ashock[:, t - 1]
-        ashock[:, t] = [np.random.choice(nz, p=Pi[state]) for state in current_states]
+        ashock[:, t] = [np.random.choice(nz, p=mparam.Pi[state]) for state in current_states]
 
     # ショックインデックスから実際のショック値に変換
-    ashock_values = Z[ashock]
+    ashock_values = mparam.Z[ashock]
     
     xi = np.random.uniform(0, mparam.B, size=(n_sample, n_agt, T))
 
     return ashock_values, xi
 
 #CPUに移すのとか忘れずに。
-def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, policy, price_fn, state_init=None, shocks=None): 
+def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_init=None, shocks=None): 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     if shocks is not None:
@@ -52,7 +52,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, policy, price_fn, 
             assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device)) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock, xi = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, mparam, state_init)
+        ashock, xi = simul_shocks(n_sample, T, mparam, state_init)
     
     n_agt = mparam.n_agt
     k_cross = np.zeros((n_sample, n_agt, T))
@@ -76,10 +76,8 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, policy, price_fn, 
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
-            op_k = policy(k_cross[:,:,t-1:t], ashock[:,t-1:t])
-            decision = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t]).detach().cpu().numpy()
-            k_cross[:, :, t:t+1] = np.where(decision == 0, (1-mparam.delta) * k_cross[:,:,t-1:t], op_k)
-            v0[:,:,t-1] = np.where(decision == 0, (y-wage*n)* price[:, t-1:t], v0_temp*price[:, t-1:t]-xi*wage*price[:,t-1:t] - mparam.GAMY*price[:, t-1:t]*k_cross[:,:,t])
+            k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t], xi[:,:,t-1:t]).detach().cpu().numpy()
+            v0[:,:,t-1] = np.where(decision > 0.5, (y-wage*n)* price[:, t-1:t], v0_temp*price[:, t-1:t]-xi*wage*price[:,t-1:t] - mparam.GAMY*price[:, t-1:t]*k_cross[:,:,t])
     
     simul_data = {
         "price": price,
@@ -91,60 +89,60 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, policy, price_fn, 
     
     return simul_data
 
-def init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, value, state_init=None, shocks=None):#まだ直してない
+def init_simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_init=None, shocks=None): 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     if shocks is not None:
-        ashock = shocks
+        ashock = torch.tensor(shocks, device=device)
         assert n_sample == ashock.shape[0], "n_sample is inconsistent with given shocks."
         assert T == ashock.shape[1], "T is inconsistent with given shocks."
         if state_init:
-            assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
+            assert torch.equal(ashock[..., 0:1], torch.tensor(state_init["ashock"], device=device)) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
+        ashock, xi = simul_shocks(n_sample, T, mparam, state_init)
     
     n_agt = mparam.n_agt
     k_cross = np.zeros((n_sample, n_agt, T))
     k_mean = np.zeros((n_sample, T))
     price = np.zeros((n_sample, T))
     v0 = np.zeros((n_sample, n_agt, T-1))
+    
     if state_init:
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
         k_cross[:, :, 0] = state_init["k_cross"]
     else:
         k_cross[:, :, 0:1] = mparam.k_ss
     k_mean[:, 0] = k_cross[:, :, 0].mean(axis=1)
-
+    
+    #price_fn.to(device)  
+    #policy.to(device)  policy_fnにするときに面倒だからここじゃなくて最初に送っとくべき。
+    
     if policy_type == "nn_share":
         for t in range(1, T):
             price[:,t-1:t] = price_fn(k_cross[:,:,t-1]).detach().cpu().numpy()
-            xi = np.random.uniform(0, mparam.B, size=(n_sample, n_agt))
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
-            k_cross[:, :, t:t+1] = init_policy_fn(policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().clamp(min=0.1).numpy()
+            k_cross[:, :, t:t+1] = init_policy_fn(policy_fn_true, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]).detach().cpu().clamp(min=0.1).numpy()
             k_mean[:, t] = k_cross[:, :, t].mean(axis=1)
-            value0 = value(k_cross[:,:,t], k_mean[:,t:t+1], ashock[:,t:t+1]).detach().cpu().numpy()
-            value1 = value(k_cross[:,:,t-1], k_mean[:,t-1:t], ashock[:,t:t+1]).detach().cpu().numpy()
-            e0 = -mparam.GAMY * price[:,t-1:t] * k_cross[:,:,t] + mparam.BETA * value0
-            e1 = -price[:,t-1:t] * (1-mparam.delta) * k_cross[:,:,t-1] + mparam.BETA * value1
-            xitemp = (e0 - e1)/(price[:,t-1:t] * wage)
-            xi = np.minimum(mparam.B, np.maximum(0.0, xitemp))
-            xi_ex = price[:, t-1:t]*wage*(xi**2) / (2*mparam.B)
+            xi_ex = price[:, t-1:t]*wage*(xi[:,:,t-1]**2) / (2*mparam.B)
             v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t] - xi_ex, v0_temp*price[:, t-1:t]-xi_ex-price[:, t-1:t]*k_cross[:,:,t])
-    
+            
+            
     simul_data = {
         "price": price,
         "v0": v0,
         "k_cross": k_cross,
-        "ashock": ashock
+        "ashock": ashock,
+        "xi": xi
     } 
     
     return simul_data
 
-def simul_k_init_update(n_sample, T, mparam, policy, policy_type, price_fn, state_init=None, shocks=None):
+def simul_k_init_update(n_sample, T, mparam, policy_true, policy_type, price_fn, state_init=None, shocks=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if shocks is not None:
         ashock = shocks
@@ -154,7 +152,7 @@ def simul_k_init_update(n_sample, T, mparam, policy, policy_type, price_fn, stat
             assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
+        ashock, xi = simul_shocks(n_sample, T, mparam, state_init)
     
     n_agt = mparam.n_agt
     k_cross = np.zeros((n_sample, n_agt, T))
@@ -231,12 +229,12 @@ def create_stats_init(n_sample, T, mparam, policy, policy_type, price_fn, state_
             assert np.array_equal(ashock[..., 0:1], state_init["ashock"]) and \
                 "Shock inputs are inconsistent with state_init"
     else:
-        ashock = simul_shocks(n_sample, T, mparam.Z, mparam.Pi, state_init)
+        ashock, xi = simul_shocks(n_sample, T, mparam, state_init)
     
     n_agt = mparam.n_agt
     k_cross = np.zeros((n_sample, n_agt, T))
     k_mean = np.zeros((n_sample, T))
-    basic_s = np.zeros(shape=[0, n_agt, 3])  # Updated to accommodate the additional element
+    basic_s = np.zeros(shape=[0, n_agt, 4])  # Updated to accommodate the additional element
     if state_init:
         assert n_sample == state_init["k_cross"].shape[0], "n_sample is inconsistent with state_init."
         k_cross[:, :, 0] = state_init["k_cross"]
@@ -249,11 +247,12 @@ def create_stats_init(n_sample, T, mparam, policy, policy_type, price_fn, state_
                 policy, k_cross[:, :, t-1:t], k_mean[:, t-1:t], ashock[:, t-1:t]
             ).detach().cpu().numpy()
             a_tmp = np.repeat(ashock[:, None, t-1:t], n_agt, axis=1)
+            xi_tmp = xi[:,:,t-1:t]
             k_tmp = k_cross[:, :, t-1:t]
             k_mean_tmp = np.mean(k_tmp, axis=1, keepdims=True)
             k_mean_tmp_expanded = np.tile(k_mean_tmp, (1, n_agt, 1))
-            basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp_expanded, a_tmp], axis=-1)
-            basic_s = np.concatenate([basic_s, basic_s_tmp])
+            basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp_expanded, a_tmp, xi_tmp], axis=-1)
+            basic_s = np.concatenate([basic_s, basic_s_tmp], axis=0)
     return basic_s
 
 
@@ -277,7 +276,7 @@ class PolicyDataset(Dataset):
 
 def initial_policy(model, mparam, num_epochs=200, batch_size=50):
     # ショックをシミュレーション
-    ashock = simul_shocks(n_sample=1, T=500, Z=mparam.Z, Pi=mparam.Pi, state_init=None)
+    ashock, xi = simul_shocks(n_sample=1, T=500, mparam=mparam, state_init=None)
 
     # グリッドの作成
     grid_k = np.linspace(0.1, 3.0, 100)

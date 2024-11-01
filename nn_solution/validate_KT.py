@@ -78,7 +78,7 @@ def valid_simul(T, mparam):
     wage = np.zeros((1, T))
     
     # ショックのシミュレーション
-    ashock = KT.simul_shocks(1, T, mparam.Z, mparam.Pi, state_init=None)
+    ashock = KT.simul_shocks(1, T, mparam, state_init=None)
     
     for t in range(T):
         # 価格の計算 T

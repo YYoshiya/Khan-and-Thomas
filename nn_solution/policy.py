@@ -111,8 +111,8 @@ class PolicyTrainer():
     
     def sampler(self, batch_size, init=None, update_init=False):
         if init is None:
-            self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_fn, self.value_simul_k, init=init, update_init=update_init)
-        ashock, xi = KT.simul_shocks(self.ashock_num, self.t_unroll, self.mparam.Z, self.mparam.Pi)
+            self.policy_ds = self.init_ds.get_policydataset(self.current_policy, "nn_share", self.price_fn, init=init, update_init=update_init)
+        ashock, xi = KT.simul_shocks(self.ashock_num, self.t_unroll, self.mparam)
         self.policy_ds.datadict["ashock"] = torch.tensor(ashock, dtype=TORCH_DTYPE)
         self.policy_ds.datadict["xi"] = torch.tensor(xi, dtype=TORCH_DTYPE)
         dataset = CustomDataset(self.policy_ds.datadict)
@@ -152,13 +152,10 @@ class PolicyTrainer():
         self.init_ds.save_stats(os.path.dirname(path))
     
     def train(self, n_epoch, batch_size=None):
-        valid_data = {k: torch.tensor(self.init_ds.datadict[k], dtype=TORCH_DTYPE) for k in self.init_ds.keys}
-        ashock = KT.simul_shocks(
-            self.valid_size, self.t_unroll, self.mparam.Z, self.mparam.Pi,
+        ashock, xi = KT.simul_shocks(
+            self.valid_size, self.t_unroll, self.mparam,
             state_init=self.init_ds.datadict
         )
-        valid_data["ashock"] = torch.tensor(ashock, dtype=TORCH_DTYPE)
-        valid_data = {k: v.to(self.device) for k, v in valid_data.items()}
         init=True
         update_init = False
         threshold = 4e-3
@@ -207,7 +204,7 @@ class KTPolicyTrainer(PolicyTrainer):
         init_ds.stats_dict["agt_s"], init_ds.stats_dict_tf["agt_s"] = [x[0] for x in init_ds.stats_dict["basic_s"]], [x[0] for x in init_ds.stats_dict_tf["basic_s"]]
         init_ds.stats_dict["value"], init_ds.stats_dict_tf["value"] = (5, 2), (torch.tensor(5, dtype=TORCH_DTYPE), torch.tensor(2, dtype=TORCH_DTYPE))
         #self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None, num_epochs=10) #self.price_config["T"]
-        self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_fn, self.value_simul_k, init=True, update_init=False)
+        self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_fn, init=True, update_init=False)
         
 
     def create_data(self, input_data):
@@ -314,8 +311,8 @@ class KTPolicyTrainer(PolicyTrainer):
                     "basic_s": basic_s_tmp_e1,
                     "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
                 }
-                loss_fn = nn.BCELoss
-                bigger = torch.where(e0>=e1, torch.tensor([1], dtype=TORCH_DTYPE), torch.tensor([0], dtype=TORCH_DTYPE))
+                loss_fn = nn.BCELoss()
+                bigger = torch.where(e0>=e1, torch.ones_like(e0, dtype=TORCH_DTYPE), torch.zeros_like(e1, dtype=TORCH_DTYPE))
                 loss = loss_fn(self.policy_fn_true(full_state_dict_loss), bigger)
                 continue
             
@@ -331,7 +328,15 @@ class KTPolicyTrainer(PolicyTrainer):
         return loss
     
 
-
+    def sampler_p(self, batch_size, init=None):
+        if init is None:
+            self.price_ds = self.init_ds.get_pricedataset(self.n_sample_price, self.T_price, self.mparam, self.current_policy, "nn_share", self.price_fn)
+        ashock, xi = KT.simul_shocks(self.ashock_num, self.T_price, self.mparam)
+        self.price_ds.datadict["ashock"] = torch.tensor(ashock, dtype=TORCH_DTYPE)
+        self.price_ds.datadict["xi"] = torch.tensor(xi, dtype=TORCH_DTYPE)
+        dataset = CustomDataset(self.policy_ds.datadict)
+        train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        return train_loader
 
     def price_loss_training_loop(
             self,
@@ -343,7 +348,7 @@ class KTPolicyTrainer(PolicyTrainer):
             price_fn,
             value,
             optimizer,
-            batch_size=64,
+            batch_size=256,
             init=None,
             state_init=None,
             shocks=None,
@@ -351,53 +356,6 @@ class KTPolicyTrainer(PolicyTrainer):
             validation_size=32,  # Added parameter for validation size
             threshold = 4e-3
         ):
-            
-        # データ生成（1回だけ実行）
-        with torch.no_grad():
-            if init is not None:
-                input_data = KT.init_simul_k(
-                    n_sample, T, mparam, policy_fn, policy_type, price_fn, value, state_init=None, shocks=None)
-                loss_fn = self.loss_price_init
-                # Optionally freeze policy_fn parameters if needed
-                # for param in policy_fn.parameters():
-                #     param.requires_grad = False
-            else:
-                input_data = KT.simul_k(
-                    n_sample, T, mparam, policy_fn, policy_type, price_fn, value, state_init=self.init_ds.datadict)
-                loss_fn = self.loss_price
-                # Optionally freeze other model parameters if needed
-                # for param in self.policy.parameters():
-                #     param.requires_grad = False
-                # for param in self.gm_model.parameters():
-                #     param.requires_grad = False
-                # for param in self.policy_true.parameters():
-                #     param.requires_grad = False
-
-        # データの整形
-        k_cross = input_data["k_cross"]
-        ashock = input_data["ashock"]
-        k_tmp = np.reshape(k_cross, (-1, 50))  # Example shape: (n_sample*T, 50)
-        a_tmp = np.reshape(ashock, (-1, 1))    # Example shape: (n_sample*T, 1)
-        basic_s = torch.tensor(
-            np.concatenate([k_tmp, a_tmp], axis=1),
-            dtype=TORCH_DTYPE
-        ).to(self.device)  # Combined data tensor
-
-        # データセットの作成
-        dataset = PriceDataset(basic_s)
-
-        # 確認: Ensure that the dataset has more than 32 samples
-        if len(dataset) <= validation_size:
-            raise ValueError(f"Dataset size ({len(dataset)}) must be larger than validation size ({validation_size}).")
-
-        # データの分割（トレーニングとバリデーション）
-        train_size = len(dataset) - validation_size
-        train_dataset, val_dataset = random_split(dataset, [train_size, validation_size])
-
-        # データローダーの作成
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=validation_size, shuffle=False)  # Typically, shuffle=False for validation
-
         # ロスを保存するリスト
         train_losses = []
         val_losses = []
@@ -405,15 +363,16 @@ class KTPolicyTrainer(PolicyTrainer):
         avg_val_loss = 1.0
         # エポックループの追加
         while epoch < num_epochs: #avg_val_loss > threshold or epoch < num_epochs:
-            
+            train_loader = self.sampler_p(batch_size)
             epoch += 1
             epoch_train_loss = 0.0
 
             # トレーニングフェーズ
             self.price_model.train()  # Set model to training mode
             self.gm_model_p.train()
-            for batch_idx, data in enumerate(train_loader):
-                data = data.to(self.device)
+            for data in train_loader:
+                data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
+                
                 optimizer.zero_grad()
 
                 # ロス関数の計算
@@ -463,15 +422,16 @@ class KTPolicyTrainer(PolicyTrainer):
 
     
     def loss_price(self, data, policy_fn, price_fn, mparam):
-        ashock = data[:,50:].to(self.device)#128,1
-        k_cross = data[:, :50].to(self.device)#128,50
+        ashock = data["ashock"]
+        k_cross = data["k_cross"]
+        xi = data["xi"]
         price = price_fn(k_cross)
         wage = mparam.eta / price
 
         yterm = ashock * k_cross ** mparam.theta
         n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))#最右項は*2
         k_tmp = k_cross.unsqueeze(2)#128,50,1
-        k_new = policy_fn(k_tmp, ashock, withtf=True).clamp(min=0.01).squeeze(2)
+        k_new = policy_fn(k_tmp, ashock, xi, withtf=True).clamp(min=0.01).squeeze(2)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
@@ -517,11 +477,12 @@ class KTPolicyTrainer(PolicyTrainer):
         
 
     
-    def current_policy(self, k_cross, ashock, withtf=False):
+    def current_policy(self, k_cross, ashock, xi, withtf=False):
         if withtf:
             k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50, 1)
             ashock = ashock.repeat(1, 50).unsqueeze(2)
-            basic_s = torch.cat([k_cross, k_mean, ashock], dim=2)
+            basic_s = torch.cat([k_cross, k_mean, ashock, xi], dim=2)
+            basic_p = init_ds.normalize_data_ashock(ashock, key="basic_s", withtf=True)
             agt_s = k_cross
         else:
             k_mean = np.mean(k_cross, axis=1, keepdims=True)  # NumPy: 形状 (384, 1, 1)
@@ -531,26 +492,32 @@ class KTPolicyTrainer(PolicyTrainer):
             ashock = np.repeat(ashock, self.mparam.n_agt, axis=1)[:, :, np.newaxis]  # NumPy: 形状 (384, 50, 1)
 
             # k_cross, k_mean, ashockを結合 (NumPyで)
-            basic_s = np.concatenate([k_cross, k_mean, ashock], axis=-1)  # NumPy: 形状 (384, 50, X)
+            basic_s = np.concatenate([k_cross, k_mean, ashock, xi], axis=-1)  # NumPy: 形状 (384, 50, X)
 
             # NumPy配列をTorchテンソルに変換
             basic_s = torch.tensor(basic_s, dtype=TORCH_DTYPE).to(self.device)  # Torch: 形状 (384, 50, X)
-
+            basic_p = torch.tensor(ashock, dtype=TORCH_DTYPE).to(self.device)  # Torch: 形状 (384, 50, 1)
             # k_crossも同様にTorchテンソルに変換
             agt_s = torch.tensor(k_cross, dtype=TORCH_DTYPE).to(self.device)  # Torch: 形状 (384, 50)
         basic_s = self.init_ds.normalize_data(basic_s, key="basic_s", withtf=True)
+        basic_p = self.init_ds.normalize_data_ashock(basic_p, key="basic_s", withtf=True)
         agt_s = self.init_ds.normalize_data(agt_s, key="agt_s", withtf=True)
         
         full_state_dict = {
             "basic_s": basic_s,
             "agt_s": agt_s
         }
+        full_state_dict_p = {
+            "basic_s": basic_p,
+            "agt_s": agt_s
+        }
         
-        output = self.init_ds.unnormalize_data_k_cross(self.policy_fn_true(full_state_dict), "basic_s", withtf=True)
+        decision = self.policy_fn_true(full_state_dict)
+        output = torch.where(decision > 0.5, (1-self.mparam.delta) * k_cross, self.policy_fn(full_state_dict_p))
         return output
     
     def get_valuedataset(self, update_from=None, init=None, update_init=False):
-        return self.init_ds.get_valuedataset(self.current_policy, "nn_share", self.price_fn, self.value_simul_k, update_from, init, update_init)
+        return self.init_ds.get_valuedataset(self.current_policy, "nn_share", self.price_fn, update_from, init, update_init)
     
     def init_policy_fn_tf(self, k_cross, k_mean, ashock):
         # PyTorchで処理する

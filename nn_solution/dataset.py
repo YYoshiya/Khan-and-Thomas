@@ -200,7 +200,7 @@ class InitDataSet(DataSetwithStats):
             state_init = self.datadict
         simul_data = self.simul_k_func(
             self.n_path, t_burn, self.mparam,
-            policy, policy_type, price_fn, value=None, update_from=True, init=True, state_init=state_init
+           policy_true, policy_type,  price_fn, value=None, update_from=True, init=True, state_init=state_init
         )
         self.update_from_simul(simul_data)
     
@@ -246,10 +246,10 @@ class InitDataSet(DataSetwithStats):
         
         return train_vdataset, valid_vdataset
     
-    def get_policydataset(self, policy, policy_type, price_fn, value, update_from=None, init=None, update_init=False):
+    def get_policydataset(self, policy_true, policy_type,  price_fn, update_from=None, init=None, update_init=False):
         policy_config = self.config["policy_config"]
         simul_data = self.simul_k_func(
-            self.n_path, policy_config["T"], self.mparam, policy, policy_type, price_fn, value, update_from, init,
+            self.n_path, policy_config["T"], self.mparam, policy_true, policy_type, price_fn, update_from, init,
             state_init=self.datadict
         )
         if update_init:
@@ -276,38 +276,66 @@ class InitDataSet(DataSetwithStats):
         policy_ds = BasicDataSet(p_datadict)
         return policy_ds
     
+    def get_pricedataset(self, policy_true, policy_type,  price_fn, init=None):
+        price_config = self.config["price_config"]
+        simul_data = self.simul_k_func(
+            self.n_path, policy_config["T"], self.mparam, policy_true, policy_type, price_fn, update_from, init,
+            state_init=self.datadict
+        )
+        p_datadict = {}
+        idx_nan = False
+        keys = ["k_cross", "ashock", "xi"]
+        for k in keys:
+            arr = simul_data[k].astype(NP_DTYPE)
+            arr = arr[..., slice(-policy_config["t_sample"], -1, policy_config["t_skip"])]
+            if len(arr.shape) == 3:
+                arr = np.swapaxes(arr, 1, 2)
+                arr = np.reshape(arr, (-1, self.mparam.n_agt))
+                if k != "xi":
+                    idx_nan = np.logical_or(idx_nan, np.isnan(arr).any(axis=1))
+            else:
+                arr = np.reshape(arr, (-1, 1))
+                if k != "ashock":
+                    idx_nan = np.logical_or(idx_nan, np.isnan(arr[:, 0]))
+            p_datadict[k] = arr
+        for k in keys:
+            p_datadict[k] = p_datadict[k][~idx_nan]
+        price_ds = BasicDataSet(p_datadict)
+        return price_ds
+            
     def simul_k_func(self, n_sample, T, mparam, c_policy, policy_type, state_init=None, shocks=None):
         raise NotImplementedError
     
 class KTInitDataSet(InitDataSet):
     def __init__(self, mparam, config):
         super().__init__(mparam, config)
-        self.keys = ["k_cross", "ashock", "price", "v0"]
+        self.keys = ["k_cross", "ashock", "xi", "price", "v0"]
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.policy_init_only = util.FeedforwardModel(3, 1, config["policy_config"], name="init_model").to(self.device)
-        self.price_init_only = util.PriceModel(51, 1, config["price_config"], name="init_price").to(self.device)
+        #self.price_init_only = util.PriceModel(51, 1, config["price_config"], name="init_price").to(self.device)
         KT.initial_policy(self.policy_init_only, mparam, num_epochs=200, batch_size=50)
-        self.update_with_burn(self.policy_init_only, "nn_share", self.price_init_only)
+        #self.update_with_burn(self.policy_init_only, "nn_share", self.price_init_only)
     
     
 
-    def get_valuedataset(self, policy, policy_type, price_fn, value, update_from=None, init=None, update_init=False):
+    def get_valuedataset(self, policy_true, policy_type, price_fn, update_from=None, init=None, update_init=False):
         value_config = self.config["value_config"]
         t_count = value_config["t_count"]
         t_skip = value_config["t_skip"]
         simul_data = self.simul_k_func(
-            self.n_path, value_config["T"], self.mparam, policy, policy_type, price_fn, value,  update_from, init=init,
+            self.n_path, value_config["T"], self.mparam, policy_true, policy_type, price_fn,  update_from, init=init,
             state_init=self.datadict)
         if update_init:
             self.update_from_simul(simul_data)
         
         ashock = simul_data["ashock"]
+        xi = simul_data["xi"]
         k_cross = simul_data["k_cross"]
         profit = simul_data["v0"]
         k_mean = np.mean(k_cross, axis=1, keepdims=True)
         discount = np.power(self.mparam.beta, np.arange(t_count))
 
-        basic_s = np.zeros(shape=[0, self.mparam.n_agt, self.n_basic+1])
+        basic_s = np.zeros(shape=[0, self.mparam.n_agt, 4])
         agt_s = np.zeros(shape=[0, self.mparam.n_agt, 1])
         value = np.zeros(shape=[0, self.mparam.n_agt, 1])
         t_idx = 0
@@ -315,7 +343,8 @@ class KTInitDataSet(InitDataSet):
             k_tmp = k_cross[:, :, t_idx:t_idx+1]
             k_mean_tmp = np.repeat(k_mean[:, :, t_idx:t_idx+1], self.mparam.n_agt, axis=1)
             a_tmp = np.repeat(ashock[:, None, t_idx:t_idx+1], self.mparam.n_agt, axis=1)
-            basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp, a_tmp], axis=-1)
+            xi_tmp = xi[:,:,t_idx:t_idx+1]
+            basic_s_tmp = np.concatenate([k_tmp, k_mean_tmp, a_tmp, xi_tmp], axis=-1)
             v_tmp = np.sum(profit[..., t_idx:t_idx+t_count] * discount, axis=-1, keepdims=True)
             basic_s = np.concatenate([basic_s, basic_s_tmp], axis=0)
             agt_s = np.concatenate([agt_s, k_tmp], axis=0)
@@ -326,10 +355,10 @@ class KTInitDataSet(InitDataSet):
         train_vdataset, valid_vdataset = self.process_vdatadict(v_datadict)
         return train_vdataset, valid_vdataset
     
-    def simul_k_func(self, n_sample, T, mparam, policy, policy_type, price_fn, value, update_from=None, init=None, state_init=None, shocks=None):
+    def simul_k_func(self, n_sample, T, mparam, policy_true, policy_type, price_fn, update_from=None, init=None, state_init=None, shocks=None):
         if init is not None and update_from is not None:
-            return KT.simul_k_init_update(n_sample, T, mparam, policy, policy_type, price_fn, state_init, shocks)
+            return KT.simul_k_init_update(n_sample, T, mparam, policy_true, policy_type, price_fn, state_init, shocks)
         elif init is not None and update_from is None:
-            return KT.init_simul_k(n_sample, T, mparam, policy, policy_type, price_fn, value, state_init, shocks)#value入れるかどうか
+            return KT.init_simul_k(n_sample, T, mparam, policy_true, policy_type, price_fn, state_init, shocks)#value入れるかどうか
         else:
-            return KT.simul_k(n_sample, T, mparam, policy, policy_type, price_fn, value, state_init, shocks)
+            return KT.simul_k(n_sample, T, mparam, policy_true, policy_type, price_fn, state_init, shocks)
