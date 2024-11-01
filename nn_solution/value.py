@@ -20,7 +20,7 @@ class ValueTrainer():
         self.config = config
         self.value_config = config["value_config"]
         d_in = config["n_basic"] + config["n_fm"] + config["n_gm"]
-        self.model = util.FeedforwardModel(d_in, 1, self.value_config, name="v_net").to(self.device)
+        self.model = util.FeedforwardModel(4, 1, self.value_config, name="v_net").to(self.device)
         self.gm_model = util.GeneralizedMomModel(1, config["gm_config"], name="v_gm").to(self.device)
             # 両方のモデルのパラメータを集める
         params = list(self.model.parameters()) + list(self.gm_model.parameters())

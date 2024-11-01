@@ -41,6 +41,23 @@ class GeneralizedMomModel(FeedforwardModel):
                 # Xavier（Glorot）初期化を使用
                 nn.init.xavier_uniform_(layer.weight)
                 nn.init.zeros_(layer.bias)
+                
+
+class Policy(FeedforwardModel):
+    def __init__(self, d_in, config, name="policy"):
+        super(Policy, self).__init__(d_in, d_out=1, config=config, name=name)
+        
+    def forward(self, x):
+        x = self.dense_layers(x)
+        policy = torch.sigmoid(x)
+        return policy
+    
+    def _initialize_weights(self):
+        for layer in self.dense_layers:
+            if isinstance(layer, nn.Linear):
+                # Xavier（Glorot）初期化を使用
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
 
 class GeneralizedMomPrice(FeedforwardModel):
     def __init__(self, d_in, config, name="generalizedmomprice"):

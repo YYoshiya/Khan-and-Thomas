@@ -74,7 +74,7 @@ class PolicyTrainer():
         self.T_price = self.price_config["T"]
         d_in = self.config["n_basic"] + self.config["n_fm"] + self.config["n_gm"]
         self.policy = util.FeedforwardModel(2, 1, self.policy_config, name="p_net").to(self.device)
-        self.policy_true = util.FeedforwardModel(d_in, 1, self.policy_config, "p_net_true").to(self.device)
+        self.policy_true = util.FeedforwardModel(4, 1, self.policy_config, "p_net_true").to(self.device)
         self.gm_model = util.GeneralizedMomModel(1, self.config["gm_config"], name="v_gm").to(self.device)
         self.gm_model_p = util.GeneralizedMomPrice(1, self.config["gm_config"], name="p_gm").to(self.device)
         self.price_model = util.PriceModel(1, 1, self.config["price_config"], name="price_net").to(self.device)
