@@ -312,8 +312,8 @@ class KTPolicyTrainer(PolicyTrainer):
                     "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
                 }
                 loss_fn = nn.BCELoss()
-                bigger = torch.where(e0>=e1, torch.ones_like(e0, dtype=TORCH_DTYPE), torch.zeros_like(e1, dtype=TORCH_DTYPE))
-                loss = loss_fn(self.policy_fn_true(full_state_dict_loss), bigger)
+                bigger = torch.where(e0>=e1, torch.zeros_like(e0, dtype=TORCH_DTYPE), torch.ones_like(e1, dtype=TORCH_DTYPE))
+                loss = loss_fn(self.policy_fn_true(full_state_dict_loss).squeeze(-1), bigger)
                 continue
             
             basic_s_tmp = self.init_ds.normalize_data_ashock(a_tmp, key="basic_s", withtf=True)
