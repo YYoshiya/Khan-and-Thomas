@@ -8,7 +8,7 @@ import scipy.io as sio
 import simulation_KT as KT
 import util
 
-DTYPE = "float32"
+DTYPE = "float64"
 if DTYPE == "float64":
     NP_DTYPE = np.float64
     TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定
@@ -113,7 +113,7 @@ class DataSetwithStats(BasicDataSet):
 
         # 50個まで（0から50番目のデータ）には mean[0] と std[0] を使用
         # 51個目には mean[1] と std[1] を使用
-        normalized_data = torch.empty_like(data)  # data と同じサイズのテンソルを作成
+        normalized_data = torch.empty_like(data, dtype=TORCH_DTYPE)  # data と同じサイズのテンソルを作成
 
         # 50個のデータの標準化
         normalized_data[:, :50] = (data[:, :50] - mean[0]) / std[0]

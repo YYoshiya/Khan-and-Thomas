@@ -13,7 +13,7 @@ import numpy as np
 import json
 import os
 
-DTYPE = "float32"
+DTYPE = "float64"
 if DTYPE == "float64":
     NP_DTYPE = np.float64
     TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定

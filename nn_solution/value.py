@@ -4,7 +4,7 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 
-DTYPE = "float32"
+DTYPE = "float64"
 if DTYPE == "float64":
     NP_DTYPE = np.float64
     TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定
