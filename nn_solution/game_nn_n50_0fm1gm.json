@@ -20,7 +20,7 @@
         "t_count": 800,
         "t_skip": 100,
         "_comment_v_data": "the above is about ValueDataSet",
-        "num_epoch": 100,
+        "num_epoch": 200,
         "lr": 1e-4,
         "net_width": [24, 24],
         "activation": "tanh",
@@ -60,12 +60,12 @@
         "n_path": 64,
         "T": 500,
         "n_sample": 384,
-        "net_width": [12],
+        "net_width": [24],
         "activation": "ReLU",
         "d_in": 51,
         "d_out": 1,
         "num_epoch": 1,
-        "lr": 1e-2
+        "lr": 1e-3
     },
     
     "simul_config": {

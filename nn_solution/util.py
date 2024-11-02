@@ -85,8 +85,8 @@ class GeneralizedMomPrice(nn.Module):
     def forward(self, x):
         x = self.dense_layers(x)
         gm = torch.mean(x, dim=-2)
-        price = self.price_layer(gm)
-        return price
+        #price = self.price_layer(gm)
+        return gm
     
     def _initialize_weights(self):
         for layer in self.dense_layers:
@@ -106,7 +106,7 @@ class PriceModel(nn.Module):
         layers = []
         for w in config["net_width"]:
             layers.append(nn.Linear(d_in, w))
-            layers.append(nn.Tanh())
+            layers.append(nn.LeakyReLU())
             d_in = w
         layers.append(nn.Linear(d_in, d_out))
         layers.append(nn.Softplus())

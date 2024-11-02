@@ -70,7 +70,7 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
     
     if policy_type == "nn_share":
         for t in range(1, T):
-            price[:,t-1:t] = price_fn(k_cross[:,:,t-1]).detach().cpu().numpy()
+            price[:,t-1:t] = price_fn(k_cross[:,:,t-1], ashock[:,t-1:t]).detach().cpu().numpy()
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
@@ -120,7 +120,7 @@ def init_simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, sta
     
     if policy_type == "nn_share":
         for t in range(1, T):
-            price[:,t-1:t] = price_fn(k_cross[:,:,t-1]).detach().cpu().numpy()
+            price[:,t-1:t] = price_fn(k_cross[:,:,t-1], ashock[:,t-1:t]).detach().cpu().numpy()
             wage = mparam.eta / price[:, t-1:t]#384,1
             yterm = ashock[:, t-1:t] * k_cross[:, :, t-1]**mparam.theta#384,50
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
