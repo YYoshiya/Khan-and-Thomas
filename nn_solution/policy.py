@@ -367,7 +367,7 @@ class KTPolicyTrainer(PolicyTrainer):
             shocks=None,
             num_epochs=3,
             validation_size=32,  # Added parameter for validation size
-            threshold = 1e-5
+            threshold = 1e-6
         ):
         # ロスを保存するリスト
         train_losses = []
@@ -421,12 +421,12 @@ class KTPolicyTrainer(PolicyTrainer):
             val_losses.append(avg_val_loss)
 
             # ロスの出力
-            print(f"  Training Loss: {avg_train_loss:.8f} | Validation Loss: {avg_val_loss:.8f}")
+            print(f"  Training Loss: {avg_train_loss:.10f} | Validation Loss: {avg_val_loss:.10f}")
             
             
         print("トレーニング完了")
         for epoch_num, (train_loss, val_loss) in enumerate(zip(train_losses, val_losses), start=1):  
-            print(f"Epoch {epoch_num}: Training Loss = {train_loss:.6f}, Validation Loss = {val_loss:.6f}")
+            print(f"Epoch {epoch_num}: Training Loss = {train_loss:.10f}, Validation Loss = {val_loss:.10f}")
 
         # Optionally, return the losses for further analysis
         return train_losses, val_losses
