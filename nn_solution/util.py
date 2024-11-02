@@ -59,23 +59,23 @@ class Policy(FeedforwardModel):
                 nn.init.xavier_uniform_(layer.weight)
                 nn.init.zeros_(layer.bias)
 
-class GeneralizedMomPrice(FeedforwardModel):
+class GeneralizedMomPrice(nn.Module):
     def __init__(self, d_in, config, name="generalizedmomprice"):
-        super(GeneralizedMomPrice, self).__init__(d_in, d_out=1, config=config, name=name)
+        super(GeneralizedMomPrice, self).__init__()
 
         self.price_layer = nn.Sequential(
-            nn.Linear(1, 12),
-            nn.ReLU(),
-            nn.Linear(12, 12),
-            nn.ReLU(),
-            nn.Linear(12,1),
+            nn.Linear(1, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64,1),
             nn.Softplus()
         )
         self.dense_layers = nn.Sequential(
             nn.Linear(1, 12),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(12, 12),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(12, 1),
         )
         # 重みの初期化を追加
@@ -83,9 +83,9 @@ class GeneralizedMomPrice(FeedforwardModel):
         
     
     def forward(self, x):
-        #x = self.dense_layers(x)
-        #gm = torch.mean(x, dim=-2)
-        price = self.price_layer(x)
+        x = self.dense_layers(x)
+        gm = torch.mean(x, dim=-2)
+        price = self.price_layer(gm)
         return price
     
     def _initialize_weights(self):

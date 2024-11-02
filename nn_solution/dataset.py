@@ -50,7 +50,7 @@ class BasicDataSet():
         for i in range(1, len(size_list)):
             assert size_list[i] == size_list[0], "The size does not match."
         self.size = size_list[0]
-        self.shuffle()
+        #self.shuffle()
         self.epoch_used = 0
 
     def shuffle(self):
@@ -276,18 +276,17 @@ class InitDataSet(DataSetwithStats):
         policy_ds = BasicDataSet(p_datadict)
         return policy_ds
     
-    def get_pricedataset(self, policy_true, policy_type,  price_fn, init=None):
+    def get_pricedataset(self, policy_true, policy_type,  price_fn):
         price_config = self.config["price_config"]
         simul_data = self.simul_k_func(
-            self.n_path, policy_config["T"], self.mparam, policy_true, policy_type, price_fn, update_from, init,
-            state_init=self.datadict
+            self.n_path, price_config["T"], self.mparam, policy_true, policy_type, price_fn, state_init=self.datadict
         )
         p_datadict = {}
         idx_nan = False
         keys = ["k_cross", "ashock", "xi"]
         for k in keys:
             arr = simul_data[k].astype(NP_DTYPE)
-            arr = arr[..., slice(-policy_config["t_sample"], -1, policy_config["t_skip"])]
+            #arr = arr[..., slice(-policy_config["t_sample"], -1, policy_config["t_skip"])]
             if len(arr.shape) == 3:
                 arr = np.swapaxes(arr, 1, 2)
                 arr = np.reshape(arr, (-1, self.mparam.n_agt))

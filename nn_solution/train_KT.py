@@ -64,7 +64,7 @@ def main():
     
     init_ds.ma = 0.5
     for vtr in vtrainers:
-        vtr.train(train_vds, valid_vds, 10, value_config["batch_size"])
+        vtr.train(train_vds, valid_vds, 100, value_config["batch_size"])
     
     ptrainer.train(60, policy_config["batch_size"])
     

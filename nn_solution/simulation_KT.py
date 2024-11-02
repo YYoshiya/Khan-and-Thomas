@@ -76,8 +76,8 @@ def simul_k(n_sample, T, mparam, policy_fn_true, policy_type, price_fn, state_in
             n = (mparam.nu * yterm / wage)**(1 / (1 - mparam.nu))
             y = yterm * n**mparam.nu
             v0_temp = y - wage * n + (1 - mparam.delta) * k_cross[:, :, t-1]
-            k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t], xi[:,:,t-1:t]).detach().cpu().numpy()
-            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t], v0_temp*price[:, t-1:t]-xi*wage*price[:,t-1:t] - mparam.GAMY*price[:, t-1:t]*k_cross[:,:,t])
+            k_cross[:, :, t:t+1] = policy_fn_true(k_cross[:,:,t-1:t], ashock[:, t-1:t], xi[:,:,t-1:t]).detach().cpu().clamp(min=0.1).numpy()
+            v0[:,:,t-1] = np.where((1-mparam.delta)*k_cross[:,:,t-1]==k_cross[:,:,t], (y-wage*n)* price[:, t-1:t], v0_temp*price[:, t-1:t]-xi[:,:,t-1]*wage*price[:,t-1:t] - mparam.GAMY*price[:, t-1:t]*k_cross[:,:,t])
     
     simul_data = {
         "price": price,
