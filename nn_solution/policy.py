@@ -127,8 +127,13 @@ class PolicyTrainer():
         state = torch.cat([state, gm], dim=-1)
         return state
     
+    def prepare_state_policy(self, input_data):
+        gm = self.gm_model(input_data["agt_s"])
+        state = torch.cat([input_data["basic_s"], gm], dim=-1)
+        return state
+    
     def policy_fn(self, input_data):
-        state = self.prepare_state(input_data)
+        state = self.prepare_state_policy(input_data)
         policy = self.policy(state)#unnormalize_data必要と思う。
         return policy
     
@@ -173,17 +178,18 @@ class PolicyTrainer():
                 loss1.backward()
                 self.optimizer.step()
                 self.optimizer_true.zero_grad()
-                loss2 = self.loss2(train_data)
+                output_dict2 = self.loss2(train_data)
+                loss2 = output_dict2["m_util"]
                 loss2.backward()
                 self.optimizer_true.step()#この後にpriceの学習入れるべきじゃない？
                 loss1_loop += -loss1.item()
-                loss2_loop += loss2.item()
+                loss2_loop += -loss2.item()
             avg_train_loss1 = loss1_loop / len(train_datasets)
             avg_train_loss2 = loss2_loop / len(train_datasets)
             print(f"Epoch {n+1}: Training Loss1 = {avg_train_loss1:.6f}, Training Loss2 = {avg_train_loss2:.6f}")
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
-            if n > 0 and n % 8 == 0:
+            if n > 0 and n % 10 == 0:
                 self.optimizer_price = torch.optim.Adam(self.params_price, lr=self.price_config["lr"])
                 self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=64,  num_epochs=10, validation_size=64, threshold=1e-5)
                 update_init = self.policy_config["update_init"]
@@ -208,7 +214,7 @@ class KTPolicyTrainer(PolicyTrainer):
         init_ds.update_stats(data_stats, key="basic_s", ma=1)
         init_ds.stats_dict["agt_s"], init_ds.stats_dict_tf["agt_s"] = [x[0] for x in init_ds.stats_dict["basic_s"]], [x[0] for x in init_ds.stats_dict_tf["basic_s"]]
         #init_ds.stats_dict["value"], init_ds.stats_dict_tf["value"] = (5, 2), (torch.tensor(5, dtype=TORCH_DTYPE), torch.tensor(2, dtype=TORCH_DTYPE))
-        #self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None, num_epochs=10) #self.price_config["T"]
+        self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, KT.init_policy_fn_tf, "nn_share", self.price_fn, self.optimizer_price, batch_size=256, init=True, state_init=None, shocks=None, num_epochs=3) #self.price_config["T"]
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_fn, init=True, update_init=False)
         
 
@@ -250,7 +256,7 @@ class KTPolicyTrainer(PolicyTrainer):
                     value += self.init_ds.unnormalize_data(
                         vtr.value_fn(full_state_dict_v)[..., 0], key="value", withtf=True)
                 value /= self.num_vnet
-                util_sum += -self.mparam.GAMY*price * k_cross + self.discount[t] * value
+                util_sum += -self.mparam.GAMY*price * k_cross + self.mparam.BETA * value
                 continue
             basic_s_tmp = self.init_ds.normalize_data_ashock(a_tmp, key="basic_s", withtf=True)
             full_state_dict = {
@@ -258,7 +264,7 @@ class KTPolicyTrainer(PolicyTrainer):
                 "agt_s": self.init_ds.normalize_data(k_tmp, key="agt_s", withtf=True)
             }
             k_cross_pre = k_cross
-            k_cross = self.init_ds.unnormalize_data_ashock(self.policy_fn(full_state_dict), key="basic_s", withtf=True).clamp(min=0.01).squeeze(-1)
+            k_cross = self.init_ds.unnormalize_data_k_cross(self.policy_fn(full_state_dict), key="basic_s", withtf=True).clamp(min=0.01).squeeze(-1)
 
         output_dict = {"m_util": -torch.mean(util_sum[:, 0]), "k_end": torch.mean(k_cross)}
         #print(f"loss1:{-output_dict['m_util']}")
@@ -266,9 +272,45 @@ class KTPolicyTrainer(PolicyTrainer):
             
 
 
-
-
     def loss2(self, input_data):
+        k_cross = input_data["k_cross"]
+        ashock = input_data["ashock"]
+        xi = input_data["xi"]
+        k_tmp = torch.unsqueeze(k_cross, 2)     
+        k_mean = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50, 1)
+        ashock_tmp = torch.repeat_interleave(ashock[:, 0:1], 50, dim=1)
+        ashock_tmp = torch.unsqueeze(ashock_tmp, 2)
+        next_k = self.current_policy(k_tmp, ashock[:,0:1], xi[:,:,0:1], withtf=True)
+        next_k_v = torch.where(next_k==(1-self.mparam.delta)*k_tmp, next_k/self.mparam.GAMY, next_k)
+        next_mean = torch.mean(next_k_v, dim=1, keepdim=True).repeat(1, 50, 1)
+        ashock_next = torch.repeat_interleave(ashock[:, 1:2], 50, dim=1)
+        ashock_next = torch.unsqueeze(ashock_next, 2)
+        basic_s_tmp = torch.cat([next_k_v, next_mean, ashock_next, xi[:,:,1:2]], axis=-1)
+        basic_s = self.init_ds.normalize_data(basic_s_tmp, key="basic_s", withtf=True)
+        full_state_dict = {
+            "basic_s": basic_s,
+            "agt_s": self.init_ds.normalize_data(next_k_v, key="agt_s", withtf=True)
+        }
+        next_value = 0
+        for vtr in self.vtrainers:
+            next_value += self.init_ds.unnormalize_data(
+                vtr.value_fn(full_state_dict)[..., 0], key="value", withtf=True)
+        next_value /= self.num_vnet
+        next_value = next_value.squeeze(-1)
+        price = self.price_fn(k_cross, ashock[:,0:1])
+        wage = self.mparam.eta / price
+        yterm = ashock[:,0:1]*k_cross**self.mparam.theta
+        n = (self.mparam.nu*yterm/wage)**(1/(1-self.mparam.nu))
+        y = yterm*n**self.mparam.nu
+        profit = (y - wage*n + (1-self.mparam.delta)*k_cross)*price
+        changed = profit-xi[:,:,0]*wage*price - self.mparam.GAMY * price * next_k.squeeze(-1) + self.mparam.BETA * next_value
+        unchanged = profit - price * (1-self.mparam.delta) * k_cross + self.mparam.BETA * next_value        
+        util_sum = torch.where(next_k.squeeze(-1)==(1-self.mparam.delta)*k_cross, unchanged, changed)
+        output_dict = {"m_util": -torch.mean(util_sum[:, 0]), "k_end": torch.mean(k_cross)}
+        return output_dict
+        
+
+    def loss22(self, input_data):
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
         xi = input_data["xi"]
@@ -299,7 +341,8 @@ class KTPolicyTrainer(PolicyTrainer):
                 e0 = -xi[:,:,t]*wage*price - self.mparam.GAMY * price * k_cross + self.mparam.BETA * value0
                 #a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
                 #a_tmp = torch.unsqueeze(a_tmp, 2)
-                basic_s_tmp = torch.cat([torch.unsqueeze(k_cross_pre, axis=-1), k_mean_pre, a_tmp, xi_tmp], axis=-1)#ここもおかしいかもpreのmeanにすべき
+                k_pre = ((1-self.mparam.delta) / self.mparam.GAMY) * k_cross_pre 
+                basic_s_tmp = torch.cat([torch.unsqueeze(k_pre, axis=-1), k_mean_pre, a_tmp, xi_tmp], axis=-1)#ここもおかしいかもpreのmeanにすべき
                 basic_s_tmp_e1 = self.init_ds.normalize_data(basic_s_tmp, key="basic_s", withtf=True)
                 full_state_dict_e1 = {
                     "basic_s": basic_s_tmp,
@@ -331,13 +374,16 @@ class KTPolicyTrainer(PolicyTrainer):
             a_pre = a_tmp
             xi_pre = xi_tmp
             k_cross_pre = k_cross
-            k_cross = self.init_ds.unnormalize_data_ashock(self.policy_fn(full_state_dict), key="basic_s", withtf=True).clamp(min=0.01).squeeze(-1)
+            k_cross = self.init_ds.unnormalize_data_k_cross(self.policy_fn(full_state_dict), key="basic_s", withtf=True).clamp(min=0.01).squeeze(-1)
         #print(f"loss2:{loss}")
         return loss
     
 
-    def sampler_p(self, batch_size):
-        self.price_ds = self.init_ds.get_pricedataset(self.current_policy, "nn_share", self.price_fn)
+    def sampler_p(self, batch_size, init=None):
+        if init is None:
+            self.price_ds = self.init_ds.get_pricedataset(self.current_policy, "nn_share", self.price_fn, init=init)
+        else:
+            self.price_ds = self.init_ds.get_pricedataset(self.init_ds.policy_init_only, "nn_share", self.price_fn, init=init)
             
         dataset = CustomDataset(self.price_ds.datadict)
         
@@ -374,8 +420,12 @@ class KTPolicyTrainer(PolicyTrainer):
         val_losses = []
         epoch = 0
         avg_val_loss = 1.0
+        if init is not None:
+            loss_fn = self.loss_price_init
+        else:
+            loss_fn = self.loss_price
         # エポックループの追加
-        train_loader, val_loader = self.sampler_p(batch_size)
+        train_loader, val_loader = self.sampler_p(batch_size, init)
         while avg_val_loss > threshold and epoch < num_epochs: #avg_val_loss > threshold or epoch < num_epochs:
             epoch += 1
             epoch_train_loss = 0.0
@@ -389,7 +439,7 @@ class KTPolicyTrainer(PolicyTrainer):
                 optimizer.zero_grad()
 
                 # ロス関数の計算
-                loss = self.loss_price(data, policy_fn, price_fn, mparam)
+                loss = loss_fn(data, policy_fn, price_fn, mparam)
 
                 # 損失の逆伝播と最適化
                 loss.backward()
@@ -411,7 +461,7 @@ class KTPolicyTrainer(PolicyTrainer):
                     val_data = {key: value.to(self.device, dtype=TORCH_DTYPE) for key, value in val_data.items()}
                     
                     # ロス関数の計算
-                    val_loss = self.loss_price(val_data, policy_fn, price_fn, mparam)
+                    val_loss = loss_fn(val_data, policy_fn, price_fn, mparam)
                     
                     # ロスの累積
                     epoch_val_loss += val_loss.item()
@@ -450,7 +500,7 @@ class KTPolicyTrainer(PolicyTrainer):
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
-        print(f"k_cross:{k_cross[-10,-10]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
+        print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.HuberLoss()
         loss = mse_loss_fn(price, price_target)
@@ -458,9 +508,9 @@ class KTPolicyTrainer(PolicyTrainer):
 
 
     def loss_price_init(self, data, policy_fn, price_fn, mparam):
-        ashock = data[:,50:]#128,1
-        k_cross = data[:, :50]#128,50
-        k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50).unsqueeze(2)#128,50,1
+        ashock = data["ashock"]
+        k_cross = data["k_cross"]
+        k_mean = torch.mean(k_cross, dim=1, keepdim=True)
         price = price_fn(k_cross, ashock)
         wage = mparam.eta / price
 
@@ -468,22 +518,15 @@ class KTPolicyTrainer(PolicyTrainer):
         n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))
         k_tmp = k_cross.unsqueeze(2)#128,50,1
         a_tmp = ashock.repeat(1, 50).unsqueeze(2)#128,50,1
-        basic_s = self.init_ds.normalize_data(torch.cat([k_tmp, k_mean, a_tmp], dim=-1), key="basic_s", withtf=True)
 
-        k_new = self.init_ds.unnormalize_data_k_cross(policy_fn(basic_s).squeeze(2), key="basic_s", withtf=True)
+        k_new = policy_fn(self.init_ds.policy_init_only ,k_tmp, k_mean, ashock).squeeze(2)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
         price_target = 1 / Cnow
-        mse_loss_fn = nn.L1Loss()
+        mse_loss_fn = nn.HuberLoss()
         loss = mse_loss_fn(price, price_target)
-        if torch.isnan(loss):
-            print("Loss is NaN")
-            print(f"price: {price}")
-            print(f"k_cross: {k_cross}")
-            print(f"Cnow: {Cnow}")
-    
         return loss
 
 

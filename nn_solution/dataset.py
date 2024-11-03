@@ -276,10 +276,10 @@ class InitDataSet(DataSetwithStats):
         policy_ds = BasicDataSet(p_datadict)
         return policy_ds
     
-    def get_pricedataset(self, policy_true, policy_type,  price_fn):
+    def get_pricedataset(self, policy_true, policy_type,  price_fn, init=None):
         price_config = self.config["price_config"]
         simul_data = self.simul_k_func(
-            self.n_path, price_config["T"], self.mparam, policy_true, policy_type, price_fn, state_init=self.datadict
+            self.n_path, price_config["T"], self.mparam, policy_true, policy_type, price_fn, init=init,state_init=self.datadict
         )
         p_datadict = {}
         idx_nan = False

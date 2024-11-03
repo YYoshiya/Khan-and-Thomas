@@ -62,9 +62,9 @@ def main():
     ptrainer = KTPolicyTrainer(vtrainers, init_ds)
     train_vds, valid_vds = init_ds.get_valuedataset(init_ds.policy_init_only, "nn_share", ptrainer.price_fn, init=True, update_init=False)
     
-    init_ds.ma = 0.5
+    init_ds.ma = 0.8
     for vtr in vtrainers:
-        vtr.train(train_vds, valid_vds, 140, value_config["batch_size"])
+        vtr.train(train_vds, valid_vds, 10, value_config["batch_size"])
     
     ptrainer.train(42, policy_config["batch_size"])
     
