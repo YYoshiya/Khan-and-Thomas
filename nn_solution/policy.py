@@ -207,7 +207,7 @@ class KTPolicyTrainer(PolicyTrainer):
         data_stats = KT.create_stats_init(384, 10, self.mparam, init_ds.policy_init_only, policy_type, self.price_model)
         init_ds.update_stats(data_stats, key="basic_s", ma=1)
         init_ds.stats_dict["agt_s"], init_ds.stats_dict_tf["agt_s"] = [x[0] for x in init_ds.stats_dict["basic_s"]], [x[0] for x in init_ds.stats_dict_tf["basic_s"]]
-        init_ds.stats_dict["value"], init_ds.stats_dict_tf["value"] = (5, 2), (torch.tensor(5, dtype=TORCH_DTYPE), torch.tensor(2, dtype=TORCH_DTYPE))
+        #init_ds.stats_dict["value"], init_ds.stats_dict_tf["value"] = (5, 2), (torch.tensor(5, dtype=TORCH_DTYPE), torch.tensor(2, dtype=TORCH_DTYPE))
         #self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, init_ds.policy_init_only, "nn_share", self.prepare_price_input, self.optimizer_price,batch_size=64, init=True, state_init=None, shocks=None, num_epochs=10) #self.price_config["T"]
         self.policy_ds = self.init_ds.get_policydataset(init_ds.policy_init_only, policy_type, self.price_fn, init=True, update_init=False)
         
@@ -342,13 +342,13 @@ class KTPolicyTrainer(PolicyTrainer):
         dataset = CustomDataset(self.price_ds.datadict)
         
         # Split the dataset into training and validation sets
-        valid_size = 32
+        valid_size = 192
         train_size = len(dataset) - valid_size
         train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
         
         # Create DataLoaders for training and validation
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        valid_loader = DataLoader(valid_dataset, batch_size=valid_size, shuffle=False)
+        valid_loader = DataLoader(valid_dataset, batch_size=64, shuffle=False)
         
         return train_loader, valid_loader
 
@@ -450,7 +450,7 @@ class KTPolicyTrainer(PolicyTrainer):
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
-        #print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
+        print(f"k_cross:{k_cross[-10,-10]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.HuberLoss()
         loss = mse_loss_fn(price, price_target)

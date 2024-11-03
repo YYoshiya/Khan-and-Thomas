@@ -323,7 +323,7 @@ def initial_policy(model, mparam, num_epochs=200, batch_size=50):
             loss.backward()
             optimizer.step()
 
-            if t % 10 == 0:
+            if t % 1000 == 0:
                 print(f'Step [{t}], Loss: {loss.item()}')
 
 
