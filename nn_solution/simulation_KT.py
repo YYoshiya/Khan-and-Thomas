@@ -36,7 +36,8 @@ def simul_shocks(n_sample, T, mparam, state_init=None):
     # ショックインデックスから実際のショック値に変換
     ashock_values = mparam.Z[ashock]
     
-    xi = np.random.uniform(0, mparam.B, size=(n_sample, n_agt, T))
+    grid = np.linspace(0, mparam.B, 10)
+    xi = np.random.choice(grid, size=(n_sample, n_agt, T))
 
     return ashock_values, xi
 

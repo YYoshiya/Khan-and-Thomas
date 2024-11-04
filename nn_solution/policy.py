@@ -187,12 +187,12 @@ class PolicyTrainer():
             avg_train_loss1 = loss1_loop / len(train_datasets)
             avg_train_loss2 = loss2_loop / len(train_datasets)
             print(f"Epoch {n+1}: Training Loss1 = {avg_train_loss1:.6f}, Training Loss2 = {avg_train_loss2:.6f}")
+            update_init = self.policy_config["update_init"]
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
-            if n > 0 and n % 10 == 0:
+            if n > 0 and n % 8 == 0:
                 self.optimizer_price = torch.optim.Adam(self.params_price, lr=self.price_config["lr"])
                 self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=64,  num_epochs=10, validation_size=64, threshold=1e-5)
-                update_init = self.policy_config["update_init"]
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
                 for vtr in self.vtrainers:
                     vtr.train(
@@ -500,7 +500,7 @@ class KTPolicyTrainer(PolicyTrainer):
         ynow = ashock * k_cross**mparam.theta * (n**mparam.nu)
         Cnow = ynow.mean(dim=1, keepdim=True) - inow.mean(dim=1, keepdim=True)
         Cnow = Cnow.clamp(min=0.1)
-        print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
+        #print(f"k_cross:{k_cross[0,0]}, price:{price[0,0]}, yterm:{yterm[0,0]}, Cnow:{Cnow[0,0]}")
         price_target = 1 / Cnow
         mse_loss_fn = nn.HuberLoss()
         loss = mse_loss_fn(price, price_target)

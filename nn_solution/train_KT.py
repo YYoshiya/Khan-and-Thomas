@@ -64,9 +64,9 @@ def main():
     
     init_ds.ma = 0.8
     for vtr in vtrainers:
-        vtr.train(train_vds, valid_vds, 10, value_config["batch_size"])
+        vtr.train(train_vds, valid_vds, 100, value_config["batch_size"])
     
-    ptrainer.train(42, policy_config["batch_size"])
+    ptrainer.train(50, policy_config["batch_size"])
     
     if save_files:
         with open(os.path.join(model_path, "config.json"), 'w') as f:
