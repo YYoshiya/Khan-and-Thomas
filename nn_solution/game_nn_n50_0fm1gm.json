@@ -60,7 +60,7 @@
         "n_path": 64,
         "T": 500,
         "n_sample": 384,
-        "net_width": [16, 16],
+        "net_width": [16],
         "activation": "ReLU",
         "d_in": 51,
         "d_out": 1,
