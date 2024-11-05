@@ -78,6 +78,8 @@ class PolicyTrainer():
         self.gm_model = util.GeneralizedMomModel(1, self.config["gm_config"], name="v_gm").to(self.device)
         self.gm_model_p = util.GeneralizedMomPrice(1, self.config["gm_config"], name="p_gm").to(self.device)
         self.price_model = util.PriceModel(2, 1, self.config["price_config"], name="price_net").to(self.device)
+        self.policy_list = [self.policy, self.policy_true, self.gm_model]
+        self.price_list = [self.price_model, self.gm_model_p]
         # 両方のモデルのパラメータを集める
         self.params = list(self.policy.parameters()) + list(self.gm_model.parameters())
         self.params_true = list(self.policy_true.parameters()) + list(self.gm_model.parameters())
@@ -108,6 +110,19 @@ class PolicyTrainer():
         lr_scheduler = ExponentialLR(self.optimizer, gamma=self.decay_rate)
         self.discount = torch.pow(self.mparam.beta, torch.arange(self.t_unroll)).to(self.device)
         self.policy_ds = None
+
+    def set_requires_grad(self, models, requires_grad):
+        """
+        渡されたモデルのパラメーターの requires_grad を一括で設定します。
+
+        Parameters:
+            models (list): 対象のニューラルネットワークモデルのリスト。
+            requires_grad (bool): パラメーターの requires_grad を True または False に設定するフラグ。
+        """
+        for model in models:
+            for param in model.parameters():
+                param.requires_grad = requires_grad
+
     
     def sampler(self, batch_size, init=None, update_init=False):
         if init is None:
@@ -190,10 +205,12 @@ class PolicyTrainer():
             update_init = self.policy_config["update_init"]
             #update_frequency = min(25, max(3, int(math.sqrt(n + 1))))
             #if n > 0 and n % update_frequency == 0:
-            if n > 0 and n % 8 == 0:
+            if n > 0 and n % 3 == 0:
+                self.set_requires_grad(self.policy_list, False)
                 self.optimizer_price = torch.optim.Adam(self.params_price, lr=self.price_config["lr"])
-                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=64,  num_epochs=10, validation_size=64, threshold=1e-5)
+                self.price_loss_training_loop(self.n_sample_price, self.price_config["T"], self.mparam, self.current_policy, "nn_share", self.price_fn, self.optimizer_price, batch_size=256,  num_epochs=10, validation_size=64, threshold=1e-5)
                 train_vds, valid_vds = self.get_valuedataset(init=init, update_init=update_init)
+                self.set_requires_grad(self.policy_list, True)
                 for vtr in self.vtrainers:
                     vtr.train(
                         train_vds, valid_vds,
@@ -425,7 +442,8 @@ class KTPolicyTrainer(PolicyTrainer):
         else:
             loss_fn = self.loss_price
         # エポックループの追加
-        train_loader, val_loader = self.sampler_p(batch_size, init)
+        with torch.no_grad():
+            train_loader, val_loader = self.sampler_p(batch_size, init)
         while avg_val_loss > threshold and epoch < num_epochs: #avg_val_loss > threshold or epoch < num_epochs:
             epoch += 1
             epoch_train_loss = 0.0
