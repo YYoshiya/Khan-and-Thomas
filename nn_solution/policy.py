@@ -239,7 +239,7 @@ class KTPolicyTrainer(PolicyTrainer):
         k_cross = input_data["k_cross"]
         ashock = input_data["ashock"]
         for t in range(self.t_unroll):
-            a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)
+            a_tmp = torch.repeat_interleave(ashock[:, t:t+1],self.mparam.n_agt, dim=1)
             a_tmp = torch.unsqueeze(a_tmp, 2)
             basic_s_tmp = torch.cat([torch.unsqueeze(k_cross, axis=-1), a_tmp], axis=-1)
             full_state_dict = {
@@ -255,13 +255,13 @@ class KTPolicyTrainer(PolicyTrainer):
         util_sum = 0
         for t in range(self.t_unroll):
             k_tmp = torch.unsqueeze(k_cross, 2)
-            a_tmp = torch.repeat_interleave(ashock[:, t:t+1], 50, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
+            a_tmp = torch.repeat_interleave(ashock[:, t:t+1], self.mparam.n_agt, dim=1)#samplerで作成したbatch_size, self.t_unrollのashockを使っている。
             a_tmp = torch.unsqueeze(a_tmp, 2)
             xi_tmp = xi[:,:,t:t+1]
         
             if t == self.t_unroll - 1:
                 price = self.price_fn(k_cross_pre, ashock[:, t:t+1])
-                k_mean_tmp = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50,1)
+                k_mean_tmp = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, self.mparam.n_agt,1)
                 basic_s_tmp_v = torch.cat([k_tmp, k_mean_tmp, a_tmp, xi_tmp], axis=-1)
                 basic_s_v = self.init_ds.normalize_data(basic_s_tmp_v, key="basic_s", withtf=True)
                 full_state_dict_v = {
@@ -294,13 +294,13 @@ class KTPolicyTrainer(PolicyTrainer):
         ashock = input_data["ashock"]
         xi = input_data["xi"]
         k_tmp = torch.unsqueeze(k_cross, 2)     
-        k_mean = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, 50, 1)
-        ashock_tmp = torch.repeat_interleave(ashock[:, 0:1], 50, dim=1)
+        k_mean = torch.mean(k_tmp, dim=1, keepdim=True).repeat(1, self.mparam.n_agt, 1)
+        ashock_tmp = torch.repeat_interleave(ashock[:, 0:1], self.mparam.n_agt, dim=1)
         ashock_tmp = torch.unsqueeze(ashock_tmp, 2)
         next_k = self.current_policy(k_tmp, ashock[:,0:1], xi[:,:,0:1], withtf=True)
         next_k_v = torch.where(next_k==(1-self.mparam.delta)*k_tmp, next_k/self.mparam.GAMY, next_k)
-        next_mean = torch.mean(next_k_v, dim=1, keepdim=True).repeat(1, 50, 1)
-        ashock_next = torch.repeat_interleave(ashock[:, 1:2], 50, dim=1)
+        next_mean = torch.mean(next_k_v, dim=1, keepdim=True).repeat(1, self.mparam.n_agt, 1)
+        ashock_next = torch.repeat_interleave(ashock[:, 1:2], self.mparam.n_agt, dim=1)
         ashock_next = torch.unsqueeze(ashock_next, 2)
         basic_s_tmp = torch.cat([next_k_v, next_mean, ashock_next, xi[:,:,1:2]], axis=-1)
         basic_s = self.init_ds.normalize_data(basic_s_tmp, key="basic_s", withtf=True)
@@ -535,7 +535,7 @@ class KTPolicyTrainer(PolicyTrainer):
         yterm = ashock * k_cross ** mparam.theta
         n = (mparam.nu * yterm / wage)**(1/(1-mparam.nu))
         k_tmp = k_cross.unsqueeze(2)#128,50,1
-        a_tmp = ashock.repeat(1, 50).unsqueeze(2)#128,50,1
+        a_tmp = ashock.repeat(1, self.mparam.n_agt).unsqueeze(2)#128,50,1
 
         k_new = policy_fn(self.init_ds.policy_init_only ,k_tmp, k_mean, ashock).squeeze(2)
         inow = mparam.GAMY * k_new - (1 - mparam.delta) * k_cross
@@ -554,8 +554,8 @@ class KTPolicyTrainer(PolicyTrainer):
     
     def current_policy(self, k_cross, ashock, xi, withtf=False):
         if withtf:
-            k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, 50, 1)
-            ashock = ashock.repeat(1, 50).unsqueeze(2)
+            k_mean = torch.mean(k_cross, dim=1, keepdim=True).repeat(1, self.mparam.n_agt, 1)
+            ashock = ashock.repeat(1, self.mparam.n_agt).unsqueeze(2)
             basic_s = torch.cat([k_cross, k_mean, ashock, xi], dim=2)
             basic_p = self.init_ds.normalize_data_ashock(ashock, key="basic_s", withtf=True)
             
@@ -597,8 +597,8 @@ class KTPolicyTrainer(PolicyTrainer):
     
     def init_policy_fn_tf(self, k_cross, k_mean, ashock):
         # PyTorchで処理する
-        k_mean_tmp = k_mean.repeat(1, 50).unsqueeze(2)  # axis=1をPyTorchで再現
-        ashock_tmp = ashock.repeat(1, 50).unsqueeze(2)  # axis=1をPyTorchで再現
+        k_mean_tmp = k_mean.repeat(1, self.mparam.n_agt).unsqueeze(2)  # axis=1をPyTorchで再現
+        ashock_tmp = ashock.repeat(1, self.mparam.n_agt).unsqueeze(2)  # axis=1をPyTorchで再現
         basic_s = torch.cat([k_cross, ashock_tmp, k_mean_tmp], dim=2)  # NumPyのconcatenateをtorch.catで再現
         
         # GPUでNNの計算を実行

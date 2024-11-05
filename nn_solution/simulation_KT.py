@@ -192,8 +192,8 @@ def simul_k_init_update(n_sample, T, mparam, policy_true, policy_type, price_fn,
 
 def init_policy_fn(init_policy, k_cross, k_mean, ashock):
     # NumPyで処理する
-    k_mean_tmp = np.repeat(k_mean, 50, axis=1)[:, :, np.newaxis]
-    ashock_tmp = np.repeat(ashock, 50, axis=1)[:, :, np.newaxis]
+    k_mean_tmp = np.repeat(k_mean, 500, axis=1)[:, :, np.newaxis]
+    ashock_tmp = np.repeat(ashock, 500, axis=1)[:, :, np.newaxis]
     basic_s = np.concatenate([k_cross, k_mean_tmp, ashock_tmp], axis=2)
     
     # GPUでNNの計算を実行
@@ -207,8 +207,8 @@ def init_policy_fn(init_policy, k_cross, k_mean, ashock):
 
 def init_policy_fn_tf(init_policy, k_cross, k_mean, ashock):
     # PyTorchで処理する
-    k_mean_tmp = k_mean.repeat(1, 50).unsqueeze(2)  # axis=1をPyTorchで再現
-    ashock_tmp = ashock.repeat(1, 50).unsqueeze(2)  # axis=1をPyTorchで再現
+    k_mean_tmp = k_mean.repeat(1, 500).unsqueeze(2)  # axis=1をPyTorchで再現
+    ashock_tmp = ashock.repeat(1, 500).unsqueeze(2)  # axis=1をPyTorchで再現
     basic_s = torch.cat([k_cross, k_mean_tmp,ashock_tmp], dim=2)  # NumPyのconcatenateをtorch.catで再現
     
     # GPUでNNの計算を実行
