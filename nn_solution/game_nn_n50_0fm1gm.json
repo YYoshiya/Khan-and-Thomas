@@ -1,5 +1,5 @@
 {
-    "n_agt": 500,
+    "n_agt": 250,
     "beta": 0.99,
     "mats_path": "KS_policy_N50_v1.mat",
     "n_basic": 2,
