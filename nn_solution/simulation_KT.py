@@ -36,8 +36,9 @@ def simul_shocks(n_sample, T, mparam, state_init=None):
     # ショックインデックスから実際のショック値に変換
     ashock_values = mparam.Z[ashock]
     
-    grid = np.linspace(0, mparam.B, 10)
-    xi = np.random.choice(grid, size=(n_sample, n_agt, T))
+    #grid = np.linspace(0, mparam.B, 10)
+    #xi = np.random.choice(grid, size=(n_sample, n_agt, T))
+    xi = np.random.uniform(0, mparam.B, size=(n_sample, n_agt, T))
 
     return ashock_values, xi
 
@@ -192,8 +193,8 @@ def simul_k_init_update(n_sample, T, mparam, policy_true, policy_type, price_fn,
 
 def init_policy_fn(init_policy, k_cross, k_mean, ashock):
     # NumPyで処理する
-    k_mean_tmp = np.repeat(k_mean, 250, axis=1)[:, :, np.newaxis]
-    ashock_tmp = np.repeat(ashock, 250, axis=1)[:, :, np.newaxis]
+    k_mean_tmp = np.repeat(k_mean, 500, axis=1)[:, :, np.newaxis]
+    ashock_tmp = np.repeat(ashock, 500, axis=1)[:, :, np.newaxis]
     basic_s = np.concatenate([k_cross, k_mean_tmp, ashock_tmp], axis=2)
     
     # GPUでNNの計算を実行
@@ -207,8 +208,8 @@ def init_policy_fn(init_policy, k_cross, k_mean, ashock):
 
 def init_policy_fn_tf(init_policy, k_cross, k_mean, ashock):
     # PyTorchで処理する
-    k_mean_tmp = k_mean.repeat(1, 250).unsqueeze(2)  # axis=1をPyTorchで再現
-    ashock_tmp = ashock.repeat(1, 250).unsqueeze(2)  # axis=1をPyTorchで再現
+    k_mean_tmp = k_mean.repeat(1, 500).unsqueeze(2)  # axis=1をPyTorchで再現
+    ashock_tmp = ashock.repeat(1, 500).unsqueeze(2)  # axis=1をPyTorchで再現
     basic_s = torch.cat([k_cross, k_mean_tmp,ashock_tmp], dim=2)  # NumPyのconcatenateをtorch.catで再現
     
     # GPUでNNの計算を実行
