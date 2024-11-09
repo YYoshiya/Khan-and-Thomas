@@ -1,8 +1,7 @@
 import numpy as np
 import torch
 class KTParam():
-    def __init__(self, n_agt):
-        self.n_agt = n_agt
+    def __init__(self):
         self.beta = 0.9540
         self.theta = 0.3250
         self.nu = 0.580
@@ -24,3 +23,12 @@ class KTParam():
                                 [0.0014, 0.0690, 0.8593, 0.0690, 0.0014],
                                 [0.0001, 0.0042, 0.1035, 0.8579, 0.0344],
                                 [0.0000, 0.0002, 0.0083, 0.1377, 0.8537]])
+
+params = KTParam()
+
+
+
+
+
+a = generate_ashock_values(100, params.ashock, params.pi_a)
+print(a)
