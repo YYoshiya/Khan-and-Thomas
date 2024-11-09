@@ -19,8 +19,8 @@ else:
     raise ValueError("Unknown dtype.")
 
 class MyDictDataset(Dataset):
-    def __init__(self, next_k, ashock, ishock, grid, dist):
-        self.next_k = next_k
+    def __init__(self, k_cross, ashock, ishock, grid, dist):
+        self.k_cross = k_cross
         self.ashock = ashock
         self.ishock = ishock
         self.grid = grid
@@ -31,7 +31,7 @@ class MyDictDataset(Dataset):
 
     def __getitem__(self, idx):
         return {
-            'next_k': self.next_k[idx],          # 例: スカラーや1次元テンソル
+            'k_cross': self.k_cross[idx],          # 例: スカラーや1次元テンソル
             'ashock': self.ashock[idx],          # 例: スカラーや1次元テンソル
             'ishock': self.ishock[idx],          # 例: スカラーや1次元テンソル
             'grid': self.grid[idx],              # 例: 1次元テンソル（サイズ50）
