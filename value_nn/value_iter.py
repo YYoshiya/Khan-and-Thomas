@@ -39,51 +39,51 @@ class MyDictDataset(Dataset):
         }
 
 
-def value_fn(train_data, value0, policy, gm_model, params):
-    gm_tmp = gm_model(train_data["grid"])
+def value_fn(train_data, nn, params):
+    gm_tmp = nn.gm_model(train_data["grid"])
     gm = torch.dot(gm_tmp, train_data["dist"])
     state = torch.cat([train_data["next_k"], train_data["ashock"], train_data["ishock"], gm], dim=1)
-    value = value0(state)
+    value = nn.value0(state)
     return value
 
-def policy_fn(ashock, grid, dist, policy, gm_model):
-    gm_tmp = gm_model(grid)
+def policy_fn(ashock, grid, dist, nn):
+    gm_tmp = nn.gm_model(grid)
     gm = torch.dot(gm_tmp, dist)
     state = torch.cat([ashock, gm], dim=1)
-    next_k = policy(state)
+    next_k = nn.policy(state)
     return next_k
 
-def price_fn(grid, dist, ashock, gm_model_price, price_model):
-    gm_price_tmp = gm_model_price(grid)
+def price_fn(grid, dist, ashock, nn):
+    gm_price_tmp = nn.gm_model_price(grid)
     gm_price = torch.dot(gm_price_tmp, dist)
     state = torch.cat([ashock, gm_price], dim=1)
-    price = price_model(state)
+    price = nn.price_model(state)
     return price
 
 
-def policy_iter(value0, policy, gm_model, params, optimizer):
+def policy_iter(params, optimizer, nn):
     with torch.no_grad():
-        data = get_dataset(policy, gm)
+        data = get_dataset(nn)
     dataset = MyDataset(data)
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for train_data in dataloader:
-        next_v, _ = next_value(train_data, value0, policy, params)
+        next_v, _ = next_value(train_data, params, nn)
         loss.zero_grad()
         loss = -torch.mean(next_v)
         loss.backward()
         optimizer.step()
 
-def value_iter(value0, policy, gm_model, gm_model_price, price_model, params, optimizer, epochs):
-    data = get_dataset(policy, gm)
+def value_iter(nn, params, optimizer, epochs):
+    data = get_dataset(nn)
     dataset = MyDataset(data)
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for train_data in dataloader:
-        v = value_fn(train_data, value0, policy, gm_model, params)#value_fn書いて
-        price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], gm_model_price, price_model)#入力は分布とashockかな。
+        v = value_fn(train_data, nn, params)#value_fn書いて
+        price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
         #wage = params.eta / price
         profit = get_profit(train_data["k_grid"], train_data["ashock"], price, params)
-        v0_exp, v1_exp = next_value(train_data, policy, params)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
-        e0 = -params.gamma * policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], policy, gm_model) * price + params.beta * v0_exp
+        v0_exp, v1_exp = next_value(train_data, nn)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+        e0 = -params.gamma * policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn) * price + params.beta * v0_exp
         e1 = -(1-params.delta) * train_data["k_cross"]* price + params.beta * v1_exp
         threshold = (e0 - e1) / marams.eta
         xi = min(params.B, max(0, threshold))
@@ -103,16 +103,16 @@ def get_profit(k_cross, ashock, ishock, price, params):
     v0temp = y - wage * n + (1 - params.delta) * k_cross
     return v0temp*price
 
-def dist_gm(grid, dist, ashock, gm_model, k_pred_model):
-    gm_tmp = gm_model(grid)
+def dist_gm(grid, dist, ashock, nn):
+    gm_tmp = nn.gm_model(grid)
     gm = torch.dot(gm_tmp, dist)
     state = torch.cat([ashock, gm], dim=1)
-    k_pred = k_pred_model(state)
+    k_pred = nn.policy(state)
     return k_pred
 
 
-def next_value(train_data, value0, policy, gm_model, k_pred_model, params):
-    next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"], gm_model, k_pred_model)
+def next_value(train_data, nn, params):
+    next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
     ashock = train_data["ashock"]
     ashock_idx = [torch.where(params.ashock == val)[0].item() for val in ashock]
     ashock_exp = params.pi_a[ashock_idx]
@@ -126,14 +126,14 @@ def next_value(train_data, value0, policy, gm_model, k_pred_model, params):
     
     pre_k_flat = (1-params.delta)*k_flat
     data_policy = torch.cat([ashock, next_gm], dim=1)
-    next_k = policy_fn(ashock, train_data["dist"], policy, gm_model).squeeze()
+    next_k = policy_fn(ashock, train_data["dist"],nn).squeeze()
     next_k_flat = torch.full_like(k_flat, next_k)
     next_gm_flat = torch.full_like(a_flat, next_gm)
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=1)
     data_e1 = torch.cat([pre_k_flat/params.gamma, a_flat, i_flat, next_gm_flat], dim=1)
-    value_e0 = value0(data_e0).squeeze(-1).reshape(train_data["k_grid"].size(), ashock.size(), ishock.size())
-    value_e1 = value0(data_e1).squeeze(-1).reshape(train_data["k_grid"].size(), ashock.size(), ishock.size())
+    value_e0 = nn.value0(data_e0).squeeze(-1).reshape(train_data["k_grid"].size(), ashock.size(), ishock.size())
+    value_e1 = nn.value0(data_e1).squeeze(-1).reshape(train_data["k_grid"].size(), ashock.size(), ishock.size())
     
     value_exp_e0_tmp = value_e0 * ashock_exp.unsqueeze(1) * ishock_exp.unsqueeze(0)
     value_exp_e1_tmp = value_e1 * ashock_exp.unsqueeze(1) * ishock_exp.unsqueeze(0)
@@ -142,12 +142,9 @@ def next_value(train_data, value0, policy, gm_model, k_pred_model, params):
     
     return value_exp_e0, value_exp_e1
 
-def get_dataset(policy, value0, gm_model, gm_model_price, price_model, params, T):
-    dist_now = torch.full((params.k_grid.size,), 1.0 / params.k_grid.size, dtype=torch.float32)
-    if isinstance(params.k_grid, torch.Tensor):
-        k_now = params.k_grid.clone()
-    else:
-        k_now = torch.tensor(params.k_grid, dtype=torch.float32)
+def get_dataset(params, T, nn):
+    dist_now = torch.full((params.k_grid.size,), 1.0 / params.k_grid.size, dtype=torch.float32)#砂川さんのやつだと5個でスタート
+    k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
     ashock = generate_ashock_values(500, params.ashock, params.pi_a)  # Should return a torch tensor
     ishock = generate_ashock_values(500, params.ishock, params.pi_i)  # Should return a torch tensor
 
@@ -157,9 +154,6 @@ def get_dataset(policy, value0, gm_model, gm_model_price, price_model, params, T
     k_history = []
     # Define T based on the length of shock sequences
     for t in range(T):
-        # Initialize new distribution and capital grid with zeros
-        dist_new = torch.zeros_like(dist_now)
-        k_new = torch.zeros_like(k_now)
         # Current shocks
         a = ashock[t]
         i = ishock[t]
@@ -171,19 +165,27 @@ def get_dataset(policy, value0, gm_model, gm_model_price, price_model, params, T
             "dist": dist_now
         }
         # Compute next values using the provided next_value function
-        next_value_e0, next_value_e1 = next_value(basic_s, value0, policy, gm_model, params)
+        next_value_e0, next_value_e1 = next_value(basic_s, nn, params)
         
         # Compute xi and clamp its values between 0 and params.B
         xi = (next_value_e0 - next_value_e1) / params.eta
         xi = torch.clamp(xi, min=0.0, max=params.B)
         # Compute alpha
         alpha = xi / params.B
+        
+        indices_alpha_lt_1 = np.where(alpha < 1)[0]
+        if len(indices_alpha_lt_1) == 0:
+            J = -1
+        else:
+            J = indices_alpha_lt_1.max()
+        dist_new = torch.zeros(J + 2)
+        k_new = torch.zeros(J + 2)
         # Update the new distribution
         dist_new[0] = torch.dot(alpha, dist_now)
-        dist_new[1:] = (1 - alpha[:-1]) * dist_now[:-1]
+        dist_new[1:J+2] = (1 - alpha[:J+1]) * dist_now[:J+1]
         # Update the new capital grid
-        k_new[0] = policy_fn(a, dist_now, policy, gm_model).squeeze()
-        k_new[1:] = ((1 - params.delta) / params.gamma) * k_now[:-1]
+        k_new[0] = policy_fn(a, dist_now, nn).squeeze()
+        k_new[1:J+2] = ((1 - params.delta) / params.gamma) * k_now[:J+1]
         # Record the history by cloning to prevent in-place modifications
         dist_history.append(dist_now.clone())
         k_history.append(k_now.clone())

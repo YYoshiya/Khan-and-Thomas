@@ -71,8 +71,17 @@ class PriceNN(nn.Module):
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
         return x
+
+
+class nn_class:
+    def __init__(self):
+        self.value0 = ValueNN(4)
+        self.policy = NextkNN(2)
+        self.gm_model = GeneralizedMomModel(1)
+        self.gm_model_price = GeneralizedMomModel(1)
+        self.price_model = PriceNN(2)
         
-    
+nn = nn_class()
     
     
 
