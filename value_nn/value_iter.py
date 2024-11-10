@@ -145,8 +145,8 @@ def next_value(train_data, nn, params):
 def get_dataset(params, T, nn):
     dist_now = torch.full((params.k_grid.size,), 1.0 / params.k_grid.size, dtype=torch.float32)#砂川さんのやつだと5個でスタート
     k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
-    ashock = generate_ashock_values(500, params.ashock, params.pi_a)  # Should return a torch tensor
-    ishock = generate_ashock_values(500, params.ishock, params.pi_i)  # Should return a torch tensor
+    ashock = generate_ashock_values(T, params.ashock, params.pi_a)  # Should return a torch tensor
+    ishock = generate_ashock_values(T, params.ishock, params.pi_i)  # Should return a torch tensor
 
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
