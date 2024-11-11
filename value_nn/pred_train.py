@@ -64,24 +64,55 @@ def price_train(nn, optimizer, num_epochs, n_sample, threshold):
             optimizer.step()
 
 
-def next_gm_train(nn, params, ):
+def next_gm_train(nn, params, optimizer, num_epochs):
     data = vi.get_dataset(params, 2000, nn)
     ashock = vi.generate_ashock_values(2000, params.ashock, params.pi_a)
     k_grid = torch.tensor(data["k_grid"], dtype=TORCH_DTYPE)
     dist = torch.tensor(data["dist"], dtype=TORCH_DTYPE)
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
+    next_gm_tmp = vi.next_gm_modeldata(["grid"][1:,:]).squeeze()
+    next_gm = torch.sum(next_gm_tmp, dist[1:, :], dim=1)
     n_samples = len(ashock)
-    dataset_tmp = {"grid": k_grid, "dist": dist, "ashock": ashock}
-    dataset = Pricedatasets(dataset_tmp)
+    dataset = CustomDataset(k_grid[:-2], dist[:-2], ashock[:-2], next_gm)
+    valid_size = 192
+    train_size = len(dataset) - valid_size
+    train_data, valid_data = random_split(dataset, [train_size, valid_size])
+    train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+    valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
+    for data in train_loader:
+        optimizer.zero_grad()
+        loss = next_gm_loss(nn, data)
+        loss.backward()
+        optimizer.step()
+
+def next_gm_loss(nn, data):
+    loss_func = nn.MSELoss()
+    next_gm = vi.dist_gm(data["grid"], data["dist"], data["ashock"], nn)
+    loss = loss_func(next_gm, data["next_gm"])
+    return loss
 
 
-class GMdatasets(Dataset):#ashockはget_datasetで生成したものを使う。
-    def __init__(self, data):
-        self.data = data
+class CustomDataset(Dataset):
+    def __init__(self, k_grid, dist, ashock, next_gm):
+        # Ensure all tensors are the same length
+        assert len(k_grid) == len(dist) == len(ashock) == len(next_gm), "All input tensors must have the same length"
+        
+        self.k_grid = k_grid
+        self.dist = dist
+        self.ashock = ashock
+        self.next_gm = next_gm
+
     def __len__(self):
-        return len(self.data["ashock"])
+        return len(self.k_grid)
+
     def __getitem__(self, idx):
-        return {"grid": self.data["grid"][idx], "dist": self.data["dist"][idx], "ashock": self.data["ashock"][idx]}
+        sample = {
+            'grid': self.k_grid[idx],
+            'dist': self.dist[idx],
+            'ashock': self.ashock[idx],
+            'next_gm': self.next_gm[idx]
+        }
+        return sample
     
 class Pricedatasets(Dataset):
     def __init__(self, data):

@@ -78,6 +78,7 @@ class nn_class:
         self.value0 = ValueNN(4)
         self.policy = NextkNN(2)
         self.gm_model = GeneralizedMomModel(1)
+        self.next_gm_model = PriceNN(1)
         self.gm_model_price = GeneralizedMomModel(1)
         self.price_model = PriceNN(2)
         

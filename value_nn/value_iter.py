@@ -18,7 +18,7 @@ elif DTYPE == "float32":
 else:
     raise ValueError("Unknown dtype.")
 
-class MyDictDataset(Dataset):
+class MyDataset(Dataset):
     def __init__(self, k_cross, ashock, ishock, grid, dist):
         self.k_cross = k_cross
         self.ashock = ashock
@@ -85,14 +85,13 @@ def value_iter(nn, params, optimizer, epochs):
         v0_exp, v1_exp = next_value(train_data, nn)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
         e0 = -params.gamma * policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn) * price + params.beta * v0_exp
         e1 = -(1-params.delta) * train_data["k_cross"]* price + params.beta * v1_exp
-        threshold = (e0 - e1) / marams.eta
+        threshold = (e0 - e1) / params.eta
         xi = min(params.B, max(0, threshold))
-        vnew = profit - p*w*xi**2/(2*params.B) + xi/params.B*e0 + (1-xi/params.B)*e1
-        loss = torch.sum((vnew - v)**2)
+        vnew = profit - price*w*xi**2/(2*params.B) + xi/params.B*e0 + (1-xi/params.B)*e1
+        loss = torch.mean((vnew - v)**2)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    return value0
 
 
 def get_profit(k_cross, ashock, ishock, price, params):
@@ -107,8 +106,8 @@ def dist_gm(grid, dist, ashock, nn):
     gm_tmp = nn.gm_model(grid)
     gm = torch.dot(gm_tmp, dist)
     state = torch.cat([ashock, gm], dim=1)
-    k_pred = nn.policy(state)
-    return k_pred
+    next_gm = nn.next_gm_model(state)
+    return next_gm
 
 
 def next_value(train_data, nn, params):
@@ -137,8 +136,8 @@ def next_value(train_data, nn, params):
     
     value_exp_e0_tmp = value_e0 * ashock_exp.unsqueeze(1) * ishock_exp.unsqueeze(0)
     value_exp_e1_tmp = value_e1 * ashock_exp.unsqueeze(1) * ishock_exp.unsqueeze(0)
-    value_exp_e0 = torch.sum(value_exp_tmp, dim=(1,2))
-    value_exp_e1 = torch.sum(value_exp_tmp, dim=(1,2))
+    value_exp_e0 = torch.sum(value_exp_e0_tmp, dim=(1,2))
+    value_exp_e1 = torch.sum(value_exp_e1_tmp, dim=(1,2))
     
     return value_exp_e0, value_exp_e1
 
