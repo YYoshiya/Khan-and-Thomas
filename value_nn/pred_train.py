@@ -64,9 +64,9 @@ def price_train(nn, optimizer, num_epochs, n_sample, threshold):
             optimizer.step()
 
 
-def next_gm_train(nn, params, optimizer, num_epochs):
-    data = vi.get_dataset(params, 2000, nn)
-    ashock = vi.generate_ashock_values(2000, params.ashock, params.pi_a)
+def next_gm_train(nn, params, optimizer, T):
+    data = vi.get_dataset(params, T, nn)
+    ashock = vi.generate_ashock_values(T, params.ashock, params.pi_a)
     k_grid = torch.tensor(data["k_grid"], dtype=TORCH_DTYPE)
     dist = torch.tensor(data["dist"], dtype=TORCH_DTYPE)
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)

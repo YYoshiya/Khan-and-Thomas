@@ -158,7 +158,7 @@ def get_dataset(params, T, nn):
         i = ishock[t]
         # Prepare the state dictionary
         basic_s = {
-            "k_grid": params.k_grid,  # Ensure params.k_grid is a torch tensor
+            "k_grid": k_now,  # Ensure params.k_grid is a torch tensor
             "ashock": a,
             "ishock": i,
             "dist": dist_now
