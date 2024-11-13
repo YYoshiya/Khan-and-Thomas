@@ -19,7 +19,7 @@ else:
     raise ValueError("Unknown dtype.")
 
 class MyDataset(Dataset):
-    def __init__(self, k_cross, ashock, ishock, grid, dist):
+    def __init__(self, k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
         self.k_cross = k_cross
         self.ashock = ashock
         self.ishock = ishock
@@ -31,40 +31,41 @@ class MyDataset(Dataset):
 
     def __getitem__(self, idx):
         return {
-            'k_cross': self.k_cross[idx],          # 例: スカラーや1次元テンソル
-            'ashock': self.ashock[idx],          # 例: スカラーや1次元テンソル
-            'ishock': self.ishock[idx],          # 例: スカラーや1次元テンソル
-            'grid': self.grid[idx],              # 例: 1次元テンソル（サイズ50）
-            'dist': self.dist[idx]         # 例: 1次元テンソル（サイズ50）
+            'k_cross': self.k_cross[idx] if self.k_cross is not None else None,
+            'ashock': self.ashock[idx] if self.ashock is not None else None,
+            'ishock': self.ishock[idx] if self.ishock is not None else None,
+            'grid': self.grid[idx],
+            'dist': self.dist[idx]
         }
 
 
 def value_fn(train_data, nn, params):
-    gm_tmp = nn.gm_model(train_data["grid"])
-    gm = torch.dot(gm_tmp, train_data["dist"])
+    gm_tmp = nn.gm_model(train_data["grid"].unsqueeze(-1))
+    gm = torch.matmal(gm_tmp, train_data["dist"].unsqueeze(1)).squeeze(-1).squeeze(-1)
     state = torch.cat([train_data["next_k"], train_data["ashock"], train_data["ishock"], gm], dim=1)
     value = nn.value0(state)
     return value
 
 def policy_fn(ashock, grid, dist, nn):
-    gm_tmp = nn.gm_model(grid)
-    gm = torch.dot(gm_tmp, dist)
+    gm_tmp = nn.gm_model(grid.unsqueeze(-1))
+    gm = torch.matmal(gm_tmp, dist.unsqueeze(1)).squeeze(-1).squeeze(-1)
     state = torch.cat([ashock, gm], dim=1)
     next_k = nn.policy(state)
     return next_k
 
 def price_fn(grid, dist, ashock, nn):
-    gm_price_tmp = nn.gm_model_price(grid)
-    gm_price = torch.dot(gm_price_tmp, dist)
+    gm_price_tmp = nn.gm_model_price(grid.unsqueeze(-1))
+    gm_price = torch.matmal(gm_price_tmp, dist.unsqueeze(1)).squeeze(-1).squeeze(-1)
     state = torch.cat([ashock, gm_price], dim=1)
     price = nn.price_model(state)
     return price
 
 
-def policy_iter(params, optimizer, nn):
+def policy_iter(params, optimizer, nn, T):
     with torch.no_grad():
-        data = get_dataset(nn)
-    dataset = MyDataset(data)
+        data = get_dataset(params, T, nn)
+    ashock = generate_ashock_values(T, params.ashock, params.pi_a)
+    dataset = MyDataset(ashock=ashock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for train_data in dataloader:
         next_v, _ = next_value(train_data, params, nn)
@@ -73,21 +74,24 @@ def policy_iter(params, optimizer, nn):
         loss.backward()
         optimizer.step()
 
-def value_iter(nn, params, optimizer, epochs):
+def value_iter(nn, params, optimizer, T, epochs):
     data = get_dataset(nn)
-    dataset = MyDataset(data)
+    ashock = generate_ashock_values(T, params.ashock, params.pi_a)
+    ishock = generate_ashock_values(T, params.ishock, params.pi_i)
+    k_cross = np.random.choice(params.k_grid, T)
+    dataset = MyDataset(k_cross, ashock, ishock, data["grid"], data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for train_data in dataloader:
         v = value_fn(train_data, nn, params)#value_fn書いて
         price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
-        #wage = params.eta / price
-        profit = get_profit(train_data["k_grid"], train_data["ashock"], price, params)
-        v0_exp, v1_exp = next_value(train_data, nn)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+        wage = params.eta / price
+        profit = get_profit(train_data["k_cross"], train_data["ashock"], price, params)
+        v0_exp, v1_exp = next_value(train_data, params, nn)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
         e0 = -params.gamma * policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn) * price + params.beta * v0_exp
         e1 = -(1-params.delta) * train_data["k_cross"]* price + params.beta * v1_exp
         threshold = (e0 - e1) / params.eta
         xi = min(params.B, max(0, threshold))
-        vnew = profit - price*w*xi**2/(2*params.B) + xi/params.B*e0 + (1-xi/params.B)*e1
+        vnew = profit - price*wage*xi**2/(2*params.B) + xi/params.B*e0 + (1-xi/params.B)*e1
         loss = torch.mean((vnew - v)**2)
         optimizer.zero_grad()
         loss.backward()
@@ -110,7 +114,7 @@ def dist_gm(grid, dist, ashock, nn):
     return next_gm
 
 
-def next_value(train_data, nn, params):
+def next_value(train_data, nn, params, simul=False):
     next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
     ashock = train_data["ashock"]
     ashock_idx = [torch.where(params.ashock == val)[0].item() for val in ashock]
@@ -118,7 +122,12 @@ def next_value(train_data, nn, params):
     ishock = train_data["ishock"]
     ishock_idx = [torch.where(params.ishock == val)[0].item() for val in ishock]
     ishock_exp = params.pi_i[ishock_idx]
-    k_mesh, a_mesh, i_mesh = torch.meshgrid(train_data["k_grid"], params.ashock, params.ishock, indexing='ij')
+    if simul:
+        k_mesh, a_mesh, i_mesh = torch.meshgrid(train_data["grid"], params.ashock, params.ishock, indexing='ij')
+        size = train_data["grid"].size()
+    else:
+        k_mesh, a_mesh, i_mesh = torch.meshgrid(train_data["k_cross"], ashock, ishock, indexing='ij')
+        size = train_data["k_cross"].size()
     k_flat = k_mesh.flatten()
     a_flat = a_mesh.flatten()
     i_flat = i_mesh.flatten()
@@ -131,8 +140,8 @@ def next_value(train_data, nn, params):
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=1)
     data_e1 = torch.cat([pre_k_flat/params.gamma, a_flat, i_flat, next_gm_flat], dim=1)
-    value_e0 = nn.value0(data_e0).squeeze(-1).reshape(train_data["k_grid"].size(), ashock.size(), ishock.size())
-    value_e1 = nn.value0(data_e1).squeeze(-1).reshape(train_data["k_grid"].size(), ashock.size(), ishock.size())
+    value_e0 = nn.value0(data_e0).squeeze(-1).reshape(size, ashock.size(), ishock.size())
+    value_e1 = nn.value0(data_e1).squeeze(-1).reshape(size, ashock.size(), ishock.size())
     
     value_exp_e0_tmp = value_e0 * ashock_exp.unsqueeze(1) * ishock_exp.unsqueeze(0)
     value_exp_e1_tmp = value_e1 * ashock_exp.unsqueeze(1) * ishock_exp.unsqueeze(0)
@@ -158,13 +167,13 @@ def get_dataset(params, T, nn):
         i = ishock[t]
         # Prepare the state dictionary
         basic_s = {
-            "k_grid": k_now,  # Ensure params.k_grid is a torch tensor
+            "grid": k_now,  # Ensure params.k_grid is a torch tensor
             "ashock": a,
             "ishock": i,
             "dist": dist_now
         }
         # Compute next values using the provided next_value function
-        next_value_e0, next_value_e1 = next_value(basic_s, nn, params)
+        next_value_e0, next_value_e1 = next_value(basic_s, nn, params, simul=True)
         
         # Compute xi and clamp its values between 0 and params.B
         xi = (next_value_e0 - next_value_e1) / params.eta
@@ -196,12 +205,12 @@ def get_dataset(params, T, nn):
     k_history_tensor = torch.stack(k_history)
     
     return {
-        "k_grid": k_history_tensor,
+        "grid": k_history_tensor,
         "dist": dist_history_tensor
     }
         
 
-def generate_ashock_values(T, ashock, Pi):
+def generate_ashock_values(T, shock, Pi):
     """
     指定された遷移確率行列Piに基づいてT個のashock値を生成します。
     
@@ -217,7 +226,7 @@ def generate_ashock_values(T, ashock, Pi):
     row_sums = Pi.sum(axis=1)
     Pi_normalized = Pi / row_sums[:, np.newaxis]
     states = np.zeros(T, dtype=int)
-    nz = len(ashock)
+    nz = len(shock)
     # 初期状態をランダムに選択（均等分布）
     states[0] = np.random.choice(nz)
     
@@ -227,4 +236,4 @@ def generate_ashock_values(T, ashock, Pi):
         states[t] = np.random.choice(nz, p=Pi_normalized[current_state])
     
     # 状態に対応するashockの値を取得（長さTの配列）
-    return ashock[states]
+    return shock[states]

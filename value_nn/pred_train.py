@@ -57,11 +57,18 @@ def price_train(nn, optimizer, num_epochs, n_sample, threshold):
     valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
     
     while avg_val_loss > threshold and epoch < num_epochs:
+        epoch += 1
+        loss_list = []
         for data in train_loader:
             optimizer.zero_grad()
             loss = price_loss(nn, data)
             loss.backward()
             optimizer.step()
+        for valid_data in valid_loader:
+            loss = price_loss(nn, valid_data)
+            loss_list.append(loss)
+        avg_val_loss = sum(loss_list) / len(loss_list)
+        print(f"epoch: {epoch}, avg_val_loss: {avg_val_loss}")
 
 
 def next_gm_train(nn, params, optimizer, T):

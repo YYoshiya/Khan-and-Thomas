@@ -100,8 +100,8 @@ nn = nn_class()
 
 
 
-while diff > critout:
+while True:
     vi.policy_iter(params, nn.optimizer_pol, nn)
     vi.value_iter(nn, params, nn.optimizer_val, 200)
     pred.price_train(nn, nn.optimizer_pri, 10, 500, 1e-4)
-    pred.next_gm_train(nn, params, nn.optimizer_next_gm, T)
+    pred.next_gm_train(nn, params, nn.optimizer_next_gm, 1000)

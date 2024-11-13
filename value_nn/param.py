@@ -35,6 +35,3 @@ params = KTParam()
 
 
 
-
-a = generate_ashock_values(100, params.ashock, params.pi_a)
-print(a)
