@@ -9,7 +9,7 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import Dataset, DataLoader, random_split
 import matplotlib.pyplot as plt
 import value_iter as vi
-from param import params
+from param import KTParam as params
 
 DTYPE = "float32"
 if DTYPE == "float64":

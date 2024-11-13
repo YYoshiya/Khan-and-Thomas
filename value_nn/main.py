@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 import matplotlib.pyplot as plt
 import value_iter as vi
 import pred_train as pred
-from param import KTParam as params
+from param import KTParam
 
 
 class ValueNN(nn.Module):
@@ -48,7 +48,7 @@ class GeneralizedMomModel(nn.Module):
 
 class NextkNN(nn.Module):
     def __init__(self, d_in):
-        super(PriceNN, self).__init__()
+        super(NextkNN, self).__init__()
         self.fc1 = nn.Linear(d_in, 12)
         self.fc2 = nn.Linear(12, 12)
         self.fc3 = nn.Linear(12, 1)
@@ -83,7 +83,7 @@ class nn_class:
         self.policy = NextkNN(2)
         self.gm_model = GeneralizedMomModel(1)
         self.gm_model_policy = GeneralizedMomModel(1)
-        self.next_gm_model = PriceNN(1)
+        self.next_gm_model = PriceNN(2)
         self.gm_model_price = GeneralizedMomModel(1)
         self.price_model = PriceNN(2)
         params_value = list(self.value0.parameters()) + list(self.gm_model.parameters())
@@ -97,11 +97,11 @@ class nn_class:
 
         
 nn = nn_class()
-
+params = KTParam()
 
 
 while True:
-    vi.policy_iter(params, nn.optimizer_pol, nn)
-    vi.value_iter(nn, params, nn.optimizer_val, 200)
+    vi.policy_iter(params, nn.optimizer_pol, nn, 500, 10)
+    vi.value_iter(nn, params, nn.optimizer_val, 200, 10)
     pred.price_train(nn, nn.optimizer_pri, 10, 500, 1e-4)
     pred.next_gm_train(nn, params, nn.optimizer_next_gm, 1000)
