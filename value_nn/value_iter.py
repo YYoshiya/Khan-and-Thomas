@@ -7,6 +7,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import Dataset, DataLoader, random_split
+from torch.nn.utils.rnn import pad_sequence
 
 DTYPE = "float32"
 if DTYPE == "float64":
@@ -20,34 +21,45 @@ else:
 
 class MyDataset(Dataset):
     def __init__(self, k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
-        self.k_cross = k_cross
-        self.ashock = ashock
-        self.ishock = ishock
-        self.grid = grid
-        self.dist = dist
-    
+        self.data = {}
+        if k_cross is not None:
+            if isinstance(k_cross, np.ndarray):
+                k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE)
+            k_cross = k_cross.view(-1, 1)
+            self.data['k_cross'] = k_cross
+        if ashock is not None:
+            if isinstance(ashock, np.ndarray):
+                ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
+            #ashock = ashock.view(-1, 1)
+            self.data['ashock'] = ashock
+        if ishock is not None:
+            if isinstance(ishock, np.ndarray):
+                ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
+            #ishock = ishock.view(-1, 1)
+            self.data['ishock'] = ishock
+        if grid is not None:
+            grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
+            self.data['grid'] = padding(grid)
+        if dist is not None:
+            dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
+            self.data['dist'] = padding(dist)
+
     def __len__(self):
-        return self.next_k.size(0)
+        # 使用しているデータの最初の項目の長さを返す
+        return next(iter(self.data.values())).shape[0]
 
     def __getitem__(self, idx):
-        return {
-            'k_cross': self.k_cross[idx] if self.k_cross is not None else None,
-            'ashock': self.ashock[idx] if self.ashock is not None else None,
-            'ishock': self.ishock[idx] if self.ishock is not None else None,
-            'grid': self.grid[idx],
-            'dist': self.dist[idx]
-        }
+        # データが存在する場合のみ項目を返す
+        return {key: value[idx] for key, value in self.data.items()}
 
-def compute_inner_product(grid, dist):
-    # 次元数を確認して内積を取る
-    if grid.dim() == 1 and dist.dim() == 1:
-        # 両方が1次元の場合、通常の内積
-        return torch.dot(grid, dist)
-    elif grid.dim() == 2 and dist.dim() == 2:
-        # 両方が2次元の場合、バッチごとに内積
-        return torch.bmm(grid.unsqueeze(1), dist.unsqueeze(2)).squeeze()
-    else:
-        raise ValueError("grid と dist の次元が一致している必要があります")
+def padding(list_of_arrays):
+    max_cols = max(array.size(1) for array in list_of_arrays)
+    padded_arrays = []
+    for array in list_of_arrays:
+        padded_array = F.pad(array, (0, max_cols - array.size(1)), mode='constant', value=0)
+        padded_arrays.append(padded_array)
+    data = torch.cat(padded_arrays, dim=0)
+    return data
 
 def value_fn(train_data, nn, params):
     gm_tmp = nn.gm_model(train_data["grid"].unsqueeze(-1))
@@ -79,7 +91,7 @@ def policy_iter(params, optimizer, nn, T, num_sample):
     dataset = MyDataset(ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for train_data in dataloader:
-        next_v, _ = next_value(train_data, params, nn)
+        next_v, _ = next_value(train_data, nn, params)
         loss.zero_grad()
         loss = -torch.mean(next_v)
         loss.backward()
@@ -89,7 +101,7 @@ def value_iter(nn, params, optimizer, T, num_sample):
     data = get_dataset(params, T, nn, num_sample)
     ashock = generate_ashock_values(num_sample,T, params.ashock, params.pi_a)
     ishock = generate_ashock_values(num_sample,T, params.ishock, params.pi_i)
-    k_cross = np.random.choice(params.k_grid, T)
+    k_cross = np.random.choice(params.k_grid, (num_sample, T))
     dataset = MyDataset(k_cross, ashock, ishock, data["grid"], data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for train_data in dataloader:
@@ -97,7 +109,7 @@ def value_iter(nn, params, optimizer, T, num_sample):
         price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
         wage = params.eta / price
         profit = get_profit(train_data["k_cross"], train_data["ashock"], price, params)
-        v0_exp, v1_exp = next_value(train_data, params, nn)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+        v0_exp, v1_exp = next_value(train_data, nn, params)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
         e0 = -params.gamma * policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn) * price + params.beta * v0_exp
         e1 = -(1-params.delta) * train_data["k_cross"]* price + params.beta * v1_exp
         threshold = (e0 - e1) / params.eta
@@ -143,7 +155,7 @@ def next_value(train_data, nn, params, simul=False):
     else:
         k_mesh, a_mesh, i_mesh = torch.meshgrid(train_data["k_cross"][0,:], ashock, ishock, indexing='ij')
         size = train_data["k_cross"].size(1)
-        next_k = policy_fn(ashock, train_data["k_cross"], train_data["dist"], nn)
+        next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)
     
     batch_size = ashock.size(0)
     len_ashock = len(ashock_ts)
@@ -210,15 +222,15 @@ def get_dataset(params, T, nn, num_sample):
         # Compute alpha
         alpha = xi / params.B
         
-        indices_alpha_lt_1 = np.where(alpha < 1)[0]
+        indices_alpha_lt_1 = np.where(alpha < 1)[1]
         if len(indices_alpha_lt_1) == 0:
             J = -1
         else:
             J = indices_alpha_lt_1.max()
-        dist_new = torch.zeros(num_sample, J + 2)
+        dist_new = torch.zeros(num_sample, J + 2)#jはインデックスだから0スタートでzerosは欲しい行数を書くから+2
         k_new = torch.zeros(num_sample, J + 2)
         # Update the new distribution
-        dist_new[:, 0] = torch.dot(alpha.flatten(), dist_now.flatten())
+        dist_new[:, 0] = torch.sum(alpha * dist_now, dim=1)
         dist_new[:, 1:J+2] = (1 - alpha[:,:J+1]) * dist_now[:, :J+1]
         # Update the new capital grid
         k_new[:, 0] = policy_fn(a, k_now, dist_now, nn).squeeze(-1)
@@ -229,14 +241,11 @@ def get_dataset(params, T, nn, num_sample):
         # Update current distributions and capital grids for the next iteration
         dist_now = dist_new
         k_now = k_new
-    # Stack the history lists into tensors
-    dist_history_tensor = torch.stack(dist_history)
-    k_history_tensor = torch.stack(k_history)
     
     return {
-        "grid": k_history_tensor,
-        "dist": dist_history_tensor
-    }
+    "grid": k_history,
+    "dist": dist_history
+}
         
 
 def generate_ashock_values(num_sample, T, shock, Pi):
