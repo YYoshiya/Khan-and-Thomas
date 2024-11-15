@@ -87,12 +87,14 @@ def policy_iter(params, optimizer, nn, T, num_sample):
     with torch.no_grad():
         data = get_dataset(params, T, nn, num_sample)
     ashock = generate_ashock_values(num_sample, T, params.ashock, params.pi_a)
+    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = generate_ashock_values(num_sample, T, params.ishock, params.pi_i)
+    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     dataset = MyDataset(ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for train_data in dataloader:
-        next_v, _ = next_value(train_data, nn, params)
-        loss.zero_grad()
+        next_v, _ = next_value(train_data, nn, params, simul=True)
+        optimizer.zero_grad()
         loss = -torch.mean(next_v)
         loss.backward()
         optimizer.step()
@@ -101,19 +103,22 @@ def value_iter(nn, params, optimizer, T, num_sample):
     data = get_dataset(params, T, nn, num_sample)
     ashock = generate_ashock_values(num_sample,T, params.ashock, params.pi_a)
     ishock = generate_ashock_values(num_sample,T, params.ishock, params.pi_i)
-    k_cross = np.random.choice(params.k_grid, (num_sample, T))
+    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+    k_cross = np.random.choice(params.k_grid, num_sample* T)
     dataset = MyDataset(k_cross, ashock, ishock, data["grid"], data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for train_data in dataloader:
         v = value_fn(train_data, nn, params)#value_fn書いて
         price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
         wage = params.eta / price
-        profit = get_profit(train_data["k_cross"], train_data["ashock"], price, params)
+        profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
         v0_exp, v1_exp = next_value(train_data, nn, params)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
         e0 = -params.gamma * policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn) * price + params.beta * v0_exp
         e1 = -(1-params.delta) * train_data["k_cross"]* price + params.beta * v1_exp
         threshold = (e0 - e1) / params.eta
-        xi = min(params.B, max(0, threshold))
+        #ここ見にくすぎる。
+        xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
         vnew = profit - price*wage*xi**2/(2*params.B) + xi/params.B*e0 + (1-xi/params.B)*e1
         loss = torch.mean((vnew - v)**2)
         optimizer.zero_grad()
@@ -153,7 +158,7 @@ def next_value(train_data, nn, params, simul=False):
         size = train_data["grid"].size(1)
         next_k = policy_fn(ashock, train_data["grid"], train_data["dist"],nn)
     else:
-        k_mesh, a_mesh, i_mesh = torch.meshgrid(train_data["k_cross"][0,:], ashock, ishock, indexing='ij')
+        k_mesh, a_mesh, i_mesh = torch.meshgrid(train_data["k_cross"][0,:], ashock_ts, ishock_ts, indexing='ij')
         size = train_data["k_cross"].size(1)
         next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)
     
