@@ -196,7 +196,7 @@ def next_value(train_data, nn, params, simul=False):
     
     return expected_value_e0, expected_value_e1
 
-def get_dataset(params, T, nn, num_sample):
+def get_dataset(params, T, nn, num_sample, gm_train=False):
     dist_now = torch.full((num_sample, params.k_grid.size,), 1.0 / params.k_grid.size, dtype=torch.float32)#砂川さんのやつだと5個でスタート
     k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
     ashock = generate_ashock_values(num_sample, T, params.ashock, params.pi_a)  # Should return a torch tensor
@@ -246,11 +246,17 @@ def get_dataset(params, T, nn, num_sample):
         # Update current distributions and capital grids for the next iteration
         dist_now = dist_new
         k_now = k_new
-    
-    return {
-    "grid": k_history,
-    "dist": dist_history
-}
+    if gm_train:
+        return {
+            "grid": k_history,
+            "dist": dist_history,
+            "ashock": ashock,
+            "ishock": ishock}
+    else:
+        return {
+        "grid": k_history,
+        "dist": dist_history
+    }
         
 
 def generate_ashock_values(num_sample, T, shock, Pi):

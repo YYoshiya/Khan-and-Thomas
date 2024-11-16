@@ -69,16 +69,27 @@ def price_train(params, nn, optimizer, num_epochs, n_sample, threshold):
             loss_list.append(loss)
         avg_val_loss = sum(loss_list) / len(loss_list)
         print(f"epoch: {epoch}, avg_val_loss: {avg_val_loss}")
+        
+def next_gm(grid, dist, ashock, nn):
+    gm_tmp = nn.gm_model(grid.unsqueeze(-1))
+    gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
+    state = torch.cat([ashock.unsqueeze(-1), gm], dim=2).reshape(-1, 2)
+    next_gm = nn.next_gm_model(state)
+    return gm.squeeze(-1), next_gm
 
+class Nextgm_train(Dataset):
+    def __init__(self, gm, next_gm):
+        self.target = gm[:, 1:]
+        self.next_gm = next_gm[:, :-2]
 
-def next_gm_train(nn, params, optimizer, T):
-    data = vi.get_dataset(params, T, nn, num_sample=10)
-    ashock = vi.generate_ashock_values(num_sample, T, params.ashock, params.pi_a)
+def next_gm_train(nn, params, optimizer, T,num_sample):
+    data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
     grid = torch.tensor(data["grid"], dtype=TORCH_DTYPE)
     dist = torch.tensor(data["dist"], dtype=TORCH_DTYPE)
-    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
-    next_gm_tmp = vi.dist_gm(data["grid"][:,1:], data["dist"][:, 1:]).squeeze()
-    next_gm = torch.sum(next_gm_tmp, dist[1:, :], dim=1)
+    ashock = tensor(data["ashock"], dtype=TORCH_DTYPE)
+    dist = just_padding(data["dist"])
+    grid = just_padding(data["grid"])
+    next_gm_tmp = vi.next_gm(grid, dist, ashock, nn).reshape(num_sample, T)
     n_samples = len(ashock)
     dataset = MyDataset(k_grid[:-2], dist[:-2], ashock[:-2], next_gm)
     valid_size = 192
@@ -98,7 +109,16 @@ def next_gm_loss(nn, data):
     loss = loss_func(next_gm, data["next_gm"])
     return loss
 
-
+def just_padding(list_of_arrays):
+    list_of_arrays = [torch.tensor(data, dtype=TORCH_DTYPE) for data in list_of_arrays]
+    max_cols = max(array.size(1) for array in list_of_arrays)
+    padded_arrays = []
+    for array in list_of_arrays:
+        padded_array = F.pad(array, (0, max_cols - array.size(1)), mode='constant', value=0)
+        padded_arrays.append(padded_array)
+    data = torch.stack(padded_arrays, dim=0)
+    data_reshaped = data.permute(1,0,2).contiguous()#num_sample, T, nの配列
+    return data_reshaped
 
 class MyDataset(Dataset):
     def __init__(self, k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
@@ -141,3 +161,4 @@ def padding(list_of_arrays):
         padded_arrays.append(padded_array)
     data = torch.cat(padded_arrays, dim=0)
     return data
+
