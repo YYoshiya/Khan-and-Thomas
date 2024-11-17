@@ -70,43 +70,73 @@ def price_train(params, nn, optimizer, num_epochs, n_sample, threshold):
         avg_val_loss = sum(loss_list) / len(loss_list)
         print(f"epoch: {epoch}, avg_val_loss: {avg_val_loss}")
         
-def next_gm(grid, dist, ashock, nn):
+def gm_fn(grid, dist, nn):
     gm_tmp = nn.gm_model(grid.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock.unsqueeze(-1), gm], dim=2).reshape(-1, 2)
-    next_gm = nn.next_gm_model(state)
-    return gm.squeeze(-1), next_gm
+    return gm.squeeze(-1)
 
-class Nextgm_train(Dataset):
-    def __init__(self, gm, next_gm):
-        self.target = gm[:, 1:]
-        self.next_gm = next_gm[:, :-2]
+def next_gm_fn(gm, ashock, nn):
+    state = torch.cat([ashock, gm], dim=1)
+    next_gm = nn.next_gm_model(state)
+    return next_gm
+
+class NextGMDataset(Dataset):
+    def __init__(self, gm, ashock):
+
+        num_samples, T = gm.shape
+        # 入力: gm[:, :-1], ターゲット: gm[:, 1:]
+        inputs = gm[:, :-1].reshape(-1)  # shape: (num_samples * (T-1),)
+        targets = gm[:, 1:].reshape(-1)  # shape: (num_samples * (T-1),)
+        ashock_reshaped = ashock[:, :-1].reshape(-1)
+        
+        # 2列のテンソルに結合
+        self.data = torch.stack((inputs, ashock_reshaped, targets), dim=1)  # shape: (num_samples * (T-1), 3)
+    
+    def __len__(self):
+        return self.data.shape[0]
+    
+    def __getitem__(self, idx):
+        """
+        Args:
+            idx (int): サンプルのインデックス
+        Returns:
+            tuple: (input, target) のタプル
+        """
+        input_val = self.data[idx, 0:1]    # shape: ()
+        ashock_val = self.data[idx, 1:2]   # shape: ()
+        target_val = self.data[idx, 2:3]   # shape: ()
+        return input_val, ashock_val, target_val
+    
 
 def next_gm_train(nn, params, optimizer, T,num_sample):
     data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
-    grid = torch.tensor(data["grid"], dtype=TORCH_DTYPE)
-    dist = torch.tensor(data["dist"], dtype=TORCH_DTYPE)
-    ashock = tensor(data["ashock"], dtype=TORCH_DTYPE)
+    grid = [torch.tensor(grid, dtype=TORCH_DTYPE) for grid in data["grid"]]
+    dist = [torch.tensor(dist, dtype=TORCH_DTYPE) for dist in data["dist"]]
+    ashock = torch.tensor(data["ashock"], dtype=TORCH_DTYPE)
     dist = just_padding(data["dist"])
     grid = just_padding(data["grid"])
-    next_gm_tmp = vi.next_gm(grid, dist, ashock, nn).reshape(num_sample, T)
-    n_samples = len(ashock)
-    dataset = MyDataset(k_grid[:-2], dist[:-2], ashock[:-2], next_gm)
+    gm = gm_fn(grid, dist, nn)
+    dataset = NextGMDataset(gm, ashock)
     valid_size = 192
     train_size = len(dataset) - valid_size
     train_data, valid_data = random_split(dataset, [train_size, valid_size])
     train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
     valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
-    for data in train_loader:
+    loss_list = []
+    for input, ashock_val, target in train_loader:
         optimizer.zero_grad()
-        loss = next_gm_loss(nn, data)
+        loss = next_gm_loss(nn, input, ashock_val, target)
         loss.backward()
         optimizer.step()
+    for input, ashock_val, target in valid_loader:
+        loss = next_gm_loss(nn, input, ashock_val, target)
+        loss_list.append(loss)
+    avg_val_loss = sum(loss_list) / len(loss_list)
+    print(f"avg_val_loss: {avg_val_loss}")
 
-def next_gm_loss(nn, data):
-    loss_func = nn.MSELoss()
-    next_gm = vi.dist_gm(data["grid"], data["dist"], data["ashock"], nn)
-    loss = loss_func(next_gm, data["next_gm"])
+def next_gm_loss(nn, input, ashock, target):
+    next_gm = next_gm_fn(input, ashock, nn)
+    loss = torch.mean((next_gm - target)**2)
     return loss
 
 def just_padding(list_of_arrays):
