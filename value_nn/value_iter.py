@@ -187,71 +187,83 @@ def next_value(train_data, nn, params):
     
 
 def get_dataset(params, T, nn, num_sample, gm_train=False):
-    dist_now = torch.full((params.k_grid.size(0),), 1.0 / params.k_grid.size(0), dtype=TORCH_DTYPE)#砂川さんのやつだと5個でスタート
+    dist_now = torch.full((params.k_grid.size(0),), 1.0 / params.k_grid.size(0), dtype=TORCH_DTYPE)
     k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
-    ashock = torch.zeros((params.k_grid.size(0), T))
-    ashock[:, 0] = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)
-    a = ashock[:, 0]
-    i = np.random.choice(params.ishock, size=(params.k_grid.size(0)))
-    i = torch.tensor(i, dtype=TORCH_DTYPE)
+    a = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)  # 集計ショック（スカラー）
+    i = torch.tensor(np.random.choice(params.ishock, size=(k_now.size(0),)), dtype=TORCH_DTYPE)
     dist_history = []
     k_history = []
-    # Define T based on the length of shock sequences
+    ashock_history = []
+    ishock_history = []
+
     for t in range(T):
         k_now_data = k_now.unsqueeze(0).repeat(k_now.size(0), 1)
         dist_now_data = dist_now.unsqueeze(0).repeat(k_now.size(0), 1)
-        # Prepare the state dictionary
         basic_s = {
-            "k_cross": k_now,#k_now
-            "grid": k_now_data,  # k_now, k_now
-            "ashock": a,#k_now
-            "ishock": i,#k_now
-            "dist": dist_now_data#k_now, k_now
+            "k_cross": k_now,
+            "grid": k_now_data,
+            "ashock": a,  # 集計ショック（スカラー）
+            "ishock": i,
+            "dist": dist_now_data
         }
-        # Compute next values using the provided next_value function
         e0, e1 = next_value(basic_s, nn, params)
-        
-        # Compute xi and clamp its values between 0 and params.B
         xi = ((e0 - e1) / params.eta).squeeze(-1)
         xi = torch.clamp(xi, min=0.0, max=params.B)
-        # Compute alpha
-        alpha = xi / params.B#k_now
-        
+        alpha = xi / params.B
+
         indices_alpha_lt_1 = torch.where(alpha < 1)
-        if indices_alpha_lt_1[0].numel() == 0:  # 条件を満たす要素がない場合
+        if indices_alpha_lt_1[0].numel() == 0:
             J = -1
         else:
-            J = indices_alpha_lt_1[0].max().item()  # 最大値を取得（テンソルから整数に変換）
+            J = indices_alpha_lt_1[0].max().item()
 
-        dist_new = torch.zeros(J + 2)  # J + 2 行のゼロテンソルを作成
+        dist_new = torch.zeros(J + 2, dtype=TORCH_DTYPE)
+        k_new = torch.zeros(J + 2, dtype=TORCH_DTYPE)
+        i_new = torch.zeros(J + 2, dtype=TORCH_DTYPE)
 
-        k_new = torch.zeros(J + 2)
-        # Update the new distribution
+        # 新しい分布を更新
         dist_new[0] = torch.sum(alpha * dist_now)
         dist_new[1:J+2] = (1 - alpha[:J+1]) * dist_now[:J+1]
-        # Update the new capital grid
-        k_new[0] = policy_fn_vec(a[0:1], k_now, dist_now, nn).squeeze(-1)
+
+        # 新しい資本グリッドを更新
+        k_new[0] = policy_fn_vec(a, k_now, dist_now, nn).squeeze(-1)  # 'a'はスカラー
         k_new[1:J+2] = ((1 - params.delta) / params.gamma) * k_now[:J+1]
-        # Record the history by cloning to prevent in-place modifications
+
+        # 個人ショックを更新
+        # 政策関数に従って移動するエージェント
+        i_new[0] = next_ishock(i[0:1], params.ishock, params.pi_i)
+
+        # 調整しないエージェント
+        if J + 1 > 0:
+            i_new[1:J+2] = next_ishock(i[:J+1], params.ishock, params.pi_i)
+
+        # 履歴を記録
         dist_history.append(dist_now.clone())
         k_history.append(k_now.clone())
-        # Update current distributions and capital grids for the next iteration
+        ashock_history.append(a.clone())  # スカラーの'a'を記録
+        ishock_history.append(i.clone())
+
+        # 次のイテレーションのために現在の分布と資本グリッドを更新
         dist_now = dist_new
         k_now = k_new
-        ashock[:, t] = a
-        
-        a = next_ashock(a[0:1], params.ashock, params.pi_a).repeat(k_now.size(0))
-        i = next_ishock(i, params.ishock, params.pi_i)
+        i = i_new
+
+        # 次期の集計ショック'a'を更新
+        a = next_ashock(a, params.ashock, params.pi_a)
+
     if gm_train:
         return {
             "grid": k_history,
             "dist": dist_history,
-            "ishock": ishock}
+            "ashock": ashock_history,
+            "ishock": ishock_history
+        }
     else:
         return {
-        "grid": k_history,
-        "dist": dist_history
-    }
+            "grid": k_history,
+            "dist": dist_history
+        }
+
         
 
 def generate_ishock(num_sample, k_size, T, shock, Pi):
@@ -324,40 +336,19 @@ def generate_ashock_values(num_sample, T, shock, Pi):
     # 状態に対応する ashock の値を取得（形状 (num_sample, T) の配列）
     return shock[states]
 
-def next_ashock(current,shock, Pi):
-    indices = torch.where(shock == current)[0]
-    index = indices[0].item()
-    row_sums = Pi.sum(axis=1)
-    Pi_normalized = Pi / row_sums[:, np.newaxis]
-    prob = Pi_normalized[index]
-    state_index = torch.tensor([torch.multinomial(torch.tensor(prob), 1).item()])  # `multinomial` で選択
-    return shock[state_index]
+def next_ashock(current, shock, Pi):
+    index = (shock == current).nonzero(as_tuple=True)[0].item()
+    row = Pi[index]
+    next_index = torch.multinomial(torch.tensor(row, dtype=TORCH_DTYPE), 1).item()
+    return shock[next_index]
+
 
 def next_ishock(current, shock, Pi):
-    """
-    個人の現在のショックに基づいて、次のショックを決定する関数。
-    各行（個人）ごとに現在のショックから次のショックをサンプリング。
-
-    Parameters:
-        current (torch.Tensor): 各個人の現在のショック (1次元テンソル)
-        shock (torch.Tensor): ショックの可能な値のテンソル (1次元テンソル)
-        Pi (torch.Tensor): ショック遷移確率行列 (2次元テンソル)
-
-    Returns:
-        torch.Tensor: 各個人の次のショック (1次元テンソル)
-    """
-    # 次のショックを格納するテンソル
-    next_shocks = torch.zeros_like(current)
-
-    # 各個人の次のショックを決定
-    for idx, cur in enumerate(current):
-        # 現在のショックのインデックスを取得
-        current_index = (shock == cur).nonzero(as_tuple=True)[0].item()
-        
-        # 現在のショックに対応する遷移確率を取得
-        transition_prob = Pi[current_index]
-        
-        # 次のショックを遷移確率に基づいてサンプリング
-        next_shocks[idx] = shock[torch.multinomial(transition_prob, num_samples=1).item()]
-
+    indices = torch.tensor([torch.where(shock == c)[0].item() for c in current])
+    row_sums = Pi.sum(axis=1)
+    Pi_normalized = Pi / row_sums[:, np.newaxis]
+    probs = Pi_normalized[indices]
+    probs_ts = torch.tensor(probs, dtype=TORCH_DTYPE)
+    next_indices = torch.multinomial(probs_ts, 1).squeeze()
+    next_shocks = shock[next_indices]
     return next_shocks
