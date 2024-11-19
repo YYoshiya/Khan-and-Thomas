@@ -60,8 +60,6 @@ class NextkNN(nn.Module):
         x = self.relu(self.fc3(x))
         return x
     
-        
-
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
@@ -70,10 +68,11 @@ class PriceNN(nn.Module):
         self.fc3 = nn.Linear(12, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
+        self.softplus = nn.Softplus()
     def forward(self, x):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
+        x = self.softplus(self.fc3(x))
         return x
 
 
@@ -96,12 +95,12 @@ class nn_class:
         self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.001)
 
         
-nn = nn_class()
+n_model = nn_class()
 params = KTParam()
 
 
 while True:
-    vi.policy_iter(params, nn.optimizer_pol, nn, 500, 10)
-    vi.value_iter(nn, params, nn.optimizer_val, 200, 10)
-    pred.price_train(params, nn, nn.optimizer_pri, 10, 500, 1e-4)
-    pred.next_gm_train(nn, params, nn.optimizer_next_gm, 500, 10)
+    vi.policy_iter(params, n_model.optimizer_pol, n_model, 500, 10)
+    vi.value_iter(n_model, params, n_model.optimizer_val, 200, 10)
+    pred.price_train(params, n_model, n_model.optimizer_pri, 10, 500, 1e-4)
+    pred.next_gm_train(n_model, params, n_model.optimizer_next_gm, 500, 10)

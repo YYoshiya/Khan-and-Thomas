@@ -75,6 +75,13 @@ def policy_fn(ashock, grid, dist, nn):
     next_k = nn.policy(state)
     return next_k
 
+def policy_fn_vec(ashock, grid, dist, nn):
+    gm_tmp = nn.gm_model(grid.unsqueeze(-1))
+    gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
+    state = torch.stack([ashock, gm], dim=1)
+    next_k = nn.policy(state)
+    return next_k
+
 def price_fn(grid, dist, ashock, nn):
     gm_tmp = nn.gm_model(grid.unsqueeze(-1))
     gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
@@ -90,10 +97,11 @@ def policy_iter(params, optimizer, nn, T, num_sample):
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = generate_ashock_values(num_sample, T, params.ishock, params.pi_i)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    dataset = MyDataset(ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
+    k_cross = np.random.choice(params.k_grid, num_sample* T)
+    dataset = MyDataset(k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-    for train_data in dataloader:
-        next_v, _ = next_value(train_data, nn, params, simul=True)
+    for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
+        next_v, _ = next_value(train_data, nn, params)
         optimizer.zero_grad()
         loss = -torch.mean(next_v)
         loss.backward()
@@ -113,9 +121,7 @@ def value_iter(nn, params, optimizer, T, num_sample):
         price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
         wage = params.eta / price
         profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
-        v0_exp, v1_exp = next_value(train_data, nn, params)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
-        e0 = -params.gamma * policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn) * price + params.beta * v0_exp
-        e1 = -(1-params.delta) * train_data["k_cross"]* price + params.beta * v1_exp
+        e0, e1 = next_value(train_data, nn, params)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
         threshold = (e0 - e1) / params.eta
         #ここ見にくすぎる。
         xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
@@ -141,116 +147,105 @@ def dist_gm(grid, dist, ashock, nn):
     next_gm = nn.next_gm_model(state)
     return next_gm
 
-
-def next_value(train_data, nn, params, simul=False):
+def next_value(train_data, nn, params):
+    price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn)
     next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
     ashock_ts = torch.tensor(params.ashock, dtype=TORCH_DTYPE)
     ishock_ts = torch.tensor(params.ishock, dtype=TORCH_DTYPE)
     ashock = train_data["ashock"]
     ashock_idx = [torch.where(ashock_ts == val)[0].item() for val in ashock]
-    ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE)
+    ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1)
     ishock = train_data["ishock"]
     ishock_idx = [torch.where(ishock_ts == val)[0].item() for val in ishock]
-    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE)
-
-    if simul:
-        k_mesh, a_mesh, i_mesh = torch.meshgrid(train_data["grid"][0, :], ashock_ts, ishock_ts, indexing='ij')
-        size = train_data["grid"].size(1)
-        next_k = policy_fn(ashock, train_data["grid"], train_data["dist"],nn)
-    else:
-        k_mesh, a_mesh, i_mesh = torch.meshgrid(train_data["k_cross"][0,:], ashock_ts, ishock_ts, indexing='ij')
-        size = train_data["k_cross"].size(1)
-        next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)
+    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(-1)
+    probabilities = ashock_exp * ishock_exp
     
-    batch_size = ashock.size(0)
-    len_ashock = len(ashock_ts)
-    len_ishock = len(ishock_ts)
-    k_flat = k_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0)
-    a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
+    next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)#batch, 1
+    a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
+    a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
     i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
-    
-    pre_k_flat = ((1-params.delta)*k_flat).unsqueeze(-1)
-    next_k_flat = next_k.repeat_interleave(k_flat.size(1), dim=1).unsqueeze(-1)
-    next_gm_flat = next_gm.repeat_interleave(k_flat.size(1), dim=1).unsqueeze(-1)
+    next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
+    next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
+    k_cross_flat = train_data["k_cross"].unsqueeze(-1).repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
+    pre_k_flat = (1-params.delta)*k_cross_flat
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
     data_e1 = torch.cat([pre_k_flat/params.gamma, a_flat, i_flat, next_gm_flat], dim=2)
-    value_e0 = nn.value0(data_e0).squeeze(-1)
-    value_e1 = nn.value0(data_e1).squeeze(-1)
+    value0 = nn.value0(data_e0).squeeze(-1)
+    value1 = nn.value0(data_e1).squeeze(-1)
+    value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
+    value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
 
-    value_e0 = value_e0.view(batch_size, size, len_ashock, len_ishock)
-    value_e1 = value_e1.view(batch_size, size, len_ashock, len_ishock)
-
-    ashock_exp_unsq = ashock_exp.unsqueeze(1).unsqueeze(3)  # (batch_size, 1, len_ashock, 1)
-    ishock_exp_unsq = ishock_exp.unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1, len_ishock)
+    # 確率と価値を掛けて期待値を計算
+    expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
+    expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
     
-    # 同時確率を計算し、形状を (batch_size, 1, len_ashock, len_ishock) に
-    joint_probs = ashock_exp_unsq * ishock_exp_unsq  # (batch_size, 1, len_ashock, len_ishock)
+    e0 = -params.gamma * next_k * price + params.beta * expected_value0
+    e1 = -train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
     
-    # joint_probs を (batch_size, size, len_ashock, len_ishock) に拡張
-    joint_probs_expanded = joint_probs.expand(-1, size, -1, -1)
+    return e0, e1
     
-    # 重み付けと合計を実行し、期待値を計算
-    expected_value_e0 = torch.sum(value_e0 * joint_probs_expanded, dim=(2, 3))  # (batch_size, size)
-    expected_value_e1 = torch.sum(value_e1 * joint_probs_expanded, dim=(2, 3))  # (batch_size, size)
-    
-    return expected_value_e0, expected_value_e1
 
 def get_dataset(params, T, nn, num_sample, gm_train=False):
-    dist_now = torch.full((num_sample, params.k_grid.size,), 1.0 / params.k_grid.size, dtype=torch.float32)#砂川さんのやつだと5個でスタート
+    dist_now = torch.full((params.k_grid.size(0),), 1.0 / params.k_grid.size(0), dtype=TORCH_DTYPE)#砂川さんのやつだと5個でスタート
     k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
-    ashock = generate_ashock_values(num_sample, T, params.ashock, params.pi_a)  # Should return a torch tensor
-    ishock = generate_ashock_values(num_sample, T, params.ishock, params.pi_i)  # Should return a torch tensor
-
-    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
-    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
+    ashock = torch.zeros((params.k_grid.size(0), T))
+    ashock[:, 0] = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)
+    a = ashock[:, 0]
+    i = np.random.choice(params.ishock, size=(params.k_grid.size(0)))
+    i = torch.tensor(i, dtype=TORCH_DTYPE)
     dist_history = []
     k_history = []
     # Define T based on the length of shock sequences
     for t in range(T):
-        # Current shocks
-        a = ashock[:,t]
-        i = ishock[:,t]
+        k_now_data = k_now.unsqueeze(0).repeat(k_now.size(0), 1)
+        dist_now_data = dist_now.unsqueeze(0).repeat(k_now.size(0), 1)
         # Prepare the state dictionary
         basic_s = {
-            "grid": k_now,  # Ensure params.k_grid is a torch tensor
-            "ashock": a,
-            "ishock": i,
-            "dist": dist_now
+            "k_cross": k_now,#k_now
+            "grid": k_now_data,  # k_now, k_now
+            "ashock": a,#k_now
+            "ishock": i,#k_now
+            "dist": dist_now_data#k_now, k_now
         }
         # Compute next values using the provided next_value function
-        next_value_e0, next_value_e1 = next_value(basic_s, nn, params, simul=True)
+        e0, e1 = next_value(basic_s, nn, params)
         
         # Compute xi and clamp its values between 0 and params.B
-        xi = (next_value_e0 - next_value_e1) / params.eta
+        xi = ((e0 - e1) / params.eta).squeeze(-1)
         xi = torch.clamp(xi, min=0.0, max=params.B)
         # Compute alpha
-        alpha = xi / params.B
+        alpha = xi / params.B#k_now
         
-        indices_alpha_lt_1 = np.where(alpha < 1)[1]
-        if len(indices_alpha_lt_1) == 0:
+        indices_alpha_lt_1 = torch.where(alpha < 1)
+        if indices_alpha_lt_1[0].numel() == 0:  # 条件を満たす要素がない場合
             J = -1
         else:
-            J = indices_alpha_lt_1.max()
-        dist_new = torch.zeros(num_sample, J + 2)#jはインデックスだから0スタートでzerosは欲しい行数を書くから+2
-        k_new = torch.zeros(num_sample, J + 2)
+            J = indices_alpha_lt_1[0].max().item()  # 最大値を取得（テンソルから整数に変換）
+
+        dist_new = torch.zeros(J + 2)  # J + 2 行のゼロテンソルを作成
+
+        k_new = torch.zeros(J + 2)
         # Update the new distribution
-        dist_new[:, 0] = torch.sum(alpha * dist_now, dim=1)
-        dist_new[:, 1:J+2] = (1 - alpha[:,:J+1]) * dist_now[:, :J+1]
+        dist_new[0] = torch.sum(alpha * dist_now)
+        dist_new[1:J+2] = (1 - alpha[:J+1]) * dist_now[:J+1]
         # Update the new capital grid
-        k_new[:, 0] = policy_fn(a, k_now, dist_now, nn).squeeze(-1)
-        k_new[:, 1:J+2] = ((1 - params.delta) / params.gamma) * k_now[:, :J+1]
+        k_new[0] = policy_fn_vec(a[0:1], k_now, dist_now, nn).squeeze(-1)
+        k_new[1:J+2] = ((1 - params.delta) / params.gamma) * k_now[:J+1]
         # Record the history by cloning to prevent in-place modifications
         dist_history.append(dist_now.clone())
         k_history.append(k_now.clone())
         # Update current distributions and capital grids for the next iteration
         dist_now = dist_new
         k_now = k_new
+        ashock[:, t] = a
+        
+        a = next_ashock(a[0:1], params.ashock, params.pi_a).repeat(k_now.size(0))
+        i = next_ishock(i, params.ishock, params.pi_i)
     if gm_train:
         return {
             "grid": k_history,
             "dist": dist_history,
-            "ashock": ashock,
             "ishock": ishock}
     else:
         return {
@@ -258,6 +253,46 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
         "dist": dist_history
     }
         
+
+def generate_ishock(num_sample, k_size, T, shock, Pi):
+    """
+    指定された遷移確率行列 Pi に基づいて T 個の ishock 値を生成します。
+    
+    Parameters:
+    - num_sample (int): サンプルの数
+    - k_size (int): 各サンプル内の状態の数
+    - T (int): 各サンプルで生成する値の個数
+    - shock (np.array): 状態に対応する ishock の値
+    - Pi (np.array): 遷移確率行列
+    
+    Returns:
+    - np.array: 生成された ishock の値（形状 (num_sample, k_size, T) の配列）
+    """
+    nz = len(shock)
+    # 行方向に正規化
+    Pi_normalized = Pi / Pi.sum(axis=1, keepdims=True)
+    # 累積確率を計算
+    Pi_cum = np.cumsum(Pi_normalized, axis=1)
+    
+    # 初期状態を均等分布からランダムに選択
+    states = np.random.randint(low=0, high=nz, size=(num_sample, k_size))
+    
+    # ishock の配列を事前に用意
+    ishock_values = np.empty((num_sample, k_size, T), dtype=shock.dtype)
+    ishock_values[:, :, 0] = shock[states]
+    
+    for t in range(1, T):
+        # 各現在の状態に対応する累積確率を取得
+        current_cum_prob = Pi_cum[states]
+        # 一様乱数を生成
+        random_vals = np.random.rand(num_sample, k_size)
+        # 次の状態を決定
+        next_states = (random_vals[..., np.newaxis] < current_cum_prob).argmax(axis=2)
+        states = next_states
+        # ishock の値を割り当て
+        ishock_values[:, :, t] = shock[states]
+    
+    return ishock_values
 
 def generate_ashock_values(num_sample, T, shock, Pi):
     """
@@ -288,3 +323,41 @@ def generate_ashock_values(num_sample, T, shock, Pi):
     
     # 状態に対応する ashock の値を取得（形状 (num_sample, T) の配列）
     return shock[states]
+
+def next_ashock(current,shock, Pi):
+    indices = torch.where(shock == current)[0]
+    index = indices[0].item()
+    row_sums = Pi.sum(axis=1)
+    Pi_normalized = Pi / row_sums[:, np.newaxis]
+    prob = Pi_normalized[index]
+    state_index = torch.tensor([torch.multinomial(torch.tensor(prob), 1).item()])  # `multinomial` で選択
+    return shock[state_index]
+
+def next_ishock(current, shock, Pi):
+    """
+    個人の現在のショックに基づいて、次のショックを決定する関数。
+    各行（個人）ごとに現在のショックから次のショックをサンプリング。
+
+    Parameters:
+        current (torch.Tensor): 各個人の現在のショック (1次元テンソル)
+        shock (torch.Tensor): ショックの可能な値のテンソル (1次元テンソル)
+        Pi (torch.Tensor): ショック遷移確率行列 (2次元テンソル)
+
+    Returns:
+        torch.Tensor: 各個人の次のショック (1次元テンソル)
+    """
+    # 次のショックを格納するテンソル
+    next_shocks = torch.zeros_like(current)
+
+    # 各個人の次のショックを決定
+    for idx, cur in enumerate(current):
+        # 現在のショックのインデックスを取得
+        current_index = (shock == cur).nonzero(as_tuple=True)[0].item()
+        
+        # 現在のショックに対応する遷移確率を取得
+        transition_prob = Pi[current_index]
+        
+        # 次のショックを遷移確率に基づいてサンプリング
+        next_shocks[idx] = shock[torch.multinomial(transition_prob, num_samples=1).item()]
+
+    return next_shocks

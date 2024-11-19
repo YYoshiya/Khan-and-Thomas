@@ -23,10 +23,7 @@ else:
 
 def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当でよい。
     price = vi.price_fn(data["grid"], data["dist"], data["ashock"],nn)
-    v0_exp, v1_exp = vi.next_value(data, nn,params, simul=True)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
-    k_next = vi.policy_fn(data["ashock"], data["grid"], data["dist"], nn)
-    e0 = -params.gamma * k_next * price + params.beta * v0_exp
-    e1 = -(1-params.delta) * data["grid"]* price + params.beta * v1_exp
+    e0, e1 = vi.next_value(data, nn,params, simul=True)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
     alpha = xi / params.B
