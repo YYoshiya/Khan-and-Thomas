@@ -20,18 +20,22 @@ elif DTYPE == "float32":
     TORCH_DTYPE = torch.float32  # PyTorchのデータ型を指定
 else:
     raise ValueError("Unknown dtype.")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当でよい。
+    ashock = data["ashock"]
+    ishock = data["ishock"]
     price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:, 0],nn)
-    e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols,1
+    wage = params.eta/price
+    e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols,1 10秒くらいかかってる。
     threshold = (e0 - e1) / params.eta#batch, max_cols,1
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))#batch, max_cols,1
     alpha = (xi / params.B).squeeze(-1)#batch, max_cols,1
     k_next = vi.policy_fn(data["ashock"][:, 0], data["grid"], data["dist"], nn).repeat(1, alpha.size(1))#batch, max_cols
+    yterm = ashock * ishock * data["grid"]**params.theta
+    nnow = (params.nu * yterm / wage) ** (1 / (1 - params.nu))
     inow = alpha * (params.gamma * k_next - (1-params.delta) * data["grid"])
-    ashock = data["ashock"]
-    ishock = data["ishock"]
-    ynow = ashock*ishock * data["grid"]**params.theta * inow**params.nu
+    ynow = ashock*ishock * data["grid"]**params.theta * nnow**params.nu
     Iagg = torch.sum(data["dist"] * inow, dim=1)
     Yagg = torch.sum(data["dist"]* ynow, dim=1)
     Cagg = Yagg - Iagg
@@ -58,11 +62,13 @@ def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
         epoch += 1
         loss_list = []
         for train_data in train_loader:
+            train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             optimizer.zero_grad()
             loss = price_loss(nn, train_data, params)
             loss.backward()
             optimizer.step()
         for valid_data in valid_loader:
+            valid_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in valid_data.items()}
             loss = price_loss(nn, valid_data, params)
             loss_list.append(loss)
         avg_val_loss = sum(loss_list) / len(loss_list)
@@ -81,14 +87,14 @@ def next_gm_fn(gm, ashock, nn):
 def next_value_gm(data, nn, params, max_cols):
     price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:, 0], nn)#batch, 1
     next_gm = vi.dist_gm(data["grid"], data["dist"], data["ashock"][:,0],nn)#batch, 1
-    ashock_ts = params.ashock
-    ishock_ts = params.ishock
+    ashock_ts = params.ashock.to(device)
+    ishock_ts = params.ishock.to(device)
     ashock = data["ashock"]
     ashock_idx = torch.tensor([[torch.where(ashock_ts == val)[0].item() for val in row] for row in ashock])
-    ashock_exp = params.pi_a[ashock_idx]#batch, max_cols, 5
+    ashock_exp = params.pi_a[ashock_idx].to(device)#batch, max_cols, 5
     ishock = data["ishock"]
     ishock_idx = torch.tensor([[torch.where(ishock_ts == val)[0].item() for val in row] for row in ishock])
-    ishock_exp = params.pi_i[ishock_idx]#batch, max_cols, 5
+    ishock_exp = params.pi_i[ishock_idx].to(device)#batch, max_cols, 5
     prob = ashock_exp.unsqueeze(-1) * ishock_exp.unsqueeze(-2)#batch, max_cols, 5, 5
     
     next_k = vi.policy_fn(ashock[:,0], data["grid"], data["dist"], nn).repeat(1, max_cols).unsqueeze(-1)#batch, max_cols,1

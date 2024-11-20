@@ -19,6 +19,8 @@ elif DTYPE == "float32":
 else:
     raise ValueError("Unknown dtype.")
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class MyDataset(Dataset):
     def __init__(self, num_sample, k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
         self.data = {}
@@ -108,12 +110,14 @@ def policy_iter_init(params, optimizer, nn, T, num_sample):
     k_cross = np.random.choice(params.k_grid, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-    for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
-        next_k = policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn)
-        optimizer.zero_grad()
-        loss = torch.mean((train_data["k_cross"] - next_k)**2)
-        loss.backward()
-        optimizer.step()
+    for epoch in range(5):
+        for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
+            train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
+            next_k = policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn)
+            optimizer.zero_grad()
+            loss = torch.mean((train_data["k_cross"] - next_k)**2)
+            loss.backward()
+            optimizer.step()
 
 
 def policy_iter(params, optimizer, nn, T, num_sample):
@@ -126,12 +130,18 @@ def policy_iter(params, optimizer, nn, T, num_sample):
     k_cross = np.random.choice(params.k_grid, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-    for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
-        next_v, _ = next_value(train_data, nn, params)
-        optimizer.zero_grad()
-        loss = -torch.mean(next_v)
-        loss.backward()
-        optimizer.step()
+    countp = 0
+    for epoch in range(5):
+        for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
+            train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
+            countp += 1
+            next_v, _ = next_value(train_data, nn, params, "cuda")
+            optimizer.zero_grad()
+            loss = -torch.mean(next_v)
+            loss.backward()
+            optimizer.step()
+            if countp % 10 == 0:
+                print(f"count: {countp}, loss: {-loss.item()}")
 
 def value_iter(nn, params, optimizer, T, num_sample):
     data = get_dataset(params, T, nn, num_sample)
@@ -142,20 +152,26 @@ def value_iter(nn, params, optimizer, T, num_sample):
     k_cross = np.random.choice(params.k_grid, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-    for train_data in dataloader:
-        v = value_fn(train_data, nn, params)#value_fn書いて
-        price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
-        wage = params.eta / price
-        profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
-        e0, e1 = next_value(train_data, nn, params)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
-        threshold = (e0 - e1) / params.eta
-        #ここ見にくすぎる。
-        xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
-        vnew = profit - price*wage*xi**2/(2*params.B) + xi/params.B*e0 + (1-xi/params.B)*e1
-        loss = torch.mean((vnew - v)**2)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    countv = 0
+    for epoch in range(5):
+        for train_data in dataloader:
+            train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
+            countv += 1
+            v = value_fn(train_data, nn, params)#value_fn書いて
+            price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
+            wage = params.eta / price
+            profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
+            e0, e1 = next_value(train_data, nn, params, "cuda")#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+            threshold = (e0 - e1) / params.eta
+            #ここ見にくすぎる。
+            xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
+            vnew = profit - price*wage*xi**2/(2*params.B) + xi/params.B*e0 + (1-xi/params.B)*e1
+            loss = torch.mean((vnew - v)**2)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            if countv % 10 == 0:
+                print(f"count: {countv}, loss: {loss.item()}")
 
 
 def get_profit(k_cross, ashock, ishock, price, params):
@@ -173,17 +189,17 @@ def dist_gm(grid, dist, ashock, nn):
     next_gm = nn.next_gm_model(state)
     return next_gm
 
-def next_value(train_data, nn, params, grid=None):
+def next_value(train_data, nn, params, device, grid=None):
     price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn)
     next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
-    ashock_ts = torch.tensor(params.ashock, dtype=TORCH_DTYPE)
-    ishock_ts = torch.tensor(params.ishock, dtype=TORCH_DTYPE)
+    ashock_ts = torch.tensor(params.ashock, dtype=TORCH_DTYPE).to(device)
+    ishock_ts = torch.tensor(params.ishock, dtype=TORCH_DTYPE).to(device)
     ashock = train_data["ashock"]
     ashock_idx = [torch.where(ashock_ts == val)[0].item() for val in ashock]
-    ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1)
+    ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
     ishock = train_data["ishock"]
     ishock_idx = [torch.where(ishock_ts == val)[0].item() for val in ishock]
-    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(-1)
+    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
     probabilities = ashock_exp * ishock_exp
     
     next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)#batch, 1
@@ -213,6 +229,15 @@ def next_value(train_data, nn, params, grid=None):
     
 
 def get_dataset(params, T, nn, num_sample, gm_train=False):
+    device = "cpu"
+    nn.price_model.to(device)
+    nn.gm_model.to(device)
+    nn.value0.to(device)
+    nn.gm_model_policy.to(device)
+    nn.policy.to(device)
+    nn.next_gm_model.to(device)
+    nn.gm_model_price.to(device)
+    
     dist_now = torch.full((params.k_grid.size(0),), 1.0 / params.k_grid.size(0), dtype=TORCH_DTYPE)
     k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
     a = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)  # 集計ショック（スカラー）
@@ -233,7 +258,8 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
             "ishock": i,
             "dist": dist_now_data
         }
-        e0, e1 = next_value(basic_s, nn, params)
+        
+        e0, e1 = next_value(basic_s, nn, params, "cpu")
         xi = ((e0 - e1) / params.eta).squeeze(-1)
         xi = torch.clamp(xi, min=0.0, max=params.B)
         alpha = xi / params.B
@@ -254,7 +280,7 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
         dist_new[1:J+2] = (1 - alpha[:J+1]) * dist_now[:J+1]
 
         # 新しい資本グリッドを更新
-        k_new[0] = policy_fn(a, k_now_data, dist_now_data, nn).squeeze(-1)[0]  # 'a'はスカラー
+        k_new[0] = policy_fn(a, k_now_data, dist_now_data, nn).squeeze(-1)[0] # 'a'はスカラー
         k_new[1:J+2] = ((1 - params.delta) / params.gamma) * k_now[:J+1]
 
         # 個人ショックを更新
@@ -277,6 +303,15 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
         k_now = k_new
         i = i_new
         a = a_new
+    
+    device = "cuda"
+    nn.price_model.to(device)
+    nn.gm_model.to(device)
+    nn.value0.to(device)
+    nn.gm_model_policy.to(device)
+    nn.policy.to(device)
+    nn.next_gm_model.to(device)
+    nn.gm_model_price.to(device)
 
     if gm_train:
         return {
