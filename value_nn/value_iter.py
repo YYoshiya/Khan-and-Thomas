@@ -98,6 +98,23 @@ def price_fn_sc(grid, dist, ashock, nn):
     price = nn.price_model(state)
     return price
 
+def policy_iter_init(params, optimizer, nn, T, num_sample):
+    with torch.no_grad():
+        data = get_dataset(params, T, nn, num_sample)
+    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a)
+    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+    ishock = generate_ashock(num_sample, T, params.ishock, params.pi_i)
+    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+    k_cross = np.random.choice(params.k_grid, num_sample* T)
+    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
+        next_k = policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn)
+        optimizer.zero_grad()
+        loss = torch.mean((train_data["k_cross"] - next_k)**2)
+        loss.backward()
+        optimizer.step()
+
 
 def policy_iter(params, optimizer, nn, T, num_sample):
     with torch.no_grad():

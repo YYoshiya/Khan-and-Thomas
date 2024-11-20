@@ -98,6 +98,7 @@ class nn_class:
 n_model = nn_class()
 params = KTParam()
 
+vi.policy_iter_init(params,n_model.optimizer_pol, n_model, 500, 10)
 
 while True:
     #vi.policy_iter(params, n_model.optimizer_pol, n_model, 500, 10)
