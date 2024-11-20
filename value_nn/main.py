@@ -100,7 +100,7 @@ params = KTParam()
 
 
 while True:
-    vi.policy_iter(params, n_model.optimizer_pol, n_model, 500, 10)
+    #vi.policy_iter(params, n_model.optimizer_pol, n_model, 500, 10)
     vi.value_iter(n_model, params, n_model.optimizer_val, 200, 10)
-    pred.price_train(params, n_model, n_model.optimizer_pri, 10, 500, 1e-4)
+    pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 10, 1e-4)#Tを変えてる。
     pred.next_gm_train(n_model, params, n_model.optimizer_next_gm, 500, 10)

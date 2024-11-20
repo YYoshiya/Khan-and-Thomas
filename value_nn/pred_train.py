@@ -22,15 +22,15 @@ else:
     raise ValueError("Unknown dtype.")
 
 def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当でよい。
-    price = vi.price_fn(data["grid"], data["dist"], data["ashock"],nn)
-    e0, e1 = vi.next_value(data, nn,params, simul=True)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
-    threshold = (e0 - e1) / params.eta
-    xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
-    alpha = xi / params.B
-    
-    inow = alpha * (params.gamma * k_next - (1-params.delta) * data["grid"])#k_nextをかいて
-    ashock = torch.repeat_interleave(data["ashock"].unsqueeze(-1), data["grid"].size(1), dim=1)
-    ishock = torch.repeat_interleave(data["ishock"].unsqueeze(-1), data["grid"].size(1), dim=1)
+    price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:, 0],nn)
+    e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols,1
+    threshold = (e0 - e1) / params.eta#batch, max_cols,1
+    xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))#batch, max_cols,1
+    alpha = (xi / params.B).squeeze(-1)#batch, max_cols,1
+    k_next = vi.policy_fn(data["ashock"][:, 0], data["grid"], data["dist"], nn).repeat(1, alpha.size(1))#batch, max_cols
+    inow = alpha * (params.gamma * k_next - (1-params.delta) * data["grid"])
+    ashock = data["ashock"]
+    ishock = data["ishock"]
     ynow = ashock*ishock * data["grid"]**params.theta * inow**params.nu
     Iagg = torch.sum(data["dist"] * inow, dim=1)
     Yagg = torch.sum(data["dist"]* ynow, dim=1)
@@ -39,14 +39,15 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     loss = torch.mean((price - target)**2)
     return loss
 
-def price_train(params, nn, optimizer, num_epochs, n_sample, threshold):
-    data = vi.get_dataset(params, 500, nn, num_sample=10)#これめっちゃ長いなんで。gridが多いからだ。
-    ashock = vi.generate_ashock_values(10, 500, params.ashock, params.pi_a)
-    ishock = vi.generate_ashock_values(10, 500, params.ishock, params.pi_i)
-    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
+    data = vi.get_dataset(params, T, nn, num_sample)#これめっちゃ長いなんで。gridが多いからだ。
+    max_cols = max(array.numel() for array in data["grid"])
+    ashock = vi.generate_ashock(1, T, params.ashock, params.pi_a).transpose(1, 0).repeat(1, max_cols)#T, max_cols
+    ishock = vi.generate_ishock(max_cols,T, params.ishock, params.pi_i).transpose(1,0)#T, max_cols
+    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
+    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
     dataset = MyDataset(grid=data["grid"], dist=data["dist"], ashock=ashock, ishock=ishock)
-    valid_size = 192
+    valid_size = 5
     train_size = len(dataset) - valid_size
     train_data, valid_data = random_split(dataset, [train_size, valid_size])
     train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
@@ -77,6 +78,44 @@ def next_gm_fn(gm, ashock, nn):
     next_gm = nn.next_gm_model(state)
     return next_gm
 
+def next_value_gm(data, nn, params, max_cols):
+    price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:, 0], nn)#batch, 1
+    next_gm = vi.dist_gm(data["grid"], data["dist"], data["ashock"][:,0],nn)#batch, 1
+    ashock_ts = params.ashock
+    ishock_ts = params.ishock
+    ashock = data["ashock"]
+    ashock_idx = torch.tensor([[torch.where(ashock_ts == val)[0].item() for val in row] for row in ashock])
+    ashock_exp = params.pi_a[ashock_idx]#batch, max_cols, 5
+    ishock = data["ishock"]
+    ishock_idx = torch.tensor([[torch.where(ishock_ts == val)[0].item() for val in row] for row in ishock])
+    ishock_exp = params.pi_i[ishock_idx]#batch, max_cols, 5
+    prob = ashock_exp.unsqueeze(-1) * ishock_exp.unsqueeze(-2)#batch, max_cols, 5, 5
+    
+    next_k = vi.policy_fn(ashock[:,0], data["grid"], data["dist"], nn).repeat(1, max_cols).unsqueeze(-1)#batch, max_cols,1
+    a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
+    a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(1).repeat(1, max_cols, 1)# batch,max_cols, i*a
+    i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(1).repeat(1, max_cols, 1)# batch,max_cols, i*a
+    next_k_flat = next_k.repeat(1,1,a_flat.size(2))#batch, max_cols, i*a
+    next_gm_flat = next_gm.repeat(1,max_cols).unsqueeze(-1).repeat(1,1,a_flat.size(2))#batch, max_cols, i*a
+    k_cross_flat = data["grid"].unsqueeze(-1).repeat(1,1,a_flat.size(2))#batch, max_cols, i*a
+    pre_k_flat = (1-params.delta) * k_cross_flat#batch, max_cols, i*a
+    
+    data_e0 = torch.stack([next_k_flat, a_flat, i_flat, next_gm_flat], dim=-1)#batch, max_cols, i*a, 4
+    data_e1 = torch.stack([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=-1)#batch, max_cols, i*a, 4
+    value0 = nn.value0(data_e0).squeeze(-1)
+    value1 = nn.value0(data_e1).squeeze(-1)
+    value0 = value0.view(-1, max_cols, len(params.ashock), len(params.ishock))#batch, max_cols, a, i
+    value1 = value1.view(-1, max_cols, len(params.ashock), len(params.ishock))#batch, max_cols, a, i
+    
+    expected_v0 = (value0 *  prob).sum(dim=(2,3)).unsqueeze(-1)#batch, max_cols, 1
+    expected_v1 = (value1 *  prob).sum(dim=(2,3)).unsqueeze(-1)#batch, max_cols, 1
+    
+    e0 = -params.gamma * next_k + price.repeat(1, max_cols).unsqueeze(-1) + params.beta * expected_v0
+    e1 = -params.gamma * (1-params.delta)*data["grid"].unsqueeze(-1) + price.repeat(1, max_cols).unsqueeze(-1) + params.beta * expected_v1
+    
+    return e0, e1
+    
+    
 class NextGMDataset(Dataset):
     def __init__(self, gm, ashock):
 
@@ -148,12 +187,12 @@ def just_padding(list_of_arrays):
     return data_reshaped
 
 class MyDataset(Dataset):
-    def __init__(self, k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
+    def __init__(self,k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
         self.data = {}
         if k_cross is not None:
             if isinstance(k_cross, np.ndarray):
                 k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE)
-            k_cross = k_cross.view(-1, 1)
+            k_cross = k_cross.view(-1, 1).squeeze(-1)
             self.data['k_cross'] = k_cross
         if ashock is not None:
             if isinstance(ashock, np.ndarray):
@@ -167,10 +206,12 @@ class MyDataset(Dataset):
             self.data['ishock'] = ishock
         if grid is not None:
             grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
-            self.data['grid'] = padding(grid)
+            padded = padding(grid)
+            self.data['grid'] = padded#.repeat(num_sample, 1)
         if dist is not None:
             dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
-            self.data['dist'] = padding(dist)
+            padded = padding(dist)
+            self.data['dist'] = padded#.repeat(num_sample, 1)
 
     def __len__(self):
         # 使用しているデータの最初の項目の長さを返す
@@ -181,11 +222,10 @@ class MyDataset(Dataset):
         return {key: value[idx] for key, value in self.data.items()}
 
 def padding(list_of_arrays):
-    max_cols = max(array.size(1) for array in list_of_arrays)
+    max_cols = max(array.numel() for array in list_of_arrays)
     padded_arrays = []
     for array in list_of_arrays:
-        padded_array = F.pad(array, (0, max_cols - array.size(1)), mode='constant', value=0)
+        padded_array = F.pad(array, (0, max_cols - array.numel()), mode='constant', value=0)
         padded_arrays.append(padded_array)
-    data = torch.cat(padded_arrays, dim=0)
+    data = torch.stack(padded_arrays, dim=0)
     return data
-
