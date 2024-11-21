@@ -144,10 +144,18 @@ def policy_fn_sc(ashock, grid, dist, nn):
 
 def price_fn(grid, dist, ashock, nn):
     gm_tmp = nn.gm_model(grid.unsqueeze(-1))
+    if torch.isnan(gm_tmp).any() or torch.isinf(gm_tmp).any():
+        print("NaN or Inf detected in gm_tmp")
     gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
+    if torch.isnan(gm_price).any() or torch.isinf(gm_price).any():
+        print("NaN or Inf detected in gm_price")
     state = torch.cat([ashock.unsqueeze(-1), gm_price], dim=1)
+    if torch.isnan(state).any() or torch.isinf(state).any():
+        print("NaN or Inf detected in state")
+    # 以降の処理
     price = nn.price_model(state)
     return price
+
 
 def price_fn_sc(grid, dist, ashock, nn):
     gm_tmp = nn.gm_model(grid.unsqueeze(-1))

@@ -23,6 +23,7 @@ else:
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当でよい。
+    eps = 1e-8
     ashock = data["ashock"]
     ishock = data["ishock"]
     price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:, 0],nn)
@@ -33,14 +34,16 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     alpha = (xi / params.B).squeeze(-1)#batch, max_cols,1
     k_next = vi.policy_fn(data["ashock"][:, 0], data["grid"], data["dist"], nn).repeat(1, alpha.size(1))#batch, max_cols
     yterm = ashock * ishock * data["grid"]**params.theta
-    nnow = (params.nu * yterm / wage) ** (1 / (1 - params.nu))
+    numerator = params.nu * yterm / (wage + eps)
+    numerator = torch.clamp(numerator, min=eps, max=1e8)  # 数値の範囲を制限
+    nnow = torch.pow(numerator, 1 / (1 - params.nu))
     inow = alpha * (params.gamma * k_next - (1-params.delta) * data["grid"])
     ynow = ashock*ishock * data["grid"]**params.theta * nnow**params.nu
     Iagg = torch.sum(data["dist"] * inow, dim=1)
     Yagg = torch.sum(data["dist"]* ynow, dim=1)
     Cagg = Yagg - Iagg
     target = 1 / Cagg
-    loss = torch.mean((price - target)**2)
+    loss = F.huber_loss(price, target.unsqueeze(-1), delta=1)
     return loss
 
 def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
@@ -61,12 +64,33 @@ def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
     while avg_val_loss > threshold and epoch < num_epochs:
         epoch += 1
         loss_list = []
-        for train_data in train_loader:
+        for i, train_data in enumerate(train_loader):
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
+            # データ内の NaN や Inf をチェック
+            for key, value in train_data.items():
+                if torch.isnan(value).any():
+                    print(f"NaN detected in {key} at iteration {i}")
+                if torch.isinf(value).any():
+                    print(f"Infinite value detected in {key} at iteration {i}")
             optimizer.zero_grad()
             loss = price_loss(nn, train_data, params)
-            loss.backward()
+            with torch.autograd.set_detect_anomaly(True):
+                loss.backward()
+            for name, param in nn.price_model.named_parameters():
+                if param.grad is not None:
+                    if torch.isnan(param.grad).any():
+                        print(f"NaN detected in gradients of {name}")
+                    if torch.isinf(param.grad).any():
+                        print(f"Infinite value detected in gradients of {name}")
             optimizer.step()
+            
+            for name, param in nn.price_model.named_parameters():
+                if torch.isnan(param).any():
+                    print(f"NaN detected in parameters of {name} at epoch {epoch}")
+                if torch.isinf(param).any():
+                    print(f"Infinite value detected in parameters of {name} at epoch {epoch}")
+
+        
         for valid_data in valid_loader:
             valid_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in valid_data.items()}
             loss = price_loss(nn, valid_data, params)
