@@ -228,6 +228,22 @@ def policy_iter(params, optimizer, nn, T, num_sample):
             if countp % 10 == 0:
                 print(f"count: {countp}, loss: {-loss.item()}")
 
+def value_iter_2(nn, params, optimizer, T, num_sample):
+    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
+    ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
+    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    K_cross = np.random.choice(params.K_grid_np, num_sample* T)
+    dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    for epoch in range(20):
+        for train_data in dataloader:
+            train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
+            train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
+            v = nn.value0(train_data['X'])
+            price = torch.tensor(3.5, dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
+            wage = params.eta / price
+            profit = get_profit(train_data[:, 0:1], train_data[:, 1:2], train_data[:, 2:3], price, params)
+    
 def value_iter(nn, params, optimizer, T, num_sample):
     data = get_dataset(params, T, nn, num_sample)
     ashock = generate_ashock(num_sample,T, params.ashock, params.pi_a)
