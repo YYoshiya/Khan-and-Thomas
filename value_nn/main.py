@@ -111,7 +111,7 @@ class nn_class:
         self.optimizer_val = optim.Adam(params_value, lr=0.001)
         self.optimizer_pol = optim.Adam(params_policy, lr=0.001)
         self.optimizer_pri = optim.Adam(params_price, lr=0.005)
-        self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.001)
+        self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.005)
 
 def initialize_weights(model):
     for layer in model.modules():
@@ -139,8 +139,8 @@ pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 500, 1e-4)
 count = 0
 for _ in range(50):
     count += 1
-    vi.value_iter(n_model, params, n_model.optimizer_val, 500, 10)
-    vi.policy_iter(params, n_model.optimizer_pol, n_model, 500, 10)
+    vi.value_iter(n_model, params, n_model.optimizer_val, 2000, 20)
+    vi.policy_iter(params, n_model.optimizer_pol, n_model, 1000, 10)
     #if count % 7 == 0:
-    pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 500, 1e-4)#Tを変えてる。
-    pred.next_gm_train(n_model, params, n_model.optimizer_next_gm, 500, 10)
+    pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 1000, 1e-4)#Tを変えてる。
+    pred.next_gm_train(n_model, params, n_model.optimizer_next_gm, 1000, 10)

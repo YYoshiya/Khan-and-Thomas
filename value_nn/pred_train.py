@@ -66,30 +66,10 @@ def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
         loss_list = []
         for i, train_data in enumerate(train_loader):
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
-            # データ内の NaN や Inf をチェック
-            for key, value in train_data.items():
-                if torch.isnan(value).any():
-                    print(f"NaN detected in {key} at iteration {i}")
-                if torch.isinf(value).any():
-                    print(f"Infinite value detected in {key} at iteration {i}")
             optimizer.zero_grad()
             loss = price_loss(nn, train_data, params)
-            with torch.autograd.set_detect_anomaly(True):
-                loss.backward()
-            for name, param in nn.price_model.named_parameters():
-                if param.grad is not None:
-                    if torch.isnan(param.grad).any():
-                        print(f"NaN detected in gradients of {name}")
-                    if torch.isinf(param.grad).any():
-                        print(f"Infinite value detected in gradients of {name}")
+            loss.backward()
             optimizer.step()
-            
-            for name, param in nn.price_model.named_parameters():
-                if torch.isnan(param).any():
-                    print(f"NaN detected in parameters of {name} at epoch {epoch}")
-                if torch.isinf(param).any():
-                    print(f"Infinite value detected in parameters of {name} at epoch {epoch}")
-
         
         for valid_data in valid_loader:
             valid_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in valid_data.items()}
@@ -172,7 +152,7 @@ class NextGMDataset(Dataset):
         return input_val, ashock_val, target_val
     
 
-def next_gm_train(nn, params, optimizer, T,num_sample):
+def next_gm_train(nn, params, optimizer, T,num_sample ,epochs):
     with torch.no_grad():
         data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
         #grid = [torch.tensor(grid, dtype=TORCH_DTYPE) for grid in data["grid"]]
@@ -183,23 +163,24 @@ def next_gm_train(nn, params, optimizer, T,num_sample):
         nn.gm_model.to("cpu")
         gm = gm_fn(grid, dist, nn)
         dataset = NextGMDataset(gm, ashock)
-        valid_size = 10
+        valid_size = 192
         train_size = len(dataset) - valid_size
         train_data, valid_data = random_split(dataset, [train_size, valid_size])
         train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
         valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
         loss_list = []
     nn.gm_model.to(device)
-    for input, ashock_val, target in train_loader:
-        optimizer.zero_grad()
-        loss = next_gm_loss(nn, input, ashock_val, target)
-        loss.backward()
-        optimizer.step()
-    for input, ashock_val, target in valid_loader:
-        loss = next_gm_loss(nn, input, ashock_val, target)
-        loss_list.append(loss)
-    avg_val_loss = sum(loss_list) / len(loss_list)
-    print(f"avg_val_loss: {avg_val_loss}")
+    for epoch in range(epochs):
+        for input, ashock_val, target in train_loader:
+            optimizer.zero_grad()
+            loss = next_gm_loss(nn, input, ashock_val, target)
+            loss.backward()
+            optimizer.step()
+        for input, ashock_val, target in valid_loader:
+            loss = next_gm_loss(nn, input, ashock_val, target)
+            loss_list.append(loss)
+        avg_val_loss = sum(loss_list) / len(loss_list)
+        print(f"epoch: {epoch}, avg_val_loss: {avg_val_loss}")
 
 def next_gm_loss(nn, input, ashock, target):
     next_gm = next_gm_fn(input, ashock, nn)

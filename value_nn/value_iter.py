@@ -238,7 +238,7 @@ def value_iter(nn, params, optimizer, T, num_sample):
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countv = 0
-    for epoch in range(5):
+    for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
