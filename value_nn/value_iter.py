@@ -228,6 +228,43 @@ def policy_iter(params, optimizer, nn, T, num_sample):
             if countp % 10 == 0:
                 print(f"count: {countp}, loss: {-loss.item()}")
 
+def next_value_2(train_data, nn, params, device):
+    next_gm = nn.next_gm_model(torch.cat(train_data[:,1:2], train_data[:,3:4], dim=1))
+    price = torch.tensor(3.5, dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
+    ashock_ts = torch.tensor(params.ashock, dtype=TORCH_DTYPE).to(device)
+    ishock_ts = torch.tensor(params.ishock, dtype=TORCH_DTYPE).to(device)
+    ashock = train_data["ashock"]
+    ashock_idx = [torch.where(ashock_ts == val)[0].item() for val in ashock]
+    ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
+    ishock = train_data["ishock"]
+    ishock_idx = [torch.where(ishock_ts == val)[0].item() for val in ishock]
+    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
+    probabilities = ashock_exp * ishock_exp
+
+    data = torch.cat([train_data[:, 0:1], train_data[:, 2:3]], dim=1)
+    next_k = nn.policy(data)
+    a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
+    a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
+    i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
+    next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
+    next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
+    k_cross_flat = train_data[:, 0:1].repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
+    pre_k_flat = (1-params.delta)*k_cross_flat
+    
+    data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
+    data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
+    value0 = nn.value0(data_e0).squeeze(-1)
+    value1 = nn.value0(data_e1).squeeze(-1)
+    value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i) 
+    value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
+    
+    # 確率と価値を掛けて期待値を計算
+    expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
+    expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
+    
+    e0 = -params.gamma * next_k * price + params.beta * expected_value0
+    e1 = -(1-params.delta) * params.gamma * train_data[:, 0:1] * price + params.beta * expected_value1
+    
 def value_iter_2(nn, params, optimizer, T, num_sample):
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
     ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
@@ -289,7 +326,7 @@ def value_init(nn, params, optimizer, T, num_sample):
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             v = nn.value0(train_data['X']).squeeze(-1)
-            loss = F.mse_loss(v, train_data['y'])
+            loss = F.mse_loss(v, 3.5*train_data['y'])
             loss.backward()
             optimizer.step()
             if countv % 10 == 0:
@@ -415,7 +452,7 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B
 
-        indices_alpha_lt_1 = torch.where(alpha < 0.95)
+        indices_alpha_lt_1 = torch.where(alpha < 1.0)
         if indices_alpha_lt_1[0].numel() == 0:
             J = -1
         else:

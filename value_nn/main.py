@@ -132,10 +132,10 @@ n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
 n_model.price_model.apply(initialize_weights)
 
-vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 20)
+vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
-pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 500, 1e-4)
+pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 1000, 0.5)
 count = 0
 for _ in range(50):
     count += 1
