@@ -92,6 +92,8 @@ class nn_class:
         params_policy = list(self.policy.parameters()) + list(self.gm_model_policy.parameters())
         params_price = list(self.gm_model_price.parameters()) + list(self.price_model.parameters())
         params_next_gm = list(self.next_gm_model.parameters())
+        self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
+        self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(params_value, lr=0.001)
         self.optimizer_pol = optim.Adam(params_policy, lr=0.001)
         self.optimizer_pri = optim.Adam(params_price, lr=0.001)
@@ -115,8 +117,10 @@ n_model.gm_model_policy.apply(initialize_weights)
 n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
 
-vi.value_init(n_model, params, n_model.optimizer_val, 500, 10)
-vi.policy_iter_init(params,n_model.optimizer_pol, n_model, 500, 10)
+vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
+pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
+vi.policy_iter_init(params,n_model.optimizer_policyinit, n_model, 1000, 10)
+pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 500, 1e-4)
 count = 0
 for _ in range(50):
     count += 1
@@ -124,4 +128,4 @@ for _ in range(50):
     vi.policy_iter(params, n_model.optimizer_pol, n_model, 500, 10)
     #if count % 7 == 0:
     pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 500, 1e-4)#Tを変えてる。
-    #pred.next_gm_train(n_model, params, n_model.optimizer_next_gm, 500, 10)
+    pred.next_gm_train(n_model, params, n_model.optimizer_next_gm, 500, 10)

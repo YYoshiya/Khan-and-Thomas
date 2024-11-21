@@ -124,15 +124,13 @@ def next_value_gm(data, nn, params, max_cols):
     
 class NextGMDataset(Dataset):
     def __init__(self, gm, ashock):
-
-        num_samples, T = gm.shape
         # 入力: gm[:, :-1], ターゲット: gm[:, 1:]
-        inputs = gm[:, :-1].reshape(-1)  # shape: (num_samples * (T-1),)
-        targets = gm[:, 1:].reshape(-1)  # shape: (num_samples * (T-1),)
-        ashock_reshaped = ashock[:, :-1].reshape(-1)
+        inputs = gm[:-1]
+        targets = gm[1:]
+        ashock_reshaped = ashock[:-1]
         
         # 2列のテンソルに結合
-        self.data = torch.stack((inputs, ashock_reshaped, targets), dim=1)  # shape: (num_samples * (T-1), 3)
+        self.data = torch.stack((inputs, ashock_reshaped, targets), dim=-1)  # shape: (num_samples * (T-1), 3)
     
     def __len__(self):
         return self.data.shape[0]
@@ -144,27 +142,30 @@ class NextGMDataset(Dataset):
         Returns:
             tuple: (input, target) のタプル
         """
-        input_val = self.data[idx, 0:1]    # shape: ()
-        ashock_val = self.data[idx, 1:2]   # shape: ()
-        target_val = self.data[idx, 2:3]   # shape: ()
+        input_val = self.data[idx, 0:1].to(device)    # shape: ()
+        ashock_val = self.data[idx, 1:2].to(device)   # shape: ()
+        target_val = self.data[idx, 2:3].to(device)   # shape: ()
         return input_val, ashock_val, target_val
     
 
 def next_gm_train(nn, params, optimizer, T,num_sample):
-    data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
-    grid = [torch.tensor(grid, dtype=TORCH_DTYPE) for grid in data["grid"]]
-    dist = [torch.tensor(dist, dtype=TORCH_DTYPE) for dist in data["dist"]]
-    ashock = torch.tensor(data["ashock"], dtype=TORCH_DTYPE)
-    dist = just_padding(data["dist"])
-    grid = just_padding(data["grid"])
-    gm = gm_fn(grid, dist, nn)
-    dataset = NextGMDataset(gm, ashock)
-    valid_size = 192
-    train_size = len(dataset) - valid_size
-    train_data, valid_data = random_split(dataset, [train_size, valid_size])
-    train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
-    valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
-    loss_list = []
+    with torch.no_grad():
+        data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
+        #grid = [torch.tensor(grid, dtype=TORCH_DTYPE) for grid in data["grid"]]
+        #dist = [torch.tensor(dist, dtype=TORCH_DTYPE) for dist in data["dist"]]
+        ashock = torch.tensor(data["ashock"], dtype=TORCH_DTYPE)
+        dist = just_padding(data["dist"])
+        grid = just_padding(data["grid"])
+        nn.gm_model.to("cpu")
+        gm = gm_fn(grid, dist, nn)
+        dataset = NextGMDataset(gm, ashock)
+        valid_size = 10
+        train_size = len(dataset) - valid_size
+        train_data, valid_data = random_split(dataset, [train_size, valid_size])
+        train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+        valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
+        loss_list = []
+    nn.gm_model.to(device)
     for input, ashock_val, target in train_loader:
         optimizer.zero_grad()
         loss = next_gm_loss(nn, input, ashock_val, target)
@@ -183,14 +184,14 @@ def next_gm_loss(nn, input, ashock, target):
 
 def just_padding(list_of_arrays):
     list_of_arrays = [torch.tensor(data, dtype=TORCH_DTYPE) for data in list_of_arrays]
-    max_cols = max(array.size(1) for array in list_of_arrays)
+    max_cols = max(array.size(0) for array in list_of_arrays)
     padded_arrays = []
     for array in list_of_arrays:
-        padded_array = F.pad(array, (0, max_cols - array.size(1)), mode='constant', value=0)
+        padded_array = F.pad(array, (0, max_cols - array.size(0)), mode='constant', value=0)
         padded_arrays.append(padded_array)
     data = torch.stack(padded_arrays, dim=0)
-    data_reshaped = data.permute(1,0,2).contiguous()#num_sample, T, nの配列
-    return data_reshaped
+    #data_reshaped = data.permute(1,0,2).contiguous()#num_sample, T, nの配列
+    return data
 
 class MyDataset(Dataset):
     def __init__(self,k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
@@ -235,3 +236,73 @@ def padding(list_of_arrays):
         padded_arrays.append(padded_array)
     data = torch.stack(padded_arrays, dim=0)
     return data
+
+def next_gm_init(nn, params, optimizer, num_epochs, num_sample,T):
+    K_cross = np.random.choice(params.K_grid_np, num_sample* T)
+    ashock = vi.generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
+    dataset = Valueinit(ashock=ashock, K_cross=K_cross,target_attr='K_cross', input_attrs=['ashock', 'K_cross'])
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    for epoch in range(num_epochs):
+        for train_data in dataloader:
+            train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
+            train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
+            optimizer.zero_grad()
+            next_gm = next_gm_fn(train_data['X'][:, 0:1], train_data['X'][:, 1:2], nn).squeeze(-1)
+            loss = F.mse_loss(next_gm, train_data['y'])
+            loss.backward()
+            optimizer.step()
+
+
+class Valueinit(Dataset):
+    def __init__(self, k_cross=None, ashock=None, ishock=None, K_cross=None, target_attr='k_cross', input_attrs=None):
+        
+        if k_cross is not None:
+            if not isinstance(k_cross, torch.Tensor):
+                k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE)
+            self.k_cross = k_cross.view(-1, 1).squeeze(-1)
+
+        if ashock is not None:
+            if not isinstance(ashock, torch.Tensor):
+                ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
+            self.ashock = ashock
+
+        if ishock is not None:
+            if not isinstance(ishock, torch.Tensor):
+                ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
+            self.ishock = ishock
+
+        if K_cross is not None:
+            if not isinstance(K_cross, torch.Tensor):
+                K_cross = torch.tensor(K_cross, dtype=TORCH_DTYPE)
+            self.K_cross = K_cross.view(-1, 1).squeeze(-1)
+
+        # Validate target_attr and set it
+        if target_attr not in ['k_cross', 'ashock', 'ishock', 'K_cross']:
+            raise ValueError(f"Invalid target_attr: {target_attr}. Must be one of 'k_cross', 'ashock', 'ishock', 'K_cross'.")
+        self.target_attr = target_attr
+
+        # Set input attributes
+        if input_attrs is None:
+            # Default to using all attributes if not specified
+            self.input_attrs = ['k_cross', 'ashock', 'ishock', 'K_cross']
+        else:
+            # Validate input attributes
+            for attr in input_attrs:
+                if attr not in ['k_cross', 'ashock', 'ishock', 'K_cross']:
+                    raise ValueError(f"Invalid input attribute: {attr}. Must be one of 'k_cross', 'ashock', 'ishock', 'K_cross'.")
+            self.input_attrs = input_attrs
+
+    def __len__(self):
+        # Find the first non-None attribute and return its length
+        for attr in ['k_cross', 'ashock', 'ishock', 'K_cross']:
+            data = getattr(self, attr, None)
+            if data is not None:
+                return len(data)
+        raise ValueError("No valid data attributes were provided. Dataset length cannot be determined.")
+    
+    def __getitem__(self, idx):
+        # Stack only the attributes specified in input_attrs
+        inputs = [getattr(self, attr)[idx] for attr in self.input_attrs]
+        X = torch.stack(inputs, dim=-1)
+        y = getattr(self, self.target_attr)[idx]  # Use the attribute specified by target_attr
+        return {'X': X, 'y': y}
