@@ -115,6 +115,7 @@ n_model.gm_model_policy.apply(initialize_weights)
 n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
 
+vi.value_init(n_model, params, n_model.optimizer_val, 500, 10)
 vi.policy_iter_init(params,n_model.optimizer_pol, n_model, 500, 10)
 count = 0
 for _ in range(50):

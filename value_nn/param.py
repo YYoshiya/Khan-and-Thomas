@@ -31,7 +31,8 @@ class KTParam():
         ])
 
         # k_grid の定義
-        self.k_grid = torch.linspace(0.1, 10, steps=30)
+        self.k_grid = torch.linspace(0.1, 5, steps=30)
+        self.k_grid_np = np.linspace(0.1, 5, 30)
         ykSS = (self.gamma - self.beta * (1 - self.delta)) / self.beta / self.theta
         ckSS = ykSS + (1 - self.gamma - self.delta)
         ycSS = ykSS / ckSS

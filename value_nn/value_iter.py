@@ -55,6 +55,50 @@ class MyDataset(Dataset):
     def __getitem__(self, idx):
         # データが存在する場合のみ項目を返す
         return {key: value[idx] for key, value in self.data.items()}
+class Valueinit(Dataset):
+    def __init__(self, k_cross, ashock, ishock, K_cross, target_attr='k_cross', input_attrs=None):
+        if isinstance(k_cross, np.ndarray):
+            k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+        if isinstance(ashock, np.ndarray):
+            ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
+        if isinstance(ishock, np.ndarray):
+            ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
+        if isinstance(K_cross, np.ndarray):
+            K_cross = torch.tensor(K_cross, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+        
+        self.k_cross = k_cross
+        self.ashock = ashock
+        self.ishock = ishock
+        self.K_cross = K_cross
+
+        # Validate target_attr and set it
+        if target_attr not in ['k_cross', 'ashock', 'ishock', 'K_cross']:
+            raise ValueError(f"Invalid target_attr: {target_attr}. Must be one of 'k_cross', 'ashock', 'ishock', 'K_cross'.")
+        self.target_attr = target_attr
+
+        # Set input attributes
+        if input_attrs is None:
+            # Default to using all attributes if not specified
+            self.input_attrs = ['k_cross', 'ashock', 'ishock', 'K_cross']
+        else:
+            # Validate input attributes
+            for attr in input_attrs:
+                if attr not in ['k_cross', 'ashock', 'ishock', 'K_cross']:
+                    raise ValueError(f"Invalid input attribute: {attr}. Must be one of 'k_cross', 'ashock', 'ishock', 'K_cross'.")
+            self.input_attrs = input_attrs
+
+    def __len__(self):
+        # Returns the number of samples in the dataset
+        return len(self.k_cross)
+
+    def __getitem__(self, idx):
+        # Stack only the attributes specified in input_attrs
+        inputs = [getattr(self, attr)[idx] for attr in self.input_attrs]
+        X = torch.stack(inputs, dim=-1)
+        y = getattr(self, self.target_attr)[idx]  # Use the attribute specified by target_attr
+        return {'X': X, 'y': y}
+
+        
 
 def padding(list_of_arrays):
     max_cols = max(array.numel() for array in list_of_arrays)
@@ -101,21 +145,19 @@ def price_fn_sc(grid, dist, ashock, nn):
     return price
 
 def policy_iter_init(params, optimizer, nn, T, num_sample):
-    with torch.no_grad():
-        data = get_dataset(params, T, nn, num_sample)
-    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a)
-    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    ishock = generate_ashock(num_sample, T, params.ishock, params.pi_i)
-    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid, num_sample* T)
-    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
+    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
+    ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
+    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    K_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr='K_cross', input_attrs=['ashock', 'K_cross'])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     for epoch in range(5):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
-            train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
-            next_k = policy_fn(train_data["ashock"], train_data["grid"], train_data["dist"], nn)
+            train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
+            train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
+            next_k = nn.policy(train_data['X'])
             optimizer.zero_grad()
-            loss = torch.mean((train_data["k_cross"] - next_k)**2)
+            loss = torch.mean((1.5 * train_data['y'] - next_k)**2)
             loss.backward()
             optimizer.step()
 
@@ -127,7 +169,7 @@ def policy_iter(params, optimizer, nn, T, num_sample):
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = generate_ashock(num_sample, T, params.ishock, params.pi_i)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countp = 0
@@ -149,7 +191,7 @@ def value_iter(nn, params, optimizer, T, num_sample):
     ishock = generate_ishock(num_sample,T, params.ishock, params.pi_i)
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countv = 0
@@ -172,6 +214,28 @@ def value_iter(nn, params, optimizer, T, num_sample):
             optimizer.step()
             if countv % 10 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")
+
+def value_init(nn, params, optimizer, T, num_sample):   
+    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
+    ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
+    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    K_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    countv = 0
+    for epoch in range(5):
+        for train_data in dataloader:
+            countv += 1
+            train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
+            train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
+            optimizer.zero_grad()
+            v = nn.value0(train_data['X'])
+            loss = torch.mean((v - train_data['y'])**2)
+            loss.backward()
+            optimizer.step()
+            if countv % 10 == 0:
+                print(f"count: {countv}, loss: {loss.item()}")
+    
 
 
 def get_profit(k_cross, ashock, ishock, price, params):
@@ -223,7 +287,7 @@ def next_value(train_data, nn, params, device, grid=None):
     expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
     
     e0 = -params.gamma * next_k * price + params.beta * expected_value0
-    e1 = -train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
+    e1 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
     
     return e0, e1
     
