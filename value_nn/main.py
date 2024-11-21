@@ -12,8 +12,18 @@ import matplotlib.pyplot as plt
 import value_iter as vi
 import pred_train as pred
 from param import KTParam
+import random
 
+def set_seed(seed=42):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+set_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class ValueNN(nn.Module):
     def __init__(self, d_in):
@@ -51,15 +61,19 @@ class GeneralizedMomModel(nn.Module):
 class NextkNN(nn.Module):
     def __init__(self, d_in):
         super(NextkNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 12)
-        self.fc2 = nn.Linear(12, 12)
-        self.fc3 = nn.Linear(12, 1)
+        self.fc1 = nn.Linear(d_in, 24)
+        self.fc2 = nn.Linear(24, 24)
+        self.fc3 = nn.Linear(24, 24)
+        self.fc4 = nn.Linear(24, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
+        self.softplus = nn.Softplus()
+    
     def forward(self, x):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.relu(self.fc3(x))
+        x = self.softplus(self.fc4(x))
         return x
     
 class PriceNN(nn.Module):
@@ -116,10 +130,11 @@ n_model.gm_model.apply(initialize_weights)
 n_model.gm_model_policy.apply(initialize_weights)
 n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
+n_model.price_model.apply(initialize_weights)
 
-vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
+vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 20)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
-vi.policy_iter_init(params,n_model.optimizer_policyinit, n_model, 1000, 10)
+vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
 pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 500, 1e-4)
 count = 0
 for _ in range(50):

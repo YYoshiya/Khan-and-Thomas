@@ -155,6 +155,26 @@ def price_fn_sc(grid, dist, ashock, nn):
     state = torch.cat([ashock.expand(gm_price.size(0), 1), gm_price], dim=1)
     price = nn.price_model(state)
     return price
+def policy_iter_init2(params, optimizer, nn, T, num_sample):
+    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
+    ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
+    K_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    dataset = Valueinit(ashock=ashock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'K_cross'])
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    count = 0
+    for epoch in range(20):
+        for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
+            count += 1
+            train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
+            next_k = nn.policy(train_data['X']).squeeze(-1)
+            target = torch.full_like(next_k, 2, dtype=TORCH_DTYPE).to(device)
+            optimizer.zero_grad()
+            loss = F.mse_loss(next_k, target)
+            loss.backward()
+            optimizer.step()
+            if count % 10 == 0:
+                print(f"count: {count}, loss: {loss.item()}")
+
 
 def policy_iter_init(params, optimizer, nn, T, num_sample):
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
@@ -162,17 +182,19 @@ def policy_iter_init(params, optimizer, nn, T, num_sample):
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(ashock=ashock, ishock=ishock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross'])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    count = 0
     for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
+            count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             e0 = next_value_init_policy(train_data['X'], nn, params, "cuda")
-            loss = torch.mean(-e0)
+            loss = -torch.mean(e0)
             loss.backward()
             optimizer.step()
-            if epoch % 10 == 0:
-                print(f"epoch: {epoch}, loss: {-loss.item()}")
+            if count % 10 == 0:
+                print(f"count: {count}, loss: {-loss.item()}")
 
 
 def policy_iter(params, optimizer, nn, T, num_sample):
@@ -236,7 +258,7 @@ def value_init(nn, params, optimizer, T, num_sample):
     dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countv = 0
-    for epoch in range(10):
+    for epoch in range(20):
         for train_data in dataloader:
             countv += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
@@ -290,7 +312,7 @@ def next_value_init_policy(train_data, nn, params, device):
     value0 = nn.value0(data_e0).squeeze(-1)
     value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    e0 = -params.gamma * next_k * 2 + params.beta * expected_value0
+    e0 = -params.gamma * next_k * 1 + params.beta * expected_value0
     return e0
 
 def next_value(train_data, nn, params, device, grid=None):
@@ -314,6 +336,7 @@ def next_value(train_data, nn, params, device, grid=None):
     next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     k_cross_flat = train_data["k_cross"].unsqueeze(-1).repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     pre_k_flat = (1-params.delta)*k_cross_flat
+    k_check = train_data["k_cross"]*(1-params.delta)
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
     data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
@@ -342,7 +365,7 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
     nn.next_gm_model.to(device)
     nn.gm_model_price.to(device)
     
-    dist_now = torch.full((params.k_grid.size(0),), 1.0 / params.k_grid.size(0), dtype=TORCH_DTYPE)
+    dist_now = torch.full((10,), 1.0 / params.k_grid.size(0), dtype=TORCH_DTYPE)
     k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
     a = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)  # 集計ショック（スカラー）
     a = a.repeat(k_now.size(0))
@@ -364,11 +387,11 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
         }
         
         e0, e1 = next_value(basic_s, nn, params, "cpu")
-        xi = ((e0 - e1) / params.eta).squeeze(-1)
-        xi = torch.clamp(xi, min=0.0, max=params.B)
+        xi_tmp = ((e0 - e1) / params.eta).squeeze(-1)
+        xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B
 
-        indices_alpha_lt_1 = torch.where(alpha < 1)
+        indices_alpha_lt_1 = torch.where(alpha < 0.95)
         if indices_alpha_lt_1[0].numel() == 0:
             J = -1
         else:
