@@ -274,7 +274,7 @@ def next_value_init_policy(train_data, nn, params, device):
     ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
     ishock = train_data[:,1]
     ishock_idx = [torch.where(ishock_ts == val)[0].item() for val in ishock]
-    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
+    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
     probabilities = ashock_exp * ishock_exp
     next_gm = pred.next_gm_fn(train_data[:,2].unsqueeze(-1), train_data[:,0].unsqueeze(-1), nn)
     
@@ -290,7 +290,7 @@ def next_value_init_policy(train_data, nn, params, device):
     value0 = nn.value0(data_e0).squeeze(-1)
     value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    e0 = -params.gamma * next_k  + params.beta * expected_value0
+    e0 = -params.gamma * next_k * 2 + params.beta * expected_value0
     return e0
 
 def next_value(train_data, nn, params, device, grid=None):
@@ -303,7 +303,7 @@ def next_value(train_data, nn, params, device, grid=None):
     ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
     ishock = train_data["ishock"]
     ishock_idx = [torch.where(ishock_ts == val)[0].item() for val in ishock]
-    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
+    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
     probabilities = ashock_exp * ishock_exp
     
     next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)#batch, 1
