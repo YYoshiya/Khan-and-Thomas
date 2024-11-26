@@ -55,10 +55,10 @@ def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
     dataset = MyDataset(grid=data["grid"], dist=data["dist"], ashock=ashock, ishock=ishock)
-    valid_size = 5
+    valid_size = 192
     train_size = len(dataset) - valid_size
     train_data, valid_data = random_split(dataset, [train_size, valid_size])
-    train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+    train_loader = DataLoader(train_data, batch_size=128, shuffle=True)
     valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
     avg_val_loss = 100
     epoch = 0
@@ -71,12 +71,12 @@ def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
             loss = price_loss(nn, train_data, params)
             loss.backward()
             optimizer.step()
-        
-        for valid_data in valid_loader:
-            valid_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in valid_data.items()}
-            loss = price_loss(nn, valid_data, params)
-            loss_list.append(loss)
-        avg_val_loss = sum(loss_list) / len(loss_list)
+        with torch.no_grad():
+            for valid_data in valid_loader:
+                valid_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in valid_data.items()}
+                loss = price_loss(nn, valid_data, params)
+                loss_list.append(loss)
+            avg_val_loss = sum(loss_list) / len(loss_list)
         print(f"epoch: {epoch}, avg_val_loss: {avg_val_loss}")
         
 def gm_fn(grid, dist, nn):

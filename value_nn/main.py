@@ -110,8 +110,8 @@ class nn_class:
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(params_value, lr=0.001)
         self.optimizer_pol = optim.Adam(params_policy, lr=0.001)
-        self.optimizer_pri = optim.Adam(params_price, lr=0.005)
-        self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.005)
+        self.optimizer_pri = optim.Adam(params_price, lr=0.01)
+        self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.01)
 
 def initialize_weights(model):
     for layer in model.modules():
