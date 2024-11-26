@@ -3,12 +3,12 @@ import torch
 class KTParam():
     def __init__(self):
         self.beta = 0.9540
-        self.theta = 0.3250
-        self.nu = 0.580
-        self.delta = 0.060
+        self.theta = 0.256
+        self.nu = 0.640
+        self.delta = 0.069
         self.gamma = 1.0160
-        self.eta = 3.6142
-        self.B = 0.8
+        self.eta = 2.40
+        self.B = 0.83
         self.ashock = torch.tensor([0.9328, 0.9658, 1.0000, 1.0354, 1.0720])
         self.nz = 5
         self.pi_a = torch.tensor([
@@ -31,9 +31,9 @@ class KTParam():
         ])
 
         # k_grid の定義
-        self.k_grid = torch.linspace(0.1, 5, steps=30)
-        self.k_grid_np = np.linspace(0.1, 5, 30)
-        self.K_grid_np = np.linspace(1.0, 4, 10)
+        self.k_grid = torch.linspace(0.1, 3, steps=30)
+        self.k_grid_np = np.linspace(0.1, 3, 30)
+        self.K_grid_np = np.linspace(1.0, 3, 10)
         ykSS = (self.gamma - self.beta * (1 - self.delta)) / self.beta / self.theta
         ckSS = ykSS + (1 - self.gamma - self.delta)
         ycSS = ykSS / ckSS

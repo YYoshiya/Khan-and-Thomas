@@ -44,7 +44,7 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     Cagg = Yagg - Iagg
     target = 1 / Cagg
     target = torch.clamp(target, min=0.1, max=1e8)
-    loss = F.huber_loss(price, target.unsqueeze(-1), delta=1)
+    loss = F.mse_loss(price, target.unsqueeze(-1))
     return loss
 
 def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
@@ -62,7 +62,7 @@ def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
     valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
     avg_val_loss = 100
     epoch = 0
-    while avg_val_loss > threshold or epoch < num_epochs:
+    while avg_val_loss > threshold and epoch < num_epochs:
         epoch += 1
         loss_list = []
         for i, train_data in enumerate(train_loader):

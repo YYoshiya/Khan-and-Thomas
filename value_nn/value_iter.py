@@ -473,12 +473,13 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
 
         # 個人ショックを更新
         # 政策関数に従って移動するエージェント
+        next_a = next_ashock(a[0], params.ashock, params.pi_a)
         i_new[0] = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)
-        a_new[0] = next_ashock(a[0], params.ashock, params.pi_a)
+        a_new[:] = next_a
+    
         # 調整しないエージェント
         if J + 1 > 0:
             i_new[1:J+2] = next_ishock(i[:J+1], params.ishock, params.pi_i)
-            a_new[1:J+2] = next_ashock(a[:J+1], params.ashock, params.pi_a) 
 
         # 履歴を記録
         dist_history.append(dist_now.clone())
