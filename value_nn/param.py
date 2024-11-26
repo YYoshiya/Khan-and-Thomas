@@ -8,7 +8,7 @@ class KTParam():
         self.delta = 0.069
         self.gamma = 1.0160
         self.eta = 2.40
-        self.B = 0.83
+        self.B = 0.3
         self.ashock = torch.tensor([0.9328, 0.9658, 1.0000, 1.0354, 1.0720])
         self.nz = 5
         self.pi_a = torch.tensor([
