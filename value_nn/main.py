@@ -110,8 +110,8 @@ class nn_class:
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(params_value, lr=0.001)
         self.optimizer_pol = optim.Adam(params_policy, lr=0.001)
-        self.optimizer_pri = optim.Adam(params_price, lr=0.01)
-        self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.01)
+        self.optimizer_pri = optim.Adam(params_price, lr=0.001)
+        self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.001)
 
 def initialize_weights(model):
     for layer in model.modules():
@@ -135,12 +135,14 @@ n_model.price_model.apply(initialize_weights)
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
-pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 1000, 0.5)
+pred.price_train(params, n_model, n_model.optimizer_pri, 20, 10, 1000, 0.001)
 count = 0
 for _ in range(50):
     count += 1
-    vi.value_iter(n_model, params, n_model.optimizer_val, 2000, 20)
-    vi.policy_iter(params, n_model.optimizer_pol, n_model, 1000, 10)
+   
+    vi.value_iter(n_model, params, n_model.optimizer_val, 500, 10)
+    vi.policy_iter(params, n_model.optimizer_pol, n_model, 500, 10)
     #if count % 7 == 0:
-    pred.price_train(params, n_model, n_model.optimizer_pri, 10, 10, 1000, 1e-4)#Tを変えてる。
-    pred.next_gm_train(n_model, params, n_model.optimizer_next_gm, 1000, 10)
+    pred.price_train(params, n_model, n_model.optimizer_pri, 20, 10, 1000, 1e-4)#Tを変えてる。
+    pred.next_gm_train(n_model, params, n_model.optimizer_next_gm, 2000, 10, 10)
+    params.B = 0.2

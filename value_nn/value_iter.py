@@ -216,7 +216,7 @@ def policy_iter(params, optimizer, nn, T, num_sample):
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countp = 0
-    for epoch in range(5):
+    for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
@@ -298,13 +298,13 @@ def value_iter(nn, params, optimizer, T, num_sample):
             v = value_fn(train_data, nn, params)#value_fn書いて
             price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
             wage = params.eta / price
-            profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
+            profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
             e0, e1 = next_value(train_data, nn, params, "cuda")#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
             threshold = (e0 - e1) / params.eta
             #ここ見にくすぎる。
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
             vnew = profit - price*wage*xi**2/(2*params.B) + xi/params.B*e0 + (1-xi/params.B)*e1
-            loss = torch.mean((vnew - v)**2)
+            loss = F.mse_loss(v, vnew.detach())
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -335,12 +335,12 @@ def value_init(nn, params, optimizer, T, num_sample):
 
 
 def get_profit(k_cross, ashock, ishock, price, params):
-    wage = params.eta / price
+    wage = params.eta / price.squeeze(-1)
     yterm = ashock * ishock * k_cross**params.theta
     n = (params.nu * yterm / wage)**(1 / (1 - params.nu))
     y = yterm * n**params.nu
     v0temp = y - wage * n + (1 - params.delta) * k_cross
-    return v0temp*price
+    return v0temp*price.squeeze(-1)
 
 def dist_gm(grid, dist, ashock, nn):
     gm_tmp = nn.gm_model(grid.unsqueeze(-1))
@@ -426,9 +426,9 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
     nn.next_gm_model.to(device)
     nn.gm_model_price.to(device)
     
-    dist_now = torch.full((10,), 1.0 / params.k_grid.size(0), dtype=TORCH_DTYPE)
+    dist_now = torch.full((10,), 1.0 / 10, dtype=TORCH_DTYPE)
     k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
-    a = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)  # 集計ショック（スカラー）
+    a = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)  # Aggregate shock (scalar)
     a = a.repeat(k_now.size(0))
     i = torch.tensor(np.random.choice(params.ishock, size=(k_now.size(0),)), dtype=TORCH_DTYPE)
     dist_history = []
@@ -442,7 +442,7 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
         basic_s = {
             "k_cross": k_now,
             "grid": k_now_data,
-            "ashock": a,  # 集計ショック（スカラー）
+            "ashock": a,  # Aggregate shock (scalar)
             "ishock": i,
             "dist": dist_now_data
         }
@@ -451,48 +451,46 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
         xi_tmp = ((e0 - e1) / params.eta).squeeze(-1)
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B
+        index = torch.where(alpha < 1.0)[0]
+        J = index.size(0)  # Number of elements satisfying the condition
 
-        indices_alpha_lt_1 = torch.where(alpha < 1.0)
-        if indices_alpha_lt_1[0].numel() == 0:
-            J = -1
-        else:
-            J = indices_alpha_lt_1[0].max().item()
+        # Initialize new tensors
+        dist_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
+        k_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
+        i_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
+        a_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
 
-        dist_new = torch.zeros(J + 2, dtype=TORCH_DTYPE)
-        k_new = torch.zeros(J + 2, dtype=TORCH_DTYPE)
-        i_new = torch.zeros(J + 2, dtype=TORCH_DTYPE)
-        a_new = torch.zeros(J + 2, dtype=TORCH_DTYPE)
-
-        # 新しい分布を更新
+        # Update the new distribution
         dist_new[0] = torch.sum(alpha * dist_now)
-        dist_new[1:J+2] = (1 - alpha[:J+1]) * dist_now[:J+1]
 
-        # 新しい資本グリッドを更新
-        k_new[0] = policy_fn(a, k_now_data, dist_now_data, nn).squeeze(-1)[0] # 'a'はスカラー
-        k_new[1:J+2] = ((1 - params.delta) / params.gamma) * k_now[:J+1]
+        if J > 0:
+            dist_new[1:] = (1 - alpha[index]) * dist_now[index]
+            k_new[1:] = ((1 - params.delta) / params.gamma) * k_now[index]
+            i_new[1:] = next_ishock(i[index], params.ishock, params.pi_i)
+        else:
+            # If J = 0, these slices are empty, so we skip them
+            pass
 
-        # 個人ショックを更新
-        # 政策関数に従って移動するエージェント
+        # Update the capital grid
+        k_new[0] = policy_fn(a, k_now_data, dist_now_data, nn).squeeze(-1)[0]  # 'a' is scalar
+
+        # Update the individual shocks
         next_a = next_ashock(a[0], params.ashock, params.pi_a)
         i_new[0] = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)
         a_new[:] = next_a
-    
-        # 調整しないエージェント
-        if J + 1 > 0:
-            i_new[1:J+2] = next_ishock(i[:J+1], params.ishock, params.pi_i)
 
-        # 履歴を記録
+        # Record history
         dist_history.append(dist_now.clone())
         k_history.append(k_now.clone())
-        ashock_history.append(a[0].clone())  # スカラーの'a'を記録
+        ashock_history.append(a[0].clone())  # Record scalar 'a'
         ishock_history.append(i.clone())
 
-        # 次のイテレーションのために現在の分布と資本グリッドを更新
+        # Update for the next iteration
         dist_now = dist_new
         k_now = k_new
         i = i_new
         a = a_new
-    
+
     device = "cuda"
     nn.price_model.to(device)
     nn.gm_model.to(device)
@@ -514,6 +512,7 @@ def get_dataset(params, T, nn, num_sample, gm_train=False):
             "grid": k_history,
             "dist": dist_history
         }
+
 
         
 

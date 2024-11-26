@@ -42,9 +42,9 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     Iagg = torch.sum(data["dist"] * inow, dim=1)
     Yagg = torch.sum(data["dist"]* ynow, dim=1)
     Cagg = Yagg - Iagg
+    Cagg = torch.clamp(Cagg, min=0.1, max=1e8)
     target = 1 / Cagg
-    target = torch.clamp(target, min=0.1, max=1e8)
-    loss = F.mse_loss(price, target.unsqueeze(-1))
+    loss = F.huber_loss(price, target.unsqueeze(-1))
     return loss
 
 def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
