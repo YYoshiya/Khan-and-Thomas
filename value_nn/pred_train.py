@@ -47,8 +47,8 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     loss = F.huber_loss(price, target.unsqueeze(-1))
     return loss
 
-def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
-    data = vi.get_dataset(params, T, nn, num_sample)#これめっちゃ長いなんで。gridが多いからだ。
+def price_train(data, params, nn, optimizer, num_epochs, num_sample, T, threshold):
+    #data = vi.get_dataset(params, T, nn, num_sample)#これめっちゃ長いなんで。gridが多いからだ。
     max_cols = max(array.numel() for array in data["grid"])
     ashock = vi.generate_ashock(1, T, params.ashock, params.pi_a).transpose(1, 0).repeat(1, max_cols)#T, max_cols
     ishock = vi.generate_ishock(max_cols,T, params.ishock, params.pi_i).transpose(1,0)#T, max_cols
@@ -58,7 +58,7 @@ def price_train(params, nn, optimizer, num_epochs, num_sample, T, threshold):
     valid_size = 192
     train_size = len(dataset) - valid_size
     train_data, valid_data = random_split(dataset, [train_size, valid_size])
-    train_loader = DataLoader(train_data, batch_size=128, shuffle=True)
+    train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
     valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
     avg_val_loss = 100
     epoch = 0
@@ -153,9 +153,9 @@ class NextGMDataset(Dataset):
         return input_val, ashock_val, target_val
     
 
-def next_gm_train(nn, params, optimizer, T,num_sample ,epochs):
+def next_gm_train(data, nn, params, optimizer, T,num_sample ,epochs):
     with torch.no_grad():
-        data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
+        #data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
         #grid = [torch.tensor(grid, dtype=TORCH_DTYPE) for grid in data["grid"]]
         #dist = [torch.tensor(dist, dtype=TORCH_DTYPE) for dist in data["dist"]]
         ashock = torch.tensor(data["ashock"], dtype=TORCH_DTYPE)

@@ -51,7 +51,8 @@ def lumpyeqinner(BetaK, Betap, knotsk, knotsm, Z, Pi):
                 nmat[ik, im, iz] = n
                 y = yterm * n**NU
                 v0temp = y - w0 * n + (1 - DELTA) * know
-                v0[ik, im, iz] = v0temp * p0
+                v12 = v0temp * p0
+                v0[ik, im, iz] = v12
 
     v = v0
     kp = np.zeros((nm, nz))
