@@ -8,7 +8,7 @@ class KTParam():
         self.delta = 0.069
         self.gamma = 1.0160
         self.eta = 2.40
-        self.B = 0.8
+        self.B = 0.5
         self.ashock = torch.tensor([0.9328, 0.9658, 1.0000, 1.0354, 1.0720])
         self.nz = 5
         self.pi_a = torch.tensor([
@@ -31,7 +31,9 @@ class KTParam():
         ])
 
         # k_grid の定義
-        self.k_grid = torch.linspace(0.1, 3, steps=30)
+        linear_grid = torch.linspace(start=0.1, end=3, steps=30)
+        log_grid = torch.logspace(start=torch.log10(torch.tensor(3.0)), end=1, steps=20)
+        self.k_grid  = torch.cat((linear_grid, log_grid[1:]))
         self.k_grid_np = np.linspace(0.1, 3, 30)
         self.K_grid_np = np.linspace(1.0, 3, 10)
         ykSS = (self.gamma - self.beta * (1 - self.delta)) / self.beta / self.theta
@@ -39,7 +41,7 @@ class KTParam():
         ycSS = ykSS / ckSS
         nSS = self.nu / self.eta * ycSS
         self.kSS = (ykSS * nSS ** (-self.nu)) ** (1 / (self.theta - 1))
-        self.grid_size = 30
+        self.grid_size = 50
 
 
 

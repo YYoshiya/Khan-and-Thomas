@@ -118,9 +118,9 @@ class nn_class:
         params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(params_value, lr=0.0005)
-        self.optimizer_pol = optim.Adam(params_policy, lr=0.0005)
-        self.optimizer_pri = optim.Adam(params_price, lr=0.005)
+        self.optimizer_val = optim.Adam(params_value, lr=0.0001)
+        self.optimizer_pol = optim.Adam(params_policy, lr=0.0001)
+        self.optimizer_pri = optim.Adam(params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.005)
 
 def initialize_weights(model):
@@ -151,15 +151,15 @@ train_ds = basic_dataset(dataset_grid)
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
 
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 10, 10, 1000, 0.001)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 20, 10, 1000, 0.001)
 count = 0
 for _ in range(50):
-    params.B = 0.0083
+    params.B = 0.06
     count += 1
-    vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 500, 10)
-    vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 500, 10)
-    if count % 3 == 0:
+    vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
+    vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
+    if count % 5 == 0:
         train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-        pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 10, 10, 1000, 1e-4)#Tを変えてる。
+        pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 20, 10, 1000, 1e-3)#Tを変えてる。
         pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 10)
     #params.B = 0.0083

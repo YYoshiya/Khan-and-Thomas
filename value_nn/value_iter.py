@@ -159,11 +159,11 @@ def price_fn_sc(grid, dist, ashock, nn):
 def policy_iter_init2(params, optimizer, nn, T, num_sample):
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
     ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
-    K_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    K_cross = np.random.choice(params.k_grid, num_sample* T)
     dataset = Valueinit(ashock=ashock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'K_cross'])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     count = 0
-    for epoch in range(20):
+    for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
@@ -207,7 +207,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, price=None):
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = generate_ashock(num_sample, T, params.ishock, params.pi_i)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    k_cross = np.random.choice(params.k_grid, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
@@ -263,7 +263,7 @@ def next_value_2(train_data, nn, params, device):
 def value_iter_2(nn, params, optimizer, T, num_sample):
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
     ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    k_cross = np.random.choice(params.k_grid, num_sample* T)
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
@@ -282,7 +282,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample):
     ishock = generate_ishock(num_sample,T, params.ishock, params.pi_i)
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    k_cross = np.random.choice(params.k_grid, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countv = 0
@@ -309,19 +309,19 @@ def value_iter(data, nn, params, optimizer, T, num_sample):
 def value_init(nn, params, optimizer, T, num_sample):   
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
     ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid_np, num_sample* T)
+    k_cross = np.random.choice(params.k_grid, num_sample* T)
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countv = 0
-    for epoch in range(20):
+    for epoch in range(10):
         for train_data in dataloader:
             countv += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             v = nn.value0(train_data['X']).squeeze(-1)
-            loss = F.mse_loss(v, 4.2*train_data['y'])
+            loss = F.mse_loss(v, 6*(train_data['y'])**0.5)
             loss.backward()
             optimizer.step()
             if countv % 10 == 0:
@@ -407,6 +407,8 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     # 確率と価値を掛けて期待値を計算
     expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
     expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
+    check1 = -params.gamma * next_k * price
+    check2 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(-1) * price
     
     e0 = -params.gamma * next_k * price + params.beta * expected_value0
     e1 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
