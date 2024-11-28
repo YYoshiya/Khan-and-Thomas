@@ -298,7 +298,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample):
             threshold = (e0 - e1) / params.eta
             #ここ見にくすぎる。
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
-            vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + (1-xi/params.B)*e1
+            vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + ((1-xi)/params.B)*e1
             loss = F.mse_loss(v, vnew.detach())
             optimizer.zero_grad()
             loss.backward()
@@ -387,7 +387,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
     probabilities = ashock_exp * ishock_exp
     
-    next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)#batch, 1
+    next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)#batch, 
     a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
     a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
     i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
@@ -414,6 +414,19 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     e1 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
     
     return e0, e1
+
+
+def next_value_sim(train_data, nn, params):
+    price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn)
+    next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
+    ashock_idx = torch.where(params.ashock == train_data["ashock"][0, 0])[0].item()
+    ashock_exp = params.pi_a[ashock_idx]
+    prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).repeat(train_data["k_cross"].size(0), 1, 1)
+    
+    next_k = policy_fn(train_data["ishock"], train_data["ashock"], train_data["grid"], train_data["dist"], nn)#policy_fn直して！！！
+    
+    
+    
     
 
 def get_dataset(params, T, nn, num_sample):
@@ -425,29 +438,37 @@ def get_dataset(params, T, nn, num_sample):
     nn.policy.to(device)
     nn.next_gm_model.to(device)
     nn.gm_model_price.to(device)
+    i_size = params.ishock.size(0)
+    grid_size = 10
     
-    dist_now = torch.full((10,), 1.0 / 10, dtype=TORCH_DTYPE)
+    dist_now = torch.full((grid_size, i_size), 1.0 / (i_size*grid_size), dtype=TORCH_DTYPE)
     k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
-    a = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)  # Aggregate shock (scalar)
-    a = a.repeat(k_now.size(0))
-    i = torch.tensor(np.random.choice(params.ishock, size=(k_now.size(0),)), dtype=TORCH_DTYPE)
+    dist_now_k = torch.sum(dist_now, dim=1)
+    k_now_k = torch.sum(k_now, dim=1)
+    
+    
+    a_value = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE).unsqueeze(-1) # Aggregate shock (scalar)
+    a = torch.full((grid_size, i_size), a_value, dtype=TORCH_DTYPE)
+    i = torch.tensor(np.random.choice(params.ishock, size=(grid_size, i_size)), dtype=TORCH_DTYPE)
     dist_history = []
     k_history = []
     ashock_history = []
     ishock_history = []
 
     for t in range(T):
-        k_now_data = k_now.unsqueeze(0).repeat(k_now.size(0), 1)
-        dist_now_data = dist_now.unsqueeze(0).repeat(k_now.size(0), 1)
+        
+        
+        k_now_data = k_now_k.unsqueeze(0).repeat(k_now.size(0), 1)
+        dist_now_data = dist_now_k.unsqueeze(0).repeat(k_now.size(0), 1)
         basic_s = {
             "k_cross": k_now,
-            "grid": k_now_data,
             "ashock": a,  # Aggregate shock (scalar)
             "ishock": i,
+            "grid": k_now_data,
             "dist": dist_now_data
         }
         
-        e0, e1 = next_value(basic_s, nn, params, "cpu")
+        e0, e1 = next_value(basic_s, nn, params, "cpu")#k, ishock
         xi_tmp = ((e0 - e1) / params.eta).squeeze(-1)
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B
@@ -455,8 +476,10 @@ def get_dataset(params, T, nn, num_sample):
         J = index.size(0)  # Number of elements satisfying the condition
 
         # Initialize new tensors
-        dist_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
-        k_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
+        dist_new = torch.zeros((J + 1, i_size), dtype=TORCH_DTYPE)
+        k_new = torch.zeros((J + 1, i_size), dtype=TORCH_DTYPE)
+        dist_new_k = torch.zeros(J + 1, dtype=TORCH_DTYPE)
+        k_new_k = torch.zeros(J + 1, dtype=TORCH_DTYPE)
         i_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
         a_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
 
@@ -488,6 +511,7 @@ def get_dataset(params, T, nn, num_sample):
         # Update for the next iteration
         dist_now = dist_new
         k_now = k_new
+        dist_now_k = 
         i = i_new
         a = a_new
 
