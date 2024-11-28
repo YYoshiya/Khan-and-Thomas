@@ -128,10 +128,10 @@ def value_fn(train_data, nn, params):
     value = nn.value0(state)
     return value
 
-def policy_fn(ashock, grid, dist, nn):
+def policy_fn(ashock, ishock,  grid, dist, nn):
     gm_tmp = nn.gm_model_policy(grid.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock.unsqueeze(-1), gm], dim=1)
+    state = torch.cat([ashock.unsqueeze(-1), ishock, gm], dim=1)#エラー出ると思う。
     next_k = nn.policy(state)
     return next_k
 
@@ -417,14 +417,46 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
 
 
 def next_value_sim(train_data, nn, params):
+    G = train_data["grid"].size(0)  # grid のサイズ
+    i_size = params.ishock.size(0)  # i のサイズ
     price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn)
     next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
     ashock_idx = torch.where(params.ashock == train_data["ashock"][0, 0])[0].item()
     ashock_exp = params.pi_a[ashock_idx]
     prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).repeat(train_data["k_cross"].size(0), 1, 1)
     
-    next_k = policy_fn(train_data["ishock"], train_data["ashock"], train_data["grid"], train_data["dist"], nn)#policy_fn直して！！！
     
+    next_k = policy_fn(train_data["ashock"][0:i_size-1], train_data["ishock"], train_data["grid"][0:i_size-1, :], train_data["dist"][0:i_size-1, :], nn)#i_size, 1
+    a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
+    a_flat = a_mesh.flatten()  # shape: [I*A]
+    i_flat = i_mesh.flatten()  # shape: [I*A]
+    
+    # a_flat と i_flat を [G, 5, I*A, 1] の形状に拡張
+    a_4d = a_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
+    i_4d = i_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
+    
+    # next_k を [G, 5, I*A, 1] の形状に効率的に変換
+    # next_k の形状: [5, 1]
+    # 1. 次元を追加して [1, 5, 1, 1] に変換
+    # 2. expand で [G, 5, 25, 1] に拡張
+    next_k_flat = next_k.view(1, 5, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
+    next_gm_flat = next_gm.view(1, 5, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
+    k_cross_flat = train_data["k_cross"].view(G, 1, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
+    pre_k_flat = (1-params.delta) * k_cross_flat
+    
+    data_v0 = torch.cat([next_k_flat, a_4d, i_4d, next_gm_flat], dim=3)  # [G, 5, I*A, 4]
+    data_v1 = torch.cat([pre_k_flat, a_4d, i_4d, next_gm_flat], dim=3)  # [G, 5, I*A, 4]
+    value0 = nn.value0(data_v0).view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
+    value1 = nn.value0(data_v1).view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
+    
+    expected_value0 = (value0 * prob).sum(dim=(2, 3))  # [G, 5]
+    expected_value1 = (value1 * prob).sum(dim=(2, 3))  # [G, 5]
+    
+    
+    e0 = -params.gamma * next_k.transpose(0, 1).expand(G, 5) * price.expand(G, i_size) + params.beta * expected_value0#G, i_size
+    e1 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(0).expand(G, i_size) * price.expand(G, i_size) + params.beta * expected_value1
+    
+    return e0, e1
     
     
     
@@ -449,7 +481,7 @@ def get_dataset(params, T, nn, num_sample):
     
     a_value = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE).unsqueeze(-1) # Aggregate shock (scalar)
     a = torch.full((grid_size, i_size), a_value, dtype=TORCH_DTYPE)
-    i = torch.tensor(np.random.choice(params.ishock, size=(grid_size, i_size)), dtype=TORCH_DTYPE)
+    #i = torch.tensor(np.random.choice(params.ishock, size=(grid_size, i_size)), dtype=TORCH_DTYPE)
     dist_history = []
     k_history = []
     ashock_history = []
@@ -457,50 +489,61 @@ def get_dataset(params, T, nn, num_sample):
 
     for t in range(T):
         
-        
+        grid_size = dist_now.size(0)
         k_now_data = k_now_k.unsqueeze(0).repeat(k_now.size(0), 1)
         dist_now_data = dist_now_k.unsqueeze(0).repeat(k_now.size(0), 1)
         basic_s = {
-            "k_cross": k_now,
-            "ashock": a,  # Aggregate shock (scalar)
-            "ishock": i,
+            "k_cross": k_now_k,
+            "ashock": a,  
+            "ishock": params.ishock, 
             "grid": k_now_data,
             "dist": dist_now_data
         }
         
-        e0, e1 = next_value(basic_s, nn, params, "cpu")#k, ishock
+        e0, e1 = next_value_sim(basic_s, nn, params, "cpu")#k, ishock_size
         xi_tmp = ((e0 - e1) / params.eta).squeeze(-1)
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B
-        index = torch.where(alpha < 1.0)[0]
-        J = index.size(0)  # Number of elements satisfying the condition
+        adj_dist = dist_now * alpha  # (grid_size, i_size)
+        non_adj_dist = dist_now * (1 - alpha)  # (grid_size, i_size)
+        J = alpha.size(0)
 
         # Initialize new tensors
         dist_new = torch.zeros((J + 1, i_size), dtype=TORCH_DTYPE)
         k_new = torch.zeros((J + 1, i_size), dtype=TORCH_DTYPE)
-        dist_new_k = torch.zeros(J + 1, dtype=TORCH_DTYPE)
-        k_new_k = torch.zeros(J + 1, dtype=TORCH_DTYPE)
-        i_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
-        a_new = torch.zeros(J + 1, dtype=TORCH_DTYPE)
 
         # Update the new distribution
-        dist_new[0] = torch.sum(alpha * dist_now)
-
-        if J > 0:
-            dist_new[1:] = (1 - alpha[index]) * dist_now[index]
-            k_new[1:] = ((1 - params.delta) / params.gamma) * k_now[index]
-            i_new[1:] = next_ishock(i[index], params.ishock, params.pi_i)
-        else:
-            # If J = 0, these slices are empty, so we skip them
-            pass
+        adj_mass = adj_dist.sum(dim=0)
+        dist_new[0, :] = adj_mass @ params.pi_i
+        
+        for k in range(grid_size):
+            non_adj_dist_k = non_adj_dist[k, :]
+            dist_new[k+1,:] = non_adj_dist_k @ params.pi_i
+            
 
         # Update the capital grid
-        k_new[0] = policy_fn(a, k_now_data, dist_now_data, nn).squeeze(-1)[0]  # 'a' is scalar
-
+        k_new[0,:] = policy_fn(a[0:i_size-1], params.ishock, k_now_data[0:i_size-1], dist_now_data[0:i_size-1], nn).squeeze(-1)
+        k_new[1:,:] = ((1 - params.delta) / params.gamma) * k_now
+        
+        zero_row_indices = torch.nonzero(torch.all(dist_new == 0, dim=1)).flatten()
+        
+        # Remove the zero rows from dist_new and k_new
+        non_zero_row_mask = torch.any(dist_new != 0, dim=1)
+        dist_new = dist_new[non_zero_row_mask]
+        k_new = k_new[non_zero_row_mask]
+        
+        size_new = dist_new.size(0)
+        dist_new_k = torch.zeros(size_new, dtype=TORCH_DTYPE)
+        k_new_k = torch.zeros(size_new, dtype=TORCH_DTYPE)
+        a_new = torch.zeros(size_new, dtype=TORCH_DTYPE)
+        
+        dist_new_k = dist_new.sum(dim=1)
+        k_new_k = k_new.sum(dim=1)
+        
         # Update the individual shocks
         next_a = next_ashock(a[0], params.ashock, params.pi_a)
-        i_new[0] = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE)
         a_new[:] = next_a
+        
 
         # Record history
         dist_history.append(dist_now.clone())
@@ -511,7 +554,8 @@ def get_dataset(params, T, nn, num_sample):
         # Update for the next iteration
         dist_now = dist_new
         k_now = k_new
-        dist_now_k = 
+        dist_now_k = dist_new_k
+        k_now_k = k_new_k
         i = i_new
         a = a_new
 
