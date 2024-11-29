@@ -131,7 +131,7 @@ def value_fn(train_data, nn, params):
 def policy_fn(ashock, ishock,  grid, dist, nn):
     gm_tmp = nn.gm_model_policy(grid.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock.unsqueeze(-1), ishock, gm], dim=1)#エラー出ると思う。
+    state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=1)#エラー出ると思う。
     next_k = nn.policy(state)
     return next_k
 
@@ -423,7 +423,7 @@ def next_value_sim(train_data, nn, params):
     next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
     ashock_idx = torch.where(params.ashock == train_data["ashock"][0, 0])[0].item()
     ashock_exp = params.pi_a[ashock_idx]
-    prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).repeat(train_data["k_cross"].size(0), 1, 1)
+    prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).expand(train_data["k_cross"].size(0), 1, 1)
     
     
     next_k = policy_fn(train_data["ashock"][0:i_size-1], train_data["ishock"], train_data["grid"][0:i_size-1, :], train_data["dist"][0:i_size-1, :], nn)#i_size, 1
