@@ -482,10 +482,12 @@ def get_dataset(params, T, nn, num_sample):
     a_value = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE).unsqueeze(-1) # Aggregate shock (scalar)
     a = torch.full((grid_size, i_size), a_value, dtype=TORCH_DTYPE)
     #i = torch.tensor(np.random.choice(params.ishock, size=(grid_size, i_size)), dtype=TORCH_DTYPE)
+    
     dist_history = []
     k_history = []
+    dist_k_history = []
+    grid_k_history = []
     ashock_history = []
-    ishock_history = []
 
     for t in range(T):
         
@@ -548,15 +550,15 @@ def get_dataset(params, T, nn, num_sample):
         # Record history
         dist_history.append(dist_now.clone())
         k_history.append(k_now.clone())
+        dist_k_history.append(dist_now_k.clone())
+        grid_k_history.append(k_now_k.clone())
         ashock_history.append(a[0].clone())  # Record scalar 'a'
-        ishock_history.append(i.clone())
 
         # Update for the next iteration
         dist_now = dist_new
         k_now = k_new
         dist_now_k = dist_new_k
         k_now_k = k_new_k
-        i = i_new
         a = a_new
 
     device = "cuda"
@@ -571,8 +573,9 @@ def get_dataset(params, T, nn, num_sample):
     return {
             "grid": k_history,
             "dist": dist_history,
+            "dist_k": dist_k_history,
+            "grid_k": grid_k_history,
             "ashock": ashock_history,
-            "ishock": ishock_history
         }
     
 def generate_ishock(num_sample, T, shock, Pi):

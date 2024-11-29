@@ -151,7 +151,7 @@ train_ds = basic_dataset(dataset_grid)
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
 
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 20, 10, 1000, 0.001)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 20, 128, 1000, 0.001)
 count = 0
 for _ in range(50):
     params.B = 0.06

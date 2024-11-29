@@ -24,41 +24,41 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当でよい。
     eps = 1e-8
-    ashock = data["ashock"]
-    ishock = data["ishock"]
-    price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:, 0],nn)
-    wage = params.eta/price
+    i_size = params.ishock_gpu.size(0)
+    max_cols = data["grid"].size(1)
+    ashock_3d = data["ashock"].unsqueeze(1).expand(-1, max_cols, -1)
+    ishock_3d = data["ishock"].unsqueeze(1).expand(-1, max_cols, -1)
+    price = vi.price_fn(data["grid_k"], data["dist_k"], data["ashock"][:, 0],nn)
+    wage = (params.eta/price).unsqueeze(-1).expand(-1, max_cols, i_size)#batch, max_cols, i_size
     e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols, i_size
-    threshold = (e0 - e1) / params.eta#batch, max_cols,1
-    xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))#batch, max_cols,1
-    alpha = (xi / params.B).squeeze(-1)#batch, max_cols,1
-    k_next = vi.policy_fn(data["ashock"][:, 0], data["grid"], data["dist"], nn).repeat(1, alpha.size(1))#batch, i_sizeで出てくるからmax_colsに合わせる
-    yterm = ashock * ishock * data["grid"]**params.theta#すべてのi
+    threshold = (e0 - e1) / params.eta#batch, max_cols,i_size
+    xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))#batch, max_cols,i_size
+    alpha = (xi / params.B).squeeze(-1)#batch, max_cols,i_size
+    k_next = policy_fn(data["ashock"], data["ishock"],data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)#batch, i_sizeで出てくるからmax_colsに合わせる
+    yterm = ashock_3d * ishock_3d  * data["grid"]**params.theta#batch, max_cols, i_size
     numerator = params.nu * yterm / (wage + eps)
     numerator = torch.clamp(numerator, min=eps, max=1e8)  # 数値の範囲を制限
     nnow = torch.pow(numerator, 1 / (1 - params.nu))
-    inow = alpha * (params.gamma * k_next - (1-params.delta) * data["grid"])#全てのi
-    ynow = ashock*ishock * data["grid"]**params.theta * nnow**params.nu
-    Iagg = torch.sum(data["dist"] * inow, dim=1)
-    Yagg = torch.sum(data["dist"]* ynow, dim=1)
-    Cagg = Yagg - Iagg
+    inow = alpha * (params.gamma * k_next - (1-params.delta) * data["grid"].unsqueeze(-1).expand(-1,-1, i_size))
+    ynow = ashock_3d*ishock_3d * data["grid"].unsqueeze(-1).expand(-1,-1, i_size)**params.theta * nnow**params.nu
+    Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
+    Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
+    Cagg = Yagg - Iagg#batch
     Cagg = torch.clamp(Cagg, min=0.1, max=1e8)
     target = 1 / Cagg
     loss = F.huber_loss(price, target.unsqueeze(-1))
     return loss
 
-def price_train(data, params, nn, optimizer, num_epochs, num_sample, T, threshold):
+def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
     #data = vi.get_dataset(params, T, nn, num_sample)#これめっちゃ長いなんで。gridが多いからだ。
-    max_cols = max(array.numel() for array in data["grid"])
-    ashock = vi.generate_ashock(1, T, params.ashock, params.pi_a)#T
-    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
-    idata = params.ishock.unsqueeze(0).expand(T, -1)#T, 5
-    dataset = MyDataset(grid=data["grid"], dist=data["dist"], ashock=ashock, ishock=idata)
+    ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).unsqueeze(-1).expand(-1, params.ishock.size(0))#G, 5
+    ishock_data = params.ishock.unsqueeze(0).expand(batch_size, -1)#G, 5
+    dataset = MyDataset(grid=data["grid"], dist=data["dist"], ashock=ashock_data, ishock=ishock_data)
     valid_size = 192
     train_size = len(dataset) - valid_size
     train_data, valid_data = random_split(dataset, [train_size, valid_size])
-    train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
-    valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
+    train_loader = DataLoader(train_data, batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_data, batch_size, shuffle=True)
     avg_val_loss = 100
     epoch = 0
     while avg_val_loss > threshold and epoch < num_epochs:
@@ -84,21 +84,29 @@ def gm_fn(grid, dist, nn):
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     return gm.squeeze(-1)
 
+def policy_fn(ashock, ishock, grid_k, dist_k, nn):
+    gm_tmp = nn.gm_model_policy(grid_k.unsqueeze(-1))
+    gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)
+    state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=-1)
+    next_k = nn.policy(state)
+    return next_k
+
+
 def next_gm_fn(gm, ashock, nn):
     state = torch.cat([ashock, gm], dim=1)
     next_gm = nn.next_gm_model(state)
     return next_gm
 
 def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
-    G = train_data["grid"].size(0)
+    G = data["grid"].size(0)
     i_size = params.ishock_gpu.size(0)
-    price = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn)#batch, 1
-    next_gm = vi.dist_gm(data["grid"], data["dist"], data["ashock"],nn)#batch, 1
+    price = vi.price_fn(data["grid_k"], data["dist_k"], data["ashock"], nn)#batch, 1
+    next_gm = vi.dist_gm(data["grid_k"], data["dist_k"], data["ashock"],nn)#batch, 1
     ashock_idx = torch.where(params.ashock_gpu == data["ashock"])[0]
     ashock_exp = params.pi_a_gpu[ashock_idx].to(device)#batch, 5
-    tensor_einsum = torch.einsum('ik,nj->nijk', pi_i, ashock_exp).unsqueeze(1).expand(G, max_cols, i_size, i_size, i_size)#batch, max_cols, i_size, a, i
+    prob = torch.einsum('ik,nj->nijk', params.pi_i_gpu, ashock_exp).unsqueeze(1).expand(G, max_cols, i_size, i_size, i_size)#batch, max_cols, i_size, a, i
     
-    next_k = vi.policy_fn(ashock[:,0], data["grid"], data["dist"], nn)#batch, i_size, 1
+    next_k = policy_fn(data["ashock"], data["ishock"], data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
     a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
     a_flat = a_mesh.flatten()  # shape: [I*A]
     i_flat = i_mesh.flatten()  # shape: [I*A]
@@ -119,8 +127,8 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     expected_v0 = (value0 *  prob).sum(dim=(2,3))#batch, max_cols, i_size,
     expected_v1 = (value1 *  prob).sum(dim=(2,3))#batch, max_cols, i_size
     
-    e0 = -params.gamma * next_k + price.repeat(1, max_cols).unsqueeze(-1) + params.beta * expected_v0
-    e1 = -params.gamma * (1-params.delta)*data["grid"].unsqueeze(-1) + price.repeat(1, max_cols).unsqueeze(-1) + params.beta * expected_v1
+    e0 = -params.gamma * next_k + price.expand(1, max_cols).unsqueeze(-1) + params.beta * expected_v0
+    e1 = -params.gamma * (1-params.delta)*data["grid"].unsqueeze(-1) + price.expand(1, max_cols).unsqueeze(-1) + params.beta * expected_v1
     
     return e0, e1
     
@@ -156,9 +164,9 @@ def next_gm_train(data, nn, params, optimizer, T,num_sample ,epochs):
         #data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
         #grid = [torch.tensor(grid, dtype=TORCH_DTYPE) for grid in data["grid"]]
         #dist = [torch.tensor(dist, dtype=TORCH_DTYPE) for dist in data["dist"]]
-        ashock = torch.tensor(data["ashock"], dtype=TORCH_DTYPE)
-        dist = just_padding(data["dist"])
-        grid = just_padding(data["grid"])
+        ashock = torch.tensor(data["ashock"][:,0], dtype=TORCH_DTYPE)
+        dist = just_padding(data["dist_k"])
+        grid = just_padding(data["grid_k"])
         nn.gm_model.to("cpu")
         gm = gm_fn(grid, dist, nn)
         dataset = NextGMDataset(gm, ashock)
