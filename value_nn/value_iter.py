@@ -135,10 +135,10 @@ def policy_fn(ashock, ishock,  grid, dist, nn):
     next_k = nn.policy(state)
     return next_k
 
-def policy_fn_sc(ashock, grid, dist, nn):
-    gm_tmp = nn.gm_model_price(grid.unsqueeze(-1))
-    gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock.expand(gm.size(0), 1), gm], dim=1)
+def policy_fn_sim(ashock, ishock, grid_k, dist_k, nn):
+    gm_tmp = nn.gm_model_policy(grid_k.unsqueeze(-1))
+    gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)#batch, i, 1
+    state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=-1)
     next_k = nn.policy(state)
     return next_k
 
@@ -417,16 +417,16 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
 
 
 def next_value_sim(train_data, nn, params):
-    G = train_data["grid"].size(0)  # grid のサイズ
+    G = train_data["grid_k"].size(0)  # grid のサイズ
     i_size = params.ishock.size(0)  # i のサイズ
-    price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn)
-    next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
+    price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0], nn)#G,1
+    next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0],nn)#G,1
     ashock_idx = torch.where(params.ashock == train_data["ashock"][0, 0])[0].item()
     ashock_exp = params.pi_a[ashock_idx]
-    prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).expand(train_data["k_cross"].size(0), 1, 1)
+    prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).expand(train_data["k_cross"].size(0), -1, -1, -1)
     
-    
-    next_k = policy_fn(train_data["ashock"][0:i_size-1], train_data["ishock"], train_data["grid"][0:i_size-1, :], train_data["dist"][0:i_size-1, :], nn)#i_size, 1
+
+    next_k = policy_fn_sim(train_data["ashock"], train_data["ishock"], train_data["grid_k"], train_data["dist_k"], nn)#G, i_size, 1
     a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
     a_flat = a_mesh.flatten()  # shape: [I*A]
     i_flat = i_mesh.flatten()  # shape: [I*A]
@@ -439,8 +439,8 @@ def next_value_sim(train_data, nn, params):
     # next_k の形状: [5, 1]
     # 1. 次元を追加して [1, 5, 1, 1] に変換
     # 2. expand で [G, 5, 25, 1] に拡張
-    next_k_flat = next_k.view(1, 5, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
-    next_gm_flat = next_gm.view(1, 5, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
+    next_k_flat = next_k.expand(-1, -1, a_flat.size(0)).unsqueeze(-1)  # [G, 5, I*A, 1]
+    next_gm_flat = next_gm.view(-1, 1, 1, 1).expand(G, i_size, a_flat.size(0), 1)  # [G, 5, I*A, 1]
     k_cross_flat = train_data["k_cross"].view(G, 1, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
     pre_k_flat = (1-params.delta) * k_cross_flat
     
@@ -453,8 +453,8 @@ def next_value_sim(train_data, nn, params):
     expected_value1 = (value1 * prob).sum(dim=(2, 3))  # [G, 5]
     
     
-    e0 = -params.gamma * next_k.transpose(0, 1).expand(G, 5) * price.expand(G, i_size) + params.beta * expected_value0#G, i_size
-    e1 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(0).expand(G, i_size) * price.expand(G, i_size) + params.beta * expected_value1
+    e0 = -params.gamma * next_k.squeeze() * price.expand(G, i_size) + params.beta * expected_value0#G, i_size
+    e1 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(1).expand(-1, i_size) * price.expand(G, i_size) + params.beta * expected_value1
     
     return e0, e1
     
@@ -479,8 +479,8 @@ def get_dataset(params, T, nn, num_sample):
     k_now_k = torch.sum(k_now, dim=1)
     
     
-    a_value = torch.tensor(np.random.choice(params.ashock), dtype=TORCH_DTYPE).unsqueeze(-1) # Aggregate shock (scalar)
-    a = torch.full((grid_size, i_size), a_value, dtype=TORCH_DTYPE)
+    a_value = torch.multinomial(params.ashock, 1) # Aggregate shock (scalar)
+    a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=TORCH_DTYPE)
     #i = torch.tensor(np.random.choice(params.ishock, size=(grid_size, i_size)), dtype=TORCH_DTYPE)
     
     dist_history = []
@@ -497,12 +497,12 @@ def get_dataset(params, T, nn, num_sample):
         basic_s = {
             "k_cross": k_now_k,
             "ashock": a,  
-            "ishock": params.ishock, 
-            "grid": k_now_data,
-            "dist": dist_now_data
+            "ishock": params.ishock.unsqueeze(0).expand(grid_size, -1),
+            "grid_k": k_now_data,
+            "dist_k": dist_now_data
         }
         
-        e0, e1 = next_value_sim(basic_s, nn, params, "cpu")#k, ishock_size
+        e0, e1 = next_value_sim(basic_s, nn, params)#k, ishock_size
         xi_tmp = ((e0 - e1) / params.eta).squeeze(-1)
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B
@@ -523,12 +523,10 @@ def get_dataset(params, T, nn, num_sample):
             dist_new[k+1,:] = non_adj_dist_k @ params.pi_i
             
 
-        # Update the capital grid
-        k_new[0,:] = policy_fn(a[0:i_size-1], params.ishock, k_now_data[0:i_size-1], dist_now_data[0:i_size-1], nn).squeeze(-1)
+        # Gが１になった場合これはエラーになる。
+        k_new[0,:] = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], k_now_data, dist_now_data, nn)[0,:,0]
         k_new[1:,:] = ((1 - params.delta) / params.gamma) * k_now
-        
-        zero_row_indices = torch.nonzero(torch.all(dist_new == 0, dim=1)).flatten()
-        
+                
         # Remove the zero rows from dist_new and k_new
         non_zero_row_mask = torch.any(dist_new != 0, dim=1)
         dist_new = dist_new[non_zero_row_mask]
@@ -537,13 +535,13 @@ def get_dataset(params, T, nn, num_sample):
         size_new = dist_new.size(0)
         dist_new_k = torch.zeros(size_new, dtype=TORCH_DTYPE)
         k_new_k = torch.zeros(size_new, dtype=TORCH_DTYPE)
-        a_new = torch.zeros(size_new, dtype=TORCH_DTYPE)
+        a_new = torch.zeros((size_new,i_size), dtype=TORCH_DTYPE)
         
         dist_new_k = dist_new.sum(dim=1)
         k_new_k = k_new.sum(dim=1)
         
         # Update the individual shocks
-        next_a = next_ashock(a[0], params.ashock, params.pi_a)
+        next_a = next_ashock(a[0,0], params.ashock, params.pi_a)
         a_new[:] = next_a
         
 

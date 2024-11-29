@@ -106,7 +106,7 @@ class nn_class:
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.value0 = ValueNN(4).to(self.device)
-        self.policy = NextkNN(2).to(self.device)
+        self.policy = NextkNN(3).to(self.device)
         self.gm_model = GeneralizedMomModel(1).to(self.device)
         self.gm_model_policy = GeneralizedMomModel(1).to(self.device)
         self.next_gm_model = PriceNN(2).to(self.device)
@@ -142,16 +142,16 @@ n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
 n_model.price_model.apply(initialize_weights)
 
-vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
-pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
-vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
+#vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
+#pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
+#vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
 
-dataset_grid = vi.get_dataset(params, 1000, n_model, 10)
+dataset_grid = vi.get_dataset(params, 300, n_model, 10)
 train_ds = basic_dataset(dataset_grid)
-vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
+#vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
 
-train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 20, 128, 1000, 0.001)
+#train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 20, 128, 300, 0.001)
 count = 0
 for _ in range(50):
     params.B = 0.06
