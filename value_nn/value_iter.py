@@ -43,11 +43,11 @@ class MyDataset(Dataset):
         if grid is not None:
             grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
             padded = padding(grid)
-            self.data['grid'] = padded.repeat(num_sample, 1)
+            self.data['grid_k'] = padded.repeat(num_sample, 1)
         if dist is not None:
             dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
             padded = padding(dist)
-            self.data['dist'] = padded.repeat(num_sample, 1)
+            self.data['dist_k'] = padded.repeat(num_sample, 1)
 
     def __len__(self):
         # 使用しているデータの最初の項目の長さを返す
@@ -160,7 +160,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
     ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
     K_cross = np.random.choice(params.k_grid, num_sample* T)
-    dataset = Valueinit(ashock=ashock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'K_cross'])
+    dataset = Valueinit(ashock=ashock,ishock=ishock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross'])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     count = 0
     for epoch in range(10):
@@ -387,7 +387,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
     probabilities = ashock_exp * ishock_exp
     
-    next_k = policy_fn(ashock, train_data["grid_k"], train_data["dist_k"], nn)#batch, 
+    next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], nn)#batch, 
     a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
     a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
     i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
