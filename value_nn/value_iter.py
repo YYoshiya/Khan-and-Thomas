@@ -122,8 +122,8 @@ def padding(list_of_arrays):
     return data
 
 def value_fn(train_data, nn, params):
-    gm_tmp = nn.gm_model(train_data["grid"].unsqueeze(-1))
-    gm = torch.sum(gm_tmp * train_data["dist"].unsqueeze(-1), dim=-2)
+    gm_tmp = nn.gm_model(train_data["grid_k"].unsqueeze(-1))
+    gm = torch.sum(gm_tmp * train_data["dist_k"].unsqueeze(-1), dim=-2)
     state = torch.cat([train_data["k_cross"].unsqueeze(-1), train_data["ashock"].unsqueeze(-1), train_data["ishock"].unsqueeze(-1), gm], dim=1)
     value = nn.value0(state)
     return value
@@ -208,7 +208,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, price=None):
     ishock = generate_ashock(num_sample, T, params.ishock, params.pi_i)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     k_cross = np.random.choice(params.k_grid, num_sample* T)
-    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"])
+    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid_k"], dist=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
     for epoch in range(10):
@@ -283,7 +283,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample):
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     k_cross = np.random.choice(params.k_grid, num_sample* T)
-    dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"])
+    dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countv = 0
     for epoch in range(10):
@@ -291,7 +291,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample):
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
             v = value_fn(train_data, nn, params)#value_fn書いて
-            price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn)#入力は分布とashockかな。
+            price = price_fn(train_data["grid_k"],train_data["dist_k"], train_data["ashock"], nn)#入力は分布とashockかな。
             wage = params.eta / price
             profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
             e0, e1 = next_value(train_data, nn, params, "cuda")#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
@@ -375,8 +375,8 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     if p_init is not None:
         price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
     else:
-        price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn)
-    next_gm = dist_gm(train_data["grid"], train_data["dist"], train_data["ashock"],nn)
+        price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
+    next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"],nn)
     ashock_ts = torch.tensor(params.ashock, dtype=TORCH_DTYPE).to(device)
     ishock_ts = torch.tensor(params.ishock, dtype=TORCH_DTYPE).to(device)
     ashock = train_data["ashock"]
@@ -387,7 +387,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
     probabilities = ashock_exp * ishock_exp
     
-    next_k = policy_fn(ashock, train_data["grid"], train_data["dist"], nn)#batch, 
+    next_k = policy_fn(ashock, train_data["grid_k"], train_data["dist_k"], nn)#batch, 
     a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
     a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
     i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
