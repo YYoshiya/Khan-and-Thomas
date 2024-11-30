@@ -29,7 +29,8 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     ashock_3d = data["ashock"].unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size
     ishock_3d = data["ishock"].unsqueeze(1).expand(-1, max_cols, -1)
     price = vi.price_fn(data["grid_k"], data["dist_k"], data["ashock"][:, 0],nn)
-    wage = (params.eta/price).unsqueeze(-1).expand(-1, max_cols, i_size)#batch, max_cols, i_size
+    wage = params.eta/price
+    wage = wage.unsqueeze(-1).expand(-1, max_cols, i_size)#batch, max_cols, i_size
     e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols, i_size
     threshold = (e0 - e1) / params.eta#batch, max_cols,i_size
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))#batch, max_cols,i_size
@@ -50,7 +51,6 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     return loss
 
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
-    #data = vi.get_dataset(params, T, nn, num_sample)#これめっちゃ長いなんで。gridが多いからだ。
     ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).squeeze(0).unsqueeze(-1).expand(-1, params.ishock.size(0))#G, 5
     ishock_data = params.ishock.unsqueeze(0).expand(T, -1)#G, 5
     dataset = MyDataset(grid=data["grid"], dist=data["dist"], ashock=ashock_data, ishock=ishock_data)
@@ -250,7 +250,7 @@ def padding(list_of_arrays):
     for array in list_of_arrays:
         # 行方向にパディングを追加
         pad_size = max_row - array.size(0)
-        padded_array = F.pad(array, (0, 0, pad_size, 0), mode='constant', value=0)
+        padded_array = F.pad(array, (0, 0, 0, pad_size), mode='constant', value=0)
         padded_arrays.append(padded_array)
     
     data = torch.stack(padded_arrays, dim=0)

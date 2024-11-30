@@ -473,15 +473,16 @@ def get_dataset(params, T, nn, num_sample):
     i_size = params.ishock.size(0)
     grid_size = 10
     
-    dist_now = torch.full((grid_size, i_size), 1.0 / (i_size*grid_size), dtype=TORCH_DTYPE)
-    k_now = torch.full_like(dist_now, params.kSS, dtype=TORCH_DTYPE)
+    # pi_i を正規化
+    pi_i = params.pi_i / params.pi_i.sum(dim=1, keepdim=True)
+    
+    dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=pi_i.dtype, device=device)
+    k_now = torch.full_like(dist_now, params.kSS, dtype=pi_i.dtype, device=device)
     dist_now_k = torch.sum(dist_now, dim=1)
     k_now_k = torch.sum(k_now, dim=1)
     
-    
     a_value = torch.multinomial(params.ashock, 1) # Aggregate shock (scalar)
-    a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=TORCH_DTYPE)
-    #i = torch.tensor(np.random.choice(params.ishock, size=(grid_size, i_size)), dtype=TORCH_DTYPE)
+    a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=pi_i.dtype, device=device)
     
     dist_history = []
     k_history = []
@@ -490,7 +491,6 @@ def get_dataset(params, T, nn, num_sample):
     ashock_history = []
 
     for t in range(T):
-        
         grid_size = dist_now.size(0)
         k_now_data = k_now_k.unsqueeze(0).repeat(k_now.size(0), 1)
         dist_now_data = dist_now_k.unsqueeze(0).repeat(k_now.size(0), 1)
@@ -502,7 +502,7 @@ def get_dataset(params, T, nn, num_sample):
             "dist_k": dist_now_data
         }
         
-        e0, e1 = next_value_sim(basic_s, nn, params)#k, ishock_size
+        e0, e1 = next_value_sim(basic_s, nn, params) # k, ishock_size
         xi_tmp = ((e0 - e1) / params.eta).squeeze(-1)
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B
@@ -511,21 +511,20 @@ def get_dataset(params, T, nn, num_sample):
         J = alpha.size(0)
 
         # Initialize new tensors
-        dist_new = torch.zeros((J + 1, i_size), dtype=TORCH_DTYPE)
-        k_new = torch.zeros((J + 1, i_size), dtype=TORCH_DTYPE)
+        dist_new = torch.zeros((J + 1, i_size), dtype=pi_i.dtype, device=device)
+        k_new = torch.zeros((J + 1, i_size), dtype=pi_i.dtype, device=device)
 
         # Update the new distribution
         adj_mass = adj_dist.sum(dim=0)
-        dist_new[0, :] = adj_mass @ params.pi_i
+        dist_new[0, :] = adj_mass @ pi_i
         
         for k in range(grid_size):
             non_adj_dist_k = non_adj_dist[k, :]
-            dist_new[k+1,:] = non_adj_dist_k @ params.pi_i
-            
+            dist_new[k+1, :] = non_adj_dist_k @ pi_i
 
         # Gが１になった場合これはエラーになる。
-        k_new[0,:] = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], k_now_data, dist_now_data, nn)[0,:,0]
-        k_new[1:,:] = ((1 - params.delta) / params.gamma) * k_now
+        k_new[0, :] = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], k_now_data, dist_now_data, nn)[0, :, 0]
+        k_new[1:, :] = ((1 - params.delta) / params.gamma) * k_now
                 
         # Remove the zero rows from dist_new and k_new
         non_zero_row_mask = torch.any(dist_new != 0, dim=1)
@@ -533,17 +532,17 @@ def get_dataset(params, T, nn, num_sample):
         k_new = k_new[non_zero_row_mask]
         
         size_new = dist_new.size(0)
-        dist_new_k = torch.zeros(size_new, dtype=TORCH_DTYPE)
-        k_new_k = torch.zeros(size_new, dtype=TORCH_DTYPE)
-        a_new = torch.zeros((size_new,i_size), dtype=TORCH_DTYPE)
-        
         dist_new_k = dist_new.sum(dim=1)
         k_new_k = k_new.sum(dim=1)
         
         # Update the individual shocks
         next_a = next_ashock(a[0,0], params.ashock, params.pi_a)
+        a_new = torch.zeros((size_new, i_size), dtype=pi_i.dtype, device=device)
         a_new[:] = next_a
         
+        dist_new_sum = dist_new.sum()
+        
+        mean_k = (k_new * dist_new).sum()
 
         # Record history
         dist_history.append(dist_now.clone())
@@ -569,12 +568,13 @@ def get_dataset(params, T, nn, num_sample):
     nn.gm_model_price.to(device)
     
     return {
-            "grid": k_history,
-            "dist": dist_history,
-            "dist_k": dist_k_history,
-            "grid_k": grid_k_history,
-            "ashock": ashock_history,
-        }
+        "grid": k_history,
+        "dist": dist_history,
+        "dist_k": dist_k_history,
+        "grid_k": grid_k_history,
+        "ashock": ashock_history,
+    }
+
     
 def generate_ishock(num_sample, T, shock, Pi):
     """
