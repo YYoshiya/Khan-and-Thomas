@@ -179,8 +179,8 @@ for _ in range(50):
     vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
     vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
     if count % 3 == 0:
-        train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+        #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
         pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 1000, 1e-3)#Tを変えてる。
         pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 50)
-        #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+        train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #params.B = 0.0083
