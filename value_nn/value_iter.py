@@ -21,9 +21,25 @@ else:
     raise ValueError("Unknown dtype.")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def move_models_to_device(nn, device):
+    """
+    指定されたニューラルネットワークの各モデルを指定されたデバイスに移動します。
+    
+    Parameters:
+    - nn: ニューラルネットワークオブジェクト。各モデルは属性として持っている必要があります。
+    - device: 移動先のデバイス。例："cpu" または "cuda"
+    """
+    nn.price_model.to(device)
+    nn.gm_model.to(device)
+    nn.value0.to(device)
+    nn.gm_model_policy.to(device)
+    nn.policy.to(device)
+    nn.next_gm_model.to(device)
+    nn.gm_model_price.to(device)
+
 
 class MyDataset(Dataset):
-    def __init__(self, num_sample, k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
+    def __init__(self, num_sample, k_cross=None, ashock=None, ishock=None, grid=None, dist=None, grid_k=None, dist_k=None):
         self.data = {}
         if k_cross is not None:
             if isinstance(k_cross, np.ndarray):
@@ -42,12 +58,19 @@ class MyDataset(Dataset):
             self.data['ishock'] = ishock
         if grid is not None:
             grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
-            padded = padding(grid)
-            self.data['grid_k'] = padded.repeat(num_sample, 1)
+            self.data['grid'] = torch.stack(grid, dim=0).repeat(num_sample, 1)
+            
         if dist is not None:
             dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
-            padded = padding(dist)
-            self.data['dist_k'] = padded.repeat(num_sample, 1)
+            self.data['dist'] = torch.stack(dist, dim=0).repeat(num_sample, 1)
+        
+        if grid_k is not None:
+            grid_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid_k]
+            self.data['grid_k'] = torch.stack(grid_k, dim=0).repeat(num_sample, 1)
+        
+        if dist_k is not None:
+            dist_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist_k]
+            self.data['dist_k'] = torch.stack(dist_k, dim=0).repeat(num_sample, 1)
 
     def __len__(self):
         # 使用しているデータの最初の項目の長さを返す
@@ -156,10 +179,11 @@ def price_fn_sc(grid, dist, ashock, nn):
     state = torch.cat([ashock.expand(gm_price.size(0), 1), gm_price], dim=1)
     price = nn.price_model(state)
     return price
+
 def policy_iter_init2(params, optimizer, nn, T, num_sample):
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
     ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
-    K_cross = np.random.choice(params.k_grid, num_sample* T)
+    K_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = Valueinit(ashock=ashock,ishock=ishock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross'])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     count = 0
@@ -173,7 +197,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
             loss = F.mse_loss(next_k, target)
             loss.backward()
             optimizer.step()
-            if count % 10 == 0:
+            if count % 100 == 0:
                 print(f"count: {count}, loss: {loss.item()}")
 
 
@@ -207,8 +231,8 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, price=None):
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = generate_ashock(num_sample, T, params.ishock, params.pi_i)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid, num_sample* T)
-    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid_k"], dist=data["dist_k"])
+    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
     for epoch in range(10):
@@ -220,7 +244,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, price=None):
             loss = -torch.mean(next_v)
             loss.backward()
             optimizer.step()
-            if countp % 10 == 0:
+            if countp % 100 == 0:
                 print(f"count: {countp}, loss: {-loss.item()}")
 
 def next_value_2(train_data, nn, params, device):
@@ -263,7 +287,7 @@ def next_value_2(train_data, nn, params, device):
 def value_iter_2(nn, params, optimizer, T, num_sample):
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
     ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
@@ -282,8 +306,8 @@ def value_iter(data, nn, params, optimizer, T, num_sample):
     ishock = generate_ishock(num_sample,T, params.ishock, params.pi_i)
     ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
     ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid, num_sample* T)
-    dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid_k"], data["dist_k"])
+    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    dataset = MyDataset(num_sample, k_cross, ashock, ishock, grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countv = 0
     for epoch in range(10):
@@ -298,18 +322,18 @@ def value_iter(data, nn, params, optimizer, T, num_sample):
             threshold = (e0 - e1) / params.eta
             #ここ見にくすぎる。
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
-            vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + ((1-xi)/params.B)*e1
+            vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
             loss = F.mse_loss(v, vnew.detach())
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if countv % 10 == 0:
+            if countv % 100 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")
 
 def value_init(nn, params, optimizer, T, num_sample):   
     ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
     ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
@@ -324,7 +348,7 @@ def value_init(nn, params, optimizer, T, num_sample):
             loss = F.mse_loss(v, 6*(train_data['y'])**0.5)
             loss.backward()
             optimizer.step()
-            if countv % 10 == 0:
+            if countv % 100 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")
     
 
@@ -458,32 +482,83 @@ def next_value_sim(train_data, nn, params):
     
     return e0, e1
     
+def map_to_grid(k_prime, k_grid):
+    """
+    Map k_prime to the capital grid using linear interpolation.
+    Returns lower indices, upper indices, and interpolation weights.
     
+    Parameters:
+    - k_prime: Tensor of new capital values (G, I)
+    - k_grid: Capital grid (G, 1)
+    
+    Returns:
+    - idx_lower: Lower indices in the grid (G, I)
+    - idx_upper: Upper indices in the grid (G, I)
+    - weight: Interpolation weights (G, I)
+    """
+    grid_size = k_grid.size(0)
+    # Flatten k_prime for searchsorted and then reshape back
+    idx = torch.searchsorted(k_grid[:, 0], k_prime.view(-1)).view(k_prime.shape)
+    idx = torch.clamp(idx, 1, grid_size - 1)
+    idx_lower = idx - 1
+    idx_upper = idx
+    k_lower = k_grid[idx_lower, 0]
+    k_upper = k_grid[idx_upper, 0]
+    weight = (k_prime - k_lower) / (k_upper - k_lower + 1e-8)  # Avoid division by zero
+    return idx_lower, idx_upper, weight
+
+def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight, pi_i, adjusting):
+    """
+    Update the distribution based on adjustment decisions and capital transitions.
+    
+    Parameters:
+    - dist_new: The new distribution to update (G, I)
+    - dist_now: The current distribution (G, I)
+    - alpha: Adjustment probabilities (G, I)
+    - idx_lower: Lower indices in the grid (G, I)
+    - idx_upper: Upper indices in the grid (G, I)
+    - weight: Interpolation weights (G, I)
+    - pi_i: Transition matrix for idiosyncratic shocks (I, I)
+    - adjusting: Boolean, True if agents are adjusting, False otherwise
+    """
+    G, I = dist_now.shape
+    pi_i_expanded = pi_i.unsqueeze(0).expand(G, -1, -1)  # (G, I, I)
+    
+    if adjusting:
+        dist_adjust = dist_now * alpha  # (G, I)
+    else:
+        dist_adjust = dist_now * (1 - alpha)  # (G, I)
+    
+    # Calculate weights for lower and upper grid points
+    weight_lower = dist_adjust.unsqueeze(2) * pi_i_expanded * (1 - weight).unsqueeze(2)  # (G, I, I)
+    weight_upper = dist_adjust.unsqueeze(2) * pi_i_expanded * weight.unsqueeze(2)        # (G, I, I)
+    
+    # Update distribution
+    for j in range(I):
+        # Update distribution at lower grid points
+        #とりあえずJ番目のiにたすやつ
+        dist_new[:, j].index_add_(0, idx_lower.flatten(), weight_lower[:, :, j].flatten())
+        # Update distribution at upper grid points
+        dist_new[:, j].index_add_(0, idx_upper.flatten(), weight_upper[:, :, j].flatten())
+
+
     
 
 def get_dataset(params, T, nn, num_sample):
-    device = "cpu"
-    nn.price_model.to(device)
-    nn.gm_model.to(device)
-    nn.value0.to(device)
-    nn.gm_model_policy.to(device)
-    nn.policy.to(device)
-    nn.next_gm_model.to(device)
-    nn.gm_model_price.to(device)
+    move_models_to_device(nn, "cpu")
     i_size = params.ishock.size(0)
-    grid_size = 10
-    
-    # pi_i を正規化
-    pi_i = params.pi_i / params.pi_i.sum(dim=1, keepdim=True)
-    
-    dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=pi_i.dtype, device=device)
-    k_now = torch.full_like(dist_now, params.kSS, dtype=pi_i.dtype, device=device)
-    dist_now_k = torch.sum(dist_now, dim=1)
-    k_now_k = torch.sum(k_now, dim=1)
-    
-    a_value = torch.multinomial(params.ashock, 1) # Aggregate shock (scalar)
-    a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=pi_i.dtype, device=device)
-    
+    grid_size = params.grid_size
+
+    # Initialize distribution over capital and idiosyncratic shocks
+    dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=params.pi_i.dtype)
+    k_now = params.k_grid  # (grid_size, nz)
+    dist_now_k = torch.sum(dist_now, dim=1)  # Aggregate over idiosyncratic shocks
+    k_now_k = k_now[:, 0]  # Assuming ashock is scalar for now
+
+    # Initialize aggregate shock 'a'
+    a_value = torch.multinomial(params.ashock, 1)
+    a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=params.pi_i.dtype)
+
     dist_history = []
     k_history = []
     dist_k_history = []
@@ -492,81 +567,69 @@ def get_dataset(params, T, nn, num_sample):
 
     for t in range(T):
         grid_size = dist_now.size(0)
-        k_now_data = k_now_k.unsqueeze(0).repeat(k_now.size(0), 1)
-        dist_now_data = dist_now_k.unsqueeze(0).repeat(k_now.size(0), 1)
+        # Prepare data for the policy functions
         basic_s = {
-            "k_cross": k_now_k,
-            "ashock": a,  
-            "ishock": params.ishock.unsqueeze(0).expand(grid_size, -1),
-            "grid_k": k_now_data,
-            "dist_k": dist_now_data
+            "k_cross": k_now_k,  # Current capital grid (G,)
+            "ashock": a,         # Current aggregate shock (G, I)
+            "ishock": params.ishock.unsqueeze(0).expand(grid_size, -1),  # Idiosyncratic shocks (G, I)
+            "grid_k": k_now_k.unsqueeze(0).repeat(grid_size, 1),         # (G, G)
+            "dist_k": dist_now_k.unsqueeze(0).repeat(grid_size, 1),      # (G, G)
         }
-        
-        e0, e1 = next_value_sim(basic_s, nn, params) # k, ishock_size
-        xi_tmp = ((e0 - e1) / params.eta).squeeze(-1)
+
+        # Compute expected values for adjustment decision
+        e0, e1 = next_value_sim(basic_s, nn, params)  # Returns (G, I) tensors
+        xi_tmp = ((e0 - e1) / params.eta)  # Adjustment condition
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
-        alpha = xi / params.B
-        adj_dist = dist_now * alpha  # (grid_size, i_size)
-        non_adj_dist = dist_now * (1 - alpha)  # (grid_size, i_size)
-        J = alpha.size(0)
+        alpha = xi / params.B  # Probability of adjustment (G, I)
 
-        # Initialize new tensors
-        dist_new = torch.zeros((J + 1, i_size), dtype=pi_i.dtype, device=device)
-        k_new = torch.zeros((J + 1, i_size), dtype=pi_i.dtype, device=device)
+        # Policy function for adjusted capital
+        k_prime_adj = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], basic_s["grid_k"], basic_s["dist_k"], nn)  # (G, I, 1)
+        k_prime_adj = k_prime_adj.squeeze(-1)  # (G, I)
 
-        # Update the new distribution
-        adj_mass = adj_dist.sum(dim=0)
-        dist_new[0, :] = adj_mass @ pi_i
-        
-        for k in range(grid_size):
-            non_adj_dist_k = non_adj_dist[k, :]
-            dist_new[k+1, :] = non_adj_dist_k @ pi_i
+        # Capital for non-adjusting agents
+        k_prime_non_adj = (1 - params.delta) * basic_s["k_cross"].unsqueeze(1).expand(-1, i_size)  # (G, I)
 
-        # Gが１になった場合これはエラーになる。
-        k_new[0, :] = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], k_now_data, dist_now_data, nn)[0, :, 0]
-        k_new[1:, :] = ((1 - params.delta) / params.gamma) * k_now
-                
-        # Remove the zero rows from dist_new and k_new
-        non_zero_row_mask = torch.any(dist_new != 0, dim=1)
-        dist_new = dist_new[non_zero_row_mask]
-        k_new = k_new[non_zero_row_mask]
-        
-        size_new = dist_new.size(0)
-        dist_new_k = dist_new.sum(dim=1)
-        k_new_k = k_new.sum(dim=1)
-        
-        # Update the individual shocks
+        # Map k_prime to the capital grid using the refactored function
+        idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(k_prime_adj, params.k_grid)
+        idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_prime_non_adj, params.k_grid)
+
+        # Initialize new distribution
+        dist_new = torch.zeros_like(dist_now)
+
+        # Update distribution for adjusting agents
+        update_distribution(dist_new, dist_now, alpha, idx_adj_lower, idx_adj_upper, weight_adj, params.pi_i, adjusting=True)
+
+        # Update distribution for non-adjusting agents
+        update_distribution(dist_new, dist_now, alpha, idx_non_adj_lower, idx_non_adj_upper, weight_non_adj, params.pi_i, adjusting=False)
+
+
+        dist_sum = dist_new.sum()
+        # Normalize distribution to prevent numerical errors
+        dist_new /= dist_sum
+
+        # Update aggregate capital distribution
+        dist_new_k = dist_new.sum(dim=1)  # Sum over idiosyncratic shocks
+        k_new_k = params.k_grid[:, 0]
+
         next_a = next_ashock(a[0,0], params.ashock, params.pi_a)
-        a_new = torch.zeros((size_new, i_size), dtype=pi_i.dtype, device=device)
-        a_new[:] = next_a
+        a_new = torch.full((grid_size, i_size), next_a.item(), dtype=TORCH_DTYPE)
         
-        dist_new_sum = dist_new.sum()
-        
-        mean_k = (k_new * dist_new).sum()
 
         # Record history
         dist_history.append(dist_now.clone())
         k_history.append(k_now.clone())
         dist_k_history.append(dist_now_k.clone())
         grid_k_history.append(k_now_k.clone())
-        ashock_history.append(a[0].clone())  # Record scalar 'a'
+        ashock_history.append(a[0, 0].item())  # Record scalar 'a'
 
         # Update for the next iteration
         dist_now = dist_new
-        k_now = k_new
+        k_now = k_now  # Capital grid remains the same
         dist_now_k = dist_new_k
         k_now_k = k_new_k
-        a = a_new
+        a = a_new  # Update aggregate shock if necessary
+    move_models_to_device(nn, "cuda")
 
-    device = "cuda"
-    nn.price_model.to(device)
-    nn.gm_model.to(device)
-    nn.value0.to(device)
-    nn.gm_model_policy.to(device)
-    nn.policy.to(device)
-    nn.next_gm_model.to(device)
-    nn.gm_model_price.to(device)
-    
     return {
         "grid": k_history,
         "dist": dist_history,
@@ -575,7 +638,10 @@ def get_dataset(params, T, nn, num_sample):
         "ashock": ashock_history,
     }
 
-    
+
+
+
+
 def generate_ishock(num_sample, T, shock, Pi):
     """
     PyTorch を使用して T 個の ishock 値を生成します。

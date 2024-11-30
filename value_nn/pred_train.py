@@ -53,12 +53,12 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
     ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).squeeze(0).unsqueeze(-1).expand(-1, params.ishock.size(0))#G, 5
     ishock_data = params.ishock.unsqueeze(0).expand(T, -1)#G, 5
-    dataset = MyDataset(grid=data["grid"], dist=data["dist"], ashock=ashock_data, ishock=ishock_data)
-    valid_size = 192
+    dataset = MyDataset(grid=data["grid"], dist=data["dist"], grid_k=data["grid_k"], dist_k=data["dist_k"], ashock=ashock_data, ishock=ishock_data)
+    valid_size = 64
     train_size = len(dataset) - valid_size
     train_data, valid_data = random_split(dataset, [train_size, valid_size])
     train_loader = DataLoader(train_data, batch_size, shuffle=True)
-    valid_loader = DataLoader(valid_data, batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_data, 32, shuffle=True)
     avg_val_loss = 100
     epoch = 0
     while avg_val_loss > threshold and epoch < num_epochs:
@@ -166,8 +166,10 @@ def next_gm_train(data, nn, params, optimizer, T,num_sample ,epochs):
         #grid = [torch.tensor(grid, dtype=TORCH_DTYPE) for grid in data["grid"]]
         #dist = [torch.tensor(dist, dtype=TORCH_DTYPE) for dist in data["dist"]]
         ashock = torch.tensor(data["ashock"][:,0], dtype=TORCH_DTYPE)
-        dist = just_padding(data["dist_k"])
-        grid = just_padding(data["grid_k"])
+        dist = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["grid_k"]]
+        dist = torch.stack(dist, dim=0)
+        grid = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["dist_k"]]
+        grid = torch.stack(grid, dim=0)
         nn.gm_model.to("cpu")
         gm = gm_fn(grid, dist, nn)
         dataset = NextGMDataset(gm, ashock)
@@ -195,19 +197,10 @@ def next_gm_loss(nn, input, ashock, target):
     loss = torch.mean((next_gm - target)**2)
     return loss
 
-def just_padding(list_of_arrays):
-    list_of_arrays = [torch.tensor(data, dtype=TORCH_DTYPE) for data in list_of_arrays]
-    max_cols = max(array.size(0) for array in list_of_arrays)
-    padded_arrays = []
-    for array in list_of_arrays:
-        padded_array = F.pad(array, (0, max_cols - array.size(0)), mode='constant', value=0)
-        padded_arrays.append(padded_array)
-    data = torch.stack(padded_arrays, dim=0)
-    #data_reshaped = data.permute(1,0,2).contiguous()#num_sample, T, nの配列
-    return data
+
 
 class MyDataset(Dataset):
-    def __init__(self,k_cross=None, ashock=None, ishock=None, grid=None, dist=None):
+    def __init__(self,k_cross=None, ashock=None, ishock=None, grid=None, dist=None, grid_k=None, dist_k=None):
         self.data = {}
         if k_cross is not None:
             if isinstance(k_cross, np.ndarray):
@@ -226,14 +219,19 @@ class MyDataset(Dataset):
             self.data['ishock'] = ishock
         if grid is not None:
             grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
-            padded = padding(grid)
-            self.data['grid'] = padded#.repeat(num_sample, 1)
-            self.data["grid_k"] = torch.sum(self.data["grid"], dim=-1)
+            self.data['grid'] = torch.stack(grid, dim=0)
+            
         if dist is not None:
             dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
-            padded = padding(dist)
-            self.data['dist'] = padded#.repeat(num_sample, 1)
-            self.data["dist_k"] = torch.sum(self.data["dist"], dim=-1)
+            self.data['dist'] = torch.stack(dist, dim=0)
+        
+        if grid_k is not None:
+            grid_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid_k]
+            self.data['grid_k'] = torch.stack(grid_k, dim=0)
+        
+        if dist_k is not None:
+            dist_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist_k]
+            self.data['dist_k'] = torch.stack(dist_k, dim=0)
         
 
     def __len__(self):
