@@ -79,8 +79,8 @@ class NextkNN(nn.Module):
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 64)
+        self.fc1 = nn.Linear(d_in, 128)
+        self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, 64)
         self.output = nn.Linear(64, 1)
         self.relu = nn.ReLU()
@@ -91,6 +91,24 @@ class PriceNN(nn.Module):
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
         x = self.softplus(self.output(x))
+        return x
+
+
+class Next_gmNN(nn.Module):
+    def __init__(self, d_in):
+        super(Next_gmNN, self).__init__()
+        self.fc1 = nn.Linear(d_in, 24)
+        self.fc2 = nn.Linear(24, 24)
+        self.fc3 = nn.Linear(24, 24)
+        self.output = nn.Linear(24, 1)
+        self.relu = nn.ReLU()
+        self.tanh = nn.Tanh()
+        self.softplus = nn.Softplus()
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.output(x)
         return x
 
 class basic_dataset:
@@ -109,7 +127,7 @@ class nn_class:
         self.policy = NextkNN(3).to(self.device)
         self.gm_model = GeneralizedMomModel(1).to(self.device)
         self.gm_model_policy = GeneralizedMomModel(1).to(self.device)
-        self.next_gm_model = PriceNN(2).to(self.device)
+        self.next_gm_model = Next_gmNN(2).to(self.device)
         self.gm_model_price = GeneralizedMomModel(1).to(self.device)
         self.price_model = PriceNN(2).to(self.device)
         params_value = list(self.value0.parameters()) + list(self.gm_model.parameters())
@@ -120,7 +138,7 @@ class nn_class:
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(params_value, lr=0.0001)
         self.optimizer_pol = optim.Adam(params_policy, lr=0.0001)
-        self.optimizer_pri = optim.Adam(params_price, lr=0.0005)
+        self.optimizer_pri = optim.Adam(params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.005)
 
 def initialize_weights(model):
@@ -148,11 +166,11 @@ vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
 
 dataset_grid = vi.get_dataset(params, 1000, n_model, 10)
 train_ds = basic_dataset(dataset_grid)
-#vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
+vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
 
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 50, 64, 1000, 0.001)
-pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 10)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 128, 1000, 0.001)
+pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
 count = 0
 for _ in range(50):
@@ -162,6 +180,7 @@ for _ in range(50):
     vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
     if count % 3 == 0:
         train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-        pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 20, 10, 1000, 1e-3)#Tを変えてる。
-        pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 10)
+        pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 1000, 1e-3)#Tを変えてる。
+        pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 50)
+        #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #params.B = 0.0083

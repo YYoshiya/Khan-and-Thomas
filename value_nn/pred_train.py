@@ -128,8 +128,8 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     expected_v0 = (value0 *  prob).sum(dim=(2,3))#batch, max_cols, i_size,
     expected_v1 = (value1 *  prob).sum(dim=(2,3))#batch, max_cols, i_size
     
-    e0 = -params.gamma * next_k_expa + price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v0
-    e1 = -params.gamma * (1-params.delta)*data["grid"] + price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v1
+    e0 = -params.gamma * next_k_expa * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v0
+    e1 = -params.gamma * (1-params.delta)*data["grid"] * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v1
     
     return e0, e1
     
@@ -173,11 +173,11 @@ def next_gm_train(data, nn, params, optimizer, T,num_sample ,epochs):
         nn.gm_model.to("cpu")
         gm = gm_fn(grid, dist, nn)
         dataset = NextGMDataset(gm, ashock)
-        valid_size = 192
+        valid_size = 64
         train_size = len(dataset) - valid_size
         train_data, valid_data = random_split(dataset, [train_size, valid_size])
         train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
-        valid_loader = DataLoader(valid_data, batch_size=64, shuffle=True)
+        valid_loader = DataLoader(valid_data, batch_size=32, shuffle=True)
         loss_list = []
     nn.gm_model.to(device)
     for epoch in range(epochs):
@@ -186,9 +186,10 @@ def next_gm_train(data, nn, params, optimizer, T,num_sample ,epochs):
             loss = next_gm_loss(nn, input, ashock_val, target)
             loss.backward()
             optimizer.step()
-        for input, ashock_val, target in valid_loader:
-            loss = next_gm_loss(nn, input, ashock_val, target)
-            loss_list.append(loss)
+        with torch.no_grad():
+            for input, ashock_val, target in valid_loader:
+                loss = next_gm_loss(nn, input, ashock_val, target)
+                loss_list.append(loss)
         avg_val_loss = sum(loss_list) / len(loss_list)
         print(f"epoch: {epoch}, avg_val_loss: {avg_val_loss}")
 
