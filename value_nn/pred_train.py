@@ -165,7 +165,7 @@ def next_gm_train(data, nn, params, optimizer, T,num_sample ,epochs):
         #data = vi.get_dataset(params, T, nn, num_sample, gm_train=True)
         #grid = [torch.tensor(grid, dtype=TORCH_DTYPE) for grid in data["grid"]]
         #dist = [torch.tensor(dist, dtype=TORCH_DTYPE) for dist in data["dist"]]
-        ashock = torch.tensor(data["ashock"][:,0], dtype=TORCH_DTYPE)
+        ashock = torch.tensor(data["ashock"], dtype=TORCH_DTYPE)
         dist = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["grid_k"]]
         dist = torch.stack(dist, dim=0)
         grid = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["dist_k"]]
