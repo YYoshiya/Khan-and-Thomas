@@ -34,7 +34,7 @@ class KTParam():
             [0.0001, 0.0042, 0.1035, 0.8579, 0.0344],
             [0.0000, 0.0002, 0.0083, 0.1377, 0.8537]
         ])
-        self.pi_i = pi_i / pi_i.sum()
+        self.pi_i = pi_i / pi_i.sum(dim=1, keepdim=True)
         self.pi_i_gpu = self.pi_i.to(self.device)
         self.grid_size = 50
         # 0.1から50までのlogspaceで50個のグリッドを生成
