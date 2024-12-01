@@ -137,9 +137,9 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
 class NextGMDataset(Dataset):
     def __init__(self, gm, ashock):
         # 入力: gm[:, :-1], ターゲット: gm[:, 1:]
-        inputs = gm[:-1]
-        targets = gm[1:]
-        ashock_reshaped = ashock[:-1]
+        inputs = gm[100:-1]
+        targets = gm[101:]
+        ashock_reshaped = ashock[100:-1]
         
         # 2列のテンソルに結合
         self.data = torch.stack((inputs, ashock_reshaped, targets), dim=-1)  # shape: (num_samples * (T-1), 3)
