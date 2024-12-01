@@ -220,19 +220,19 @@ class MyDataset(Dataset):
             self.data['ishock'] = ishock
         if grid is not None:
             grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
-            self.data['grid'] = torch.stack(grid, dim=0)
+            self.data['grid'] = torch.stack(grid, dim=0)[100:, :,:]
             
         if dist is not None:
             dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
-            self.data['dist'] = torch.stack(dist, dim=0)
+            self.data['dist'] = torch.stack(dist, dim=0)[100:, :,:]
         
         if grid_k is not None:
             grid_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid_k]
-            self.data['grid_k'] = torch.stack(grid_k, dim=0)
+            self.data['grid_k'] = torch.stack(grid_k, dim=0)[100:, :]
         
         if dist_k is not None:
             dist_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist_k]
-            self.data['dist_k'] = torch.stack(dist_k, dim=0)
+            self.data['dist_k'] = torch.stack(dist_k, dim=0)[100:, :]
         
 
     def __len__(self):

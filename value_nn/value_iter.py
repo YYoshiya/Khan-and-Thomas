@@ -486,26 +486,60 @@ def map_to_grid(k_prime, k_grid):
     """
     Map k_prime to the capital grid using linear interpolation.
     Returns lower indices, upper indices, and interpolation weights.
-    
+
     Parameters:
     - k_prime: Tensor of new capital values (G, I)
     - k_grid: Capital grid (G, 1)
-    
+
     Returns:
     - idx_lower: Lower indices in the grid (G, I)
     - idx_upper: Upper indices in the grid (G, I)
     - weight: Interpolation weights (G, I)
     """
     grid_size = k_grid.size(0)
+    k_min = k_grid[0, 0]
+    k_max = k_grid[-1, 0]
+
     # Flatten k_prime for searchsorted and then reshape back
-    idx = torch.searchsorted(k_grid[:, 0], k_prime.view(-1)).view(k_prime.shape)
-    idx = torch.clamp(idx, 1, grid_size - 1)
-    idx_lower = idx - 1
+    k_prime_flat = k_prime.view(-1)
+    idx = torch.searchsorted(k_grid[:, 0], k_prime_flat).view(k_prime.shape)
+
+    # Clamp indices to valid range
+    idx = torch.clamp(idx, 0, grid_size - 1)
+
+    # Adjust idx_lower and idx_upper
+    idx_lower = torch.clamp(idx - 1, 0, grid_size - 1)
     idx_upper = idx
+
     k_lower = k_grid[idx_lower, 0]
     k_upper = k_grid[idx_upper, 0]
-    weight = (k_prime - k_lower) / (k_upper - k_lower + 1e-8)  # Avoid division by zero
+
+    # Compute weights, avoiding division by zero
+    denom = k_upper - k_lower
+    zero_denom_mask = denom.abs() < 1e-8
+    denom = denom + zero_denom_mask * 1e-8  # Avoid division by zero
+
+    weight = (k_prime - k_lower) / denom
+
+    # Handle cases where k_prime is outside the grid
+    weight = torch.where(k_prime <= k_min, torch.zeros_like(weight), weight)
+    weight = torch.where(k_prime >= k_max, torch.ones_like(weight), weight)
+
+    idx_lower = torch.where(k_prime <= k_min, torch.zeros_like(idx_lower), idx_lower)
+    idx_upper = torch.where(k_prime <= k_min, torch.zeros_like(idx_upper), idx_upper)
+
+    idx_lower = torch.where(k_prime >= k_max, (grid_size - 1) * torch.ones_like(idx_lower, dtype=torch.long), idx_lower)
+    idx_upper = torch.where(k_prime >= k_max, (grid_size - 1) * torch.ones_like(idx_upper, dtype=torch.long), idx_upper)
+
+    # Ensure indices are of integer type
+    idx_lower = idx_lower.long()
+    idx_upper = idx_upper.long()
+
+    # Clamp weights to [0, 1]
+    weight = torch.clamp(weight, 0.0, 1.0)
+
     return idx_lower, idx_upper, weight
+
 
 def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight, pi_i, adjusting):
     G, I = dist_now.shape

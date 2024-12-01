@@ -169,18 +169,18 @@ train_ds = basic_dataset(dataset_grid)
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
 
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 128, 1000, 0.001)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 128, 900, 1e-4)
 pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
-train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+#vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
+#train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
 count = 0
 for _ in range(50):
     #params.B = 0.06
     count += 1
     vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
     vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
-    if count % 3 == 0:
-        #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-        pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 1000, 1e-3)#Tを変えてる。
-        pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 50)
-        train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+    train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+    pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 900, 1e-4)#Tを変えてる。
+    pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
+    #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #params.B = 0.0083

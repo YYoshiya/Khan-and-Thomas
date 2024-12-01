@@ -9,7 +9,7 @@ class KTParam():
         self.delta = 0.069
         self.gamma = 1.0160
         self.eta = 2.40
-        self.B = 0.2
+        self.B = 0.05
         self.ashock = torch.tensor([0.9328, 0.9658, 1.0000, 1.0354, 1.0720])
         self.ashock_gpu = self.ashock.to(self.device)
         self.nz = 5
@@ -39,7 +39,7 @@ class KTParam():
         self.grid_size = 50
         # 0.1から50までのlogspaceで50個のグリッドを生成
         start = torch.log10(torch.tensor(0.1))
-        end = torch.log10(torch.tensor(10))
+        end = torch.log10(torch.tensor(8))
         self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
         
         self.k_grid = self.k_grid_tmp.view(-1, 1).repeat(1, self.nz)
