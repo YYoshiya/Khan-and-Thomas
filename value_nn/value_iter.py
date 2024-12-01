@@ -567,6 +567,7 @@ def get_dataset(params, T, nn, num_sample):
 
     for t in range(T):
         grid_size = dist_now.size(0)
+        dist_now_sum = dist_now.sum()
         # Prepare data for the policy functions
         basic_s = {
             "k_cross": k_now_k,  # Current capital grid (G,)
@@ -605,7 +606,7 @@ def get_dataset(params, T, nn, num_sample):
 
         dist_sum = dist_new.sum()
         # Normalize distribution to prevent numerical errors
-        dist_new /= dist_sum
+        #dist_new /= dist_sum
 
         # Update aggregate capital distribution
         dist_new_k = dist_new.sum(dim=1)  # Sum over idiosyncratic shocks

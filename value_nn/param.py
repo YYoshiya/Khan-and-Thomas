@@ -13,26 +13,28 @@ class KTParam():
         self.ashock = torch.tensor([0.9328, 0.9658, 1.0000, 1.0354, 1.0720])
         self.ashock_gpu = self.ashock.to(self.device)
         self.nz = 5
-        self.pi_a = torch.tensor([
+        pi_a = torch.tensor([
             [0.8537, 0.1377, 0.0083, 0.0002, 0.0000],
             [0.0344, 0.8579, 0.1035, 0.0042, 0.0001],
             [0.0014, 0.0690, 0.8593, 0.0690, 0.0014],
             [0.0001, 0.0042, 0.1035, 0.8579, 0.0344],
             [0.0000, 0.0002, 0.0083, 0.1377, 0.8537]
         ])
+        self.pi_a = pi_a / pi_a.sum(dim=1, keepdim=True)
         self.pi_a_gpu = self.pi_a.to(self.device)
         
         self.ishock = torch.tensor([0.9328, 0.9658, 1.0000, 1.0354, 1.0720])
         self.ishock_gpu = self.ishock.to(self.device)
 
         # pi_i の定義
-        self.pi_i = torch.tensor([
+        pi_i = torch.tensor([
             [0.8537, 0.1377, 0.0083, 0.0002, 0.0000],
             [0.0344, 0.8579, 0.1035, 0.0042, 0.0001],
             [0.0014, 0.0690, 0.8593, 0.0690, 0.0014],
             [0.0001, 0.0042, 0.1035, 0.8579, 0.0344],
             [0.0000, 0.0002, 0.0083, 0.1377, 0.8537]
         ])
+        self.pi_i = pi_i / pi_i.sum()
         self.pi_i_gpu = self.pi_i.to(self.device)
         self.grid_size = 50
         # 0.1から50までのlogspaceで50個のグリッドを生成
