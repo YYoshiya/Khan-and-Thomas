@@ -508,38 +508,25 @@ def map_to_grid(k_prime, k_grid):
     return idx_lower, idx_upper, weight
 
 def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight, pi_i, adjusting):
-    """
-    Update the distribution based on adjustment decisions and capital transitions.
-    
-    Parameters:
-    - dist_new: The new distribution to update (G, I)
-    - dist_now: The current distribution (G, I)
-    - alpha: Adjustment probabilities (G, I)
-    - idx_lower: Lower indices in the grid (G, I)
-    - idx_upper: Upper indices in the grid (G, I)
-    - weight: Interpolation weights (G, I)
-    - pi_i: Transition matrix for idiosyncratic shocks (I, I)
-    - adjusting: Boolean, True if agents are adjusting, False otherwise
-    """
     G, I = dist_now.shape
-    pi_i_expanded = pi_i.unsqueeze(0).expand(G, -1, -1)  # (G, I, I)
-    
+
     if adjusting:
         dist_adjust = dist_now * alpha  # (G, I)
     else:
         dist_adjust = dist_now * (1 - alpha)  # (G, I)
-    
-    # Calculate weights for lower and upper grid points
-    weight_lower = dist_adjust.unsqueeze(2) * pi_i_expanded * (1 - weight).unsqueeze(2)  # (G, I, I)
-    weight_upper = dist_adjust.unsqueeze(2) * pi_i_expanded * weight.unsqueeze(2)        # (G, I, I)
-    
-    # Update distribution
-    for j in range(I):
-        # Update distribution at lower grid points
-        #とりあえずJ番目のiにたすやつ
-        dist_new[:, j].index_add_(0, idx_lower.flatten(), weight_lower[:, :, j].flatten())
-        # Update distribution at upper grid points
-        dist_new[:, j].index_add_(0, idx_upper.flatten(), weight_upper[:, :, j].flatten())
+
+    for i in range(I):
+        for i_prime in range(I):
+            # Transition probability from state i to i_prime
+            pi_ii = pi_i[i, i_prime]
+            # Mass calculation
+            dist_contrib = dist_adjust[:, i] * pi_ii  # (G,)
+            # Allocation to lower grid point
+            dist_new[:, i_prime].index_add_(0, idx_lower[:, i], dist_contrib * (1 - weight[:, i]))
+            # Allocation to upper grid point
+            dist_new[:, i_prime].index_add_(0, idx_upper[:, i], dist_contrib * weight[:, i])
+
+
 
 
     
@@ -597,16 +584,16 @@ def get_dataset(params, T, nn, num_sample):
         # Initialize new distribution
         dist_new = torch.zeros_like(dist_now)
 
-        # Update distribution for adjusting agents
+        
         update_distribution(dist_new, dist_now, alpha, idx_adj_lower, idx_adj_upper, weight_adj, params.pi_i, adjusting=True)
-
-        # Update distribution for non-adjusting agents
+        
         update_distribution(dist_new, dist_now, alpha, idx_non_adj_lower, idx_non_adj_upper, weight_non_adj, params.pi_i, adjusting=False)
+
 
 
         dist_sum = dist_new.sum()
         # Normalize distribution to prevent numerical errors
-        #dist_new /= dist_sum
+        dist_new /= dist_sum
 
         # Update aggregate capital distribution
         dist_new_k = dist_new.sum(dim=1)  # Sum over idiosyncratic shocks
