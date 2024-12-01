@@ -97,10 +97,10 @@ class PriceNN(nn.Module):
 class Next_gmNN(nn.Module):
     def __init__(self, d_in):
         super(Next_gmNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 24)
-        self.fc2 = nn.Linear(24, 24)
-        self.fc3 = nn.Linear(24, 24)
-        self.output = nn.Linear(24, 1)
+        self.fc1 = nn.Linear(d_in, 36)
+        self.fc2 = nn.Linear(36, 36)
+        self.fc3 = nn.Linear(36, 36)
+        self.output = nn.Linear(36, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
@@ -168,19 +168,20 @@ dataset_grid = vi.get_dataset(params, 1000, n_model, 10)
 train_ds = basic_dataset(dataset_grid)
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
 
-train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 128, 900, 1e-4)
+#train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 128, 900, 1e-5)
 pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
 #vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
-#train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
 count = 0
 for _ in range(50):
     #params.B = 0.06
     count += 1
     vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
     vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
-    train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-    pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 900, 1e-4)#Tを変えてる。
+    pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 900, 1e-5)#Tを変えてる。
     pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
+    if count % 3 == 0:
+        train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #params.B = 0.0083
