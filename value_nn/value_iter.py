@@ -227,8 +227,6 @@ def policy_iter_init(params, optimizer, nn, T, num_sample):
 def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
     #with torch.no_grad():
         #data = get_dataset(params, T, nn, num_sample)
-    if p_init is not None:
-        price = p_init
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
@@ -242,7 +240,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             optimizer.zero_grad()
-            next_v, _ = next_value(train_data, nn, params, "cuda", p_init=price)
+            next_v, _ = next_value(train_data, nn, params, "cuda", p_init=p_init)
             loss = -torch.mean(next_v)
             loss.backward()
             optimizer.step()
