@@ -326,7 +326,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
             #ここ見にくすぎる。
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
             vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
-            loss = F.mse_loss(v, vnew.detach())
+            loss = F.huber_loss(v, vnew.detach())
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
