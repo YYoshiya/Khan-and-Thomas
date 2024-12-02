@@ -36,9 +36,13 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     wage = params.eta/price
     wage = wage.unsqueeze(-1).expand(-1, max_cols, i_size)#batch, max_cols, i_size
     e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols, i_size
+    e0_check = e0[0, :, :]
+    e1_check = e1[0, :, :]
     threshold = (e0 - e1) / params.eta#batch, max_cols,i_size
+    threshold_check = threshold[0, :, :]
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))#batch, max_cols,i_size
     alpha = (xi / params.B).squeeze(-1)#batch, max_cols,i_size
+    alpha_check = alpha[0, :, :]
     k_next = vi.policy_fn_sim(data["ashock"], data["ishock"],data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)#batch, i_sizeで出てくるからmax_colsに合わせる
     yterm = ashock_3d * ishock_3d  * data["grid"]**params.theta#batch, max_cols, i_size
     numerator = params.nu * yterm / (wage + eps)
@@ -129,8 +133,8 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     value0 = nn.value0(data_e0).view(G, max_cols, i_size, len(params.ashock), len(params.ishock))#batch, max_cols, i_size, a, i
     value1 = nn.value0(data_e1).view(G, max_cols, i_size, len(params.ashock), len(params.ishock))#batch, max_cols, i_size, a, i
 
-    expected_v0 = (value0 *  prob).sum(dim=(2,3))#batch, max_cols, i_size,
-    expected_v1 = (value1 *  prob).sum(dim=(2,3))#batch, max_cols, i_size
+    expected_v0 = (value0 *  prob).sum(dim=(3,4))#batch, max_cols, i_size,
+    expected_v1 = (value1 *  prob).sum(dim=(3,4))#batch, max_cols, i_size
     
     e0 = -params.gamma * next_k_expa * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v0
     e1 = -params.gamma * (1-params.delta)*data["grid"] * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v1

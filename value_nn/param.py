@@ -9,7 +9,7 @@ class KTParam():
         self.delta = 0.069
         self.gamma = 1.0160
         self.eta = 2.40
-        self.B = 0.1
+        self.B = 0.05
         self.ashock = torch.tensor([0.9328, 0.9658, 1.0000, 1.0354, 1.0720])
         self.ashock_gpu = self.ashock.to(self.device)
         self.nz = 5

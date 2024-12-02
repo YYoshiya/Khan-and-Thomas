@@ -181,8 +181,10 @@ def price_fn_sc(grid, dist, ashock, nn):
     return price
 
 def policy_iter_init2(params, optimizer, nn, T, num_sample):
-    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
-    ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
+    ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
+    ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
+    ashock = params.ashock[ashock_idx]
+    ishock = params.ishock[ishock_idx]
     K_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = Valueinit(ashock=ashock,ishock=ishock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross'])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
@@ -222,15 +224,15 @@ def policy_iter_init(params, optimizer, nn, T, num_sample):
                 print(f"count: {count}, loss: {-loss.item()}")
 
 
-def policy_iter(data, params, optimizer, nn, T, num_sample, price=None):
+def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
     #with torch.no_grad():
         #data = get_dataset(params, T, nn, num_sample)
-    if price is not None:
-        price = 3.5
-    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a)
-    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    ishock = generate_ashock(num_sample, T, params.ishock, params.pi_i)
-    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+    if p_init is not None:
+        price = p_init
+    ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
+    ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
+    ashock = params.ashock[ashock_idx]
+    ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
@@ -302,10 +304,10 @@ def value_iter_2(nn, params, optimizer, T, num_sample):
     
 def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
     #data = get_dataset(params, T, nn, num_sample)
-    ashock = generate_ashock(num_sample,T, params.ashock, params.pi_a)
-    ishock = generate_ishock(num_sample,T, params.ishock, params.pi_i)
-    ashock = torch.tensor(ashock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
-    ishock = torch.tensor(ishock, dtype=TORCH_DTYPE).view(-1, 1).squeeze(-1)
+    ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
+    ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
+    ashock = params.ashock[ashock_idx]
+    ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
@@ -334,8 +336,10 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
                 print(f"count: {countv}, loss: {loss.item()}")
 
 def value_init(nn, params, optimizer, T, num_sample):   
-    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
-    ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
+    ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
+    ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
+    ashock = params.ashock[ashock_idx]
+    ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
@@ -348,7 +352,7 @@ def value_init(nn, params, optimizer, T, num_sample):
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             v = nn.value0(train_data['X']).squeeze(-1)
-            loss = F.mse_loss(v, 6*(train_data['y'])**0.5)
+            loss = F.mse_loss(v, 4*(train_data['y'])**0.7)
             loss.backward()
             optimizer.step()
             if countv % 100 == 0:
@@ -582,7 +586,7 @@ def get_dataset(params, T, nn, num_sample, p_init=None):
     k_now_k = k_now[:, 0]  # Assuming ashock is scalar for now
 
     # Initialize aggregate shock 'a'
-    a_value = torch.multinomial(params.ashock, 1)
+    a_value = torch.randint(0, len(params.ashock), (1,))
     a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=params.pi_i.dtype)
 
     dist_history = []
