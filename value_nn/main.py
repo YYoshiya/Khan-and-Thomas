@@ -169,8 +169,9 @@ vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
 dataset_grid = vi.get_dataset(params, 1000, n_model, 10, init_price)
 train_ds = basic_dataset(dataset_grid)
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 900, 1e-5)
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10, init_price)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 900, 1e-5)
+train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
 #pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 128, 900, 1e-5)
 #pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
 #vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
@@ -180,9 +181,8 @@ for _ in range(50):
     #params.B = 0.06
     count += 1
     vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
-
-    if count % 5 == 0:
-        vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
+    vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
+    if count % 7 == 0:
         pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 64, 900, 1e-5)
         pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
         train_ds.data = vi.get_dataset(params, 1000, n_model, 10)

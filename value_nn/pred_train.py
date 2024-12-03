@@ -49,7 +49,9 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     numerator = torch.clamp(numerator, min=eps, max=1e8)  # 数値の範囲を制限
     nnow = torch.pow(numerator, 1 / (1 - params.nu))
     inow = alpha * (params.gamma * k_next - (1-params.delta) * data["grid"])
+    inow_check = inow[0, :, :]
     ynow = ashock_3d*ishock_3d * data["grid"]**params.theta * nnow**params.nu
+    ynow_check = ynow[0, :, :]
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
     Cagg = Yagg - Iagg#batch
