@@ -173,13 +173,6 @@ def price_fn(grid, dist, ashock, nn):
     return price
 
 
-def price_fn_sc(grid, dist, ashock, nn):
-    gm_tmp = nn.gm_model(grid.unsqueeze(-1))
-    gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock.expand(gm_price.size(0), 1), gm_price], dim=1)
-    price = nn.price_model(state)
-    return price
-
 def policy_iter_init2(params, optimizer, nn, T, num_sample):
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
@@ -201,27 +194,6 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
             optimizer.step()
             if count % 100 == 0:
                 print(f"count: {count}, loss: {loss.item()}")
-
-
-def policy_iter_init(params, optimizer, nn, T, num_sample):
-    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
-    ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
-    K_cross = np.random.choice(params.K_grid_np, num_sample* T)
-    dataset = Valueinit(ashock=ashock, ishock=ishock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross'])
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-    count = 0
-    for epoch in range(10):
-        for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
-            count += 1
-            train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
-            train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
-            optimizer.zero_grad()
-            e0 = next_value_init_policy(train_data['X'], nn, params, "cuda")
-            loss = -torch.mean(e0)
-            loss.backward()
-            optimizer.step()
-            if count % 10 == 0:
-                print(f"count: {count}, loss: {-loss.item()}")
 
 
 def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
@@ -247,59 +219,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
             if countp % 100 == 0:
                 print(f"count: {countp}, loss: {-loss.item()}")
 
-def next_value_2(train_data, nn, params, device):
-    next_gm = nn.next_gm_model(torch.cat(train_data[:,1:2], train_data[:,3:4], dim=1))
-    price = torch.tensor(3.5, dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
-    ashock_ts = torch.tensor(params.ashock, dtype=TORCH_DTYPE).to(device)
-    ishock_ts = torch.tensor(params.ishock, dtype=TORCH_DTYPE).to(device)
-    ashock = train_data["ashock"]
-    ashock_idx = [torch.where(ashock_ts == val)[0].item() for val in ashock]
-    ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
-    ishock = train_data["ishock"]
-    ishock_idx = [torch.where(ishock_ts == val)[0].item() for val in ishock]
-    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
-    probabilities = ashock_exp * ishock_exp
 
-    data = torch.cat([train_data[:, 0:1], train_data[:, 2:3]], dim=1)
-    next_k = nn.policy(data)
-    a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
-    a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
-    i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
-    next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    k_cross_flat = train_data[:, 0:1].repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    pre_k_flat = (1-params.delta)*k_cross_flat
-    
-    data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    value0 = nn.value0(data_e0).squeeze(-1)
-    value1 = nn.value0(data_e1).squeeze(-1)
-    value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i) 
-    value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
-    
-    # 確率と価値を掛けて期待値を計算
-    expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    
-    e0 = -params.gamma * next_k * price + params.beta * expected_value0
-    e1 = -(1-params.delta) * params.gamma * train_data[:, 0:1] * price + params.beta * expected_value1
-    
-def value_iter_2(nn, params, optimizer, T, num_sample):
-    ashock = generate_ashock(num_sample, T, params.ashock, params.pi_a).view(-1, 1).squeeze(-1)
-    ishock = generate_ishock(num_sample, T, params.ishock, params.pi_i).view(-1, 1).squeeze(-1)
-    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
-    K_cross = np.random.choice(params.K_grid_np, num_sample* T)
-    dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-    for epoch in range(20):
-        for train_data in dataloader:
-            train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
-            train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
-            v = nn.value0(train_data['X'])
-            price = torch.tensor(3.2, dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
-            wage = params.eta / price
-            profit = get_profit(train_data[:, 0:1], train_data[:, 1:2], train_data[:, 2:3], price, params)
-    
 def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
     #data = get_dataset(params, T, nn, num_sample)
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
@@ -373,32 +293,7 @@ def dist_gm(grid, dist, ashock, nn):
     next_gm = nn.next_gm_model(state)
     return next_gm
 
-def next_value_init_policy(train_data, nn, params, device):
-    ashock_ts = torch.tensor(params.ashock, dtype=TORCH_DTYPE).to(device)
-    ishock_ts = torch.tensor(params.ishock, dtype=TORCH_DTYPE).to(device)
-    ashock = train_data[:,0]
-    ashock_idx = [torch.where(ashock_ts == val)[0].item() for val in ashock]
-    ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
-    ishock = train_data[:,1]
-    ishock_idx = [torch.where(ishock_ts == val)[0].item() for val in ishock]
-    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
-    probabilities = ashock_exp * ishock_exp
-    next_gm = pred.next_gm_fn(train_data[:,2].unsqueeze(-1), train_data[:,0].unsqueeze(-1), nn)
-    
-    data = torch.cat([train_data[:, 0:1], train_data[:, 2:3]], dim=1)
-    next_k = nn.policy(data)
-    a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
-    a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
-    i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
-    next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    
-    data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    value0 = nn.value0(data_e0).squeeze(-1)
-    value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
-    expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    e0 = -params.gamma * next_k * 1 + params.beta * expected_value0
-    return e0
+
 
 def next_value(train_data, nn, params, device, grid=None, p_init=None):
     if p_init is not None:

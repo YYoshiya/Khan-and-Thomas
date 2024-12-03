@@ -39,11 +39,11 @@ class KTParam():
         self.grid_size = 50
         # 0.1から50までのlogspaceで50個のグリッドを生成
         start = torch.log10(torch.tensor(0.1))
-        end = torch.log10(torch.tensor(8))
+        end = torch.log10(torch.tensor(5))
         self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
         
         self.k_grid = self.k_grid_tmp.view(-1, 1).repeat(1, self.nz)
-        self.K_grid_np = np.linspace(1.0, 3, 10)
+        self.K_grid_np = np.linspace(0.5, 2, 10)
 
         
         ykSS = (self.gamma - self.beta * (1 - self.delta)) / self.beta / self.theta

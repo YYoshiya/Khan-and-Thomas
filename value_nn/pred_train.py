@@ -137,6 +137,8 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
 
     expected_v0 = (value0 *  prob).sum(dim=(3,4))#batch, max_cols, i_size,
     expected_v1 = (value1 *  prob).sum(dim=(3,4))#batch, max_cols, i_size
+    check0 = expected_v0[0, :, :]
+    check1 = expected_v1[0, :, :]
     
     e0 = -params.gamma * next_k_expa * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v0
     e1 = -params.gamma * (1-params.delta)*data["grid"] * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v1
