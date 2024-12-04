@@ -187,13 +187,13 @@ loss_policy = []
 for _ in range(50):
     #params.B = 0.06
     count += 1
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
     pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
     loss_value.append(loss_v)
     loss_policy.append(loss_p)
     #pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
-    if count % 7 == 0:
+    if count % 3 == 0:
         for _ in range(3):
             pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 200, 64, 900, 1e-5)
             train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
