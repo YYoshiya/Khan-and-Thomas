@@ -102,7 +102,10 @@ def lumpyeqinner(BetaK, Betap, knotsk, knotsm, Z, Pi):
 
                     xitemp = (e0[im, iz] - e1[ik, im, iz]) / (p * w)
                     xi[ik, im, iz] = min(B, max(0, xitemp))
-
+                    check1 = - p * w * xi[ik, im, iz]**2 / (2 * B)
+                    check2 = v0[ik, im, iz]
+                    check3 = xi[ik, im, iz] / B * e0[im, iz]
+                    check4 = (1 - xi[ik, im, iz] / B) * e1[ik, im, iz]
                     vnew[ik, im, iz] = (v0[ik, im, iz]
                         - p * w * xi[ik, im, iz]**2 / (2 * B) 
                         + xi[ik, im, iz] / B * e0[im, iz]

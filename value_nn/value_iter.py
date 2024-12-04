@@ -246,6 +246,8 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
             threshold = (e0 - e1) / params.eta
             #ここ見にくすぎる。
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
+            check1 = - price*wage*xi**2/(2*params.B)
+            
             vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
             loss = F.mse_loss(v, vnew.detach())
             optimizer.zero_grad()
@@ -333,11 +335,11 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     # 確率と価値を掛けて期待値を計算
     expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
     expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    check1 = -params.gamma * next_k * price
-    check2 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(-1) * price
+    check1 = -next_k * price
+    check2 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price
     
-    e0 = -params.gamma * next_k * price + params.beta * expected_value0
-    e1 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
+    e0 = -next_k * price + params.beta * expected_value0
+    e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
     
     return e0, e1
 
@@ -381,8 +383,8 @@ def next_value_sim(train_data, nn, params, p_init=None):
     expected_value1 = (value1 * prob).sum(dim=(2, 3))  # [G, 5]
     
     
-    e0 = -params.gamma * next_k.squeeze() * price.expand(G, i_size) + params.beta * expected_value0#G, i_size
-    e1 = -(1-params.delta) * params.gamma * train_data["k_cross"].unsqueeze(1).expand(-1, i_size) * price.expand(G, i_size) + params.beta * expected_value1
+    e0 = -next_k.squeeze() * price.expand(G, i_size) + params.beta * expected_value0#G, i_size
+    e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(1).expand(-1, i_size) * price.expand(G, i_size) + params.beta * expected_value1
     
     return e0, e1
     

@@ -48,19 +48,19 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     numerator = params.nu * yterm / (wage + eps)
     numerator = torch.clamp(numerator, min=eps, max=1e8)  # 数値の範囲を制限
     nnow = torch.pow(numerator, 1 / (1 - params.nu))
-    inow = alpha * (params.gamma * k_next - (1-params.delta) * data["grid"])
+    inow = alpha * (k_next - (1-params.delta) * data["grid"])
     inow_check = inow[0, :, :]
     ynow = ashock_3d*ishock_3d * data["grid"]**params.theta * nnow**params.nu
     ynow_check = ynow[0, :, :]
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
     min_Iagg = 1e-4
-    penalty_weight = 50000
-    penalty = torch.mean(torch.relu(min_Iagg - Iagg) * penalty_weight)
+    #penalty_weight = 50000
+    #penalty = torch.mean(torch.relu(min_Iagg - Iagg) * penalty_weight)
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
     Cagg = Yagg - Iagg#batch
     Cagg = torch.clamp(Cagg, min=0.1, max=1e8)
     target = 1 / Cagg
-    loss = F.huber_loss(price, target.unsqueeze(-1)) + penalty
+    loss = F.huber_loss(price, target.unsqueeze(-1))
     return loss
 
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
@@ -143,8 +143,8 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     check0 = expected_v0[0, :, :]
     check1 = expected_v1[0, :, :]
     
-    e0 = -params.gamma * next_k_expa * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v0
-    e1 = -params.gamma * (1-params.delta)*data["grid"] * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v1
+    e0 = -next_k_expa * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v0
+    e1 = -(1-params.delta)*data["grid"] * price.expand(-1, max_cols).unsqueeze(-1) + params.beta * expected_v1
     
     return e0, e1
     
