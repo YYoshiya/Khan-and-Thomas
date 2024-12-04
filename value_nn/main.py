@@ -136,8 +136,8 @@ class nn_class:
         params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(params_value, lr=0.0004)
-        self.optimizer_pol = optim.Adam(params_policy, lr=0.0004)
+        self.optimizer_val = optim.Adam(params_value, lr=0.0001)
+        self.optimizer_pol = optim.Adam(params_policy, lr=0.0001)
         self.optimizer_pri = optim.Adam(params_price, lr=0.0001)
         self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.001)
 
@@ -178,14 +178,19 @@ train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
 #vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, price=True)
 #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
 count = 0
+loss_value = []
+loss_policy = []
 for _ in range(50):
     #params.B = 0.06
     count += 1
-    vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
-    vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
-    pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
-    if count % 4 == 0:
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
+    loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
+    loss_value.append(loss_v)
+    loss_policy.append(loss_p)
+    #pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
+    if count % 7 == 0:
         pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 300, 128, 900, 1e-5)
+        pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
         train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #params.B = 0.0083

@@ -53,11 +53,14 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     ynow = ashock_3d*ishock_3d * data["grid"]**params.theta * nnow**params.nu
     ynow_check = ynow[0, :, :]
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
+    min_Iagg = 1e-4
+    penalty_weight = 10000
+    penalty = torch.mean(torch.relu(min_Iagg - Iagg) * penalty_weight)
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
     Cagg = Yagg - Iagg#batch
     Cagg = torch.clamp(Cagg, min=0.1, max=1e8)
     target = 1 / Cagg
-    loss = F.huber_loss(price, target.unsqueeze(-1))
+    loss = F.huber_loss(price, target.unsqueeze(-1)) + penalty
     return loss
 
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
