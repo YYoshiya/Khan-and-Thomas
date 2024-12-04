@@ -54,7 +54,7 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     ynow_check = ynow[0, :, :]
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
     min_Iagg = 1e-4
-    penalty_weight = 10000
+    penalty_weight = 50000
     penalty = torch.mean(torch.relu(min_Iagg - Iagg) * penalty_weight)
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
     Cagg = Yagg - Iagg#batch
