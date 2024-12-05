@@ -43,7 +43,7 @@ class KTParam():
         self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
         
         self.k_grid = self.k_grid_tmp.view(-1, 1).repeat(1, self.nz)
-        self.K_grid_np = np.linspace(0.5, 2, 10)
+        self.K_grid_np = np.linspace(0.1, 3, 10)
 
         
         ykSS = (self.gamma - self.beta * (1 - self.delta)) / self.beta / self.theta
@@ -51,6 +51,10 @@ class KTParam():
         ycSS = ykSS / ckSS
         nSS = self.nu / self.eta * ycSS
         self.kSS = (ykSS * nSS ** (-self.nu)) ** (1 / (self.theta - 1))
+        
+        self.min_Iagg = 1e-4
+        self.penalty_weight = 10000
+        self.negative_Cagg_weight = 1000
 
 
 

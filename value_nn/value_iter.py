@@ -197,8 +197,8 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
 
 
 def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
-    #with torch.no_grad():
-        #data = get_dataset(params, T, nn, num_sample)
+    for param in nn.value0.parameters():
+        param.requires_grad = False
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
@@ -218,11 +218,13 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
             optimizer.step()
             if countp % 100 == 0:
                 print(f"count: {countp}, loss: {-loss.item()}")
+    
+    for param in nn.value0.parameters():
+        param.requires_grad = True
     return loss.item()
 
 
 def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
-    #data = get_dataset(params, T, nn, num_sample)
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
@@ -235,21 +237,21 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
+            with torch.no_grad():
+                price = price_fn(train_data["grid_k"],train_data["dist_k"], train_data["ashock"], nn)
+                if p_init is not None:
+                    price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
+                #入力は分布とashockかな。
+                wage = params.eta / price
+                profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
+                e0, e1 = next_value(train_data, nn, params, "cuda", p_init=p_init)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+                threshold = (e0 - e1) / params.eta
+                #ここ見にくすぎる。
+                xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
+                check1 = - price*wage*xi**2/(2*params.B)
+                vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
             v = value_fn(train_data, nn, params)
-            price = price_fn(train_data["grid_k"],train_data["dist_k"], train_data["ashock"], nn)
-            if p_init is not None:
-                price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
-            #入力は分布とashockかな。
-            wage = params.eta / price
-            profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
-            e0, e1 = next_value(train_data, nn, params, "cuda", p_init=p_init)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
-            threshold = (e0 - e1) / params.eta
-            #ここ見にくすぎる。
-            xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
-            check1 = - price*wage*xi**2/(2*params.B)
-            
-            vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
-            loss = F.mse_loss(v, vnew.detach())
+            loss = F.mse_loss(v, vnew)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -331,12 +333,12 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     value1 = nn.value0(data_e1).squeeze(-1)
     value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
+    checkv0 = value0[:, 0, 0]
+    checkv1 = value1[:, 0, 0]
 
     # 確率と価値を掛けて期待値を計算
     expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
     expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    check1 = -next_k * price
-    check2 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price
     
     e0 = -next_k * price + params.beta * expected_value0
     e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1

@@ -27,7 +27,7 @@ else:
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当でよい。
-    eps = 1e-8
+    eps = 1e-6
     i_size = params.ishock_gpu.size(0)
     max_cols = data["grid"].size(1)
     ashock_3d = data["ashock"].unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size
@@ -53,15 +53,21 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     ynow = ashock_3d*ishock_3d * data["grid"]**params.theta * nnow**params.nu
     ynow_check = ynow[0, :, :]
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
-    min_Iagg = 1e-4
     #penalty_weight = 50000
     #penalty = torch.mean(torch.relu(min_Iagg - Iagg) * penalty_weight)
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
     Cagg = Yagg - Iagg#batch
-    Cagg = torch.clamp(Cagg, min=0.1, max=1e8)
+    Cagg = torch.clamp(Cagg, min=0.1)
     target = 1 / Cagg
     loss = F.huber_loss(price, target.unsqueeze(-1))
-    return loss
+    min_Iagg = params.min_Iagg  # Define a minimum threshold in params
+    penalty_weight = params.penalty_weight  # Define penalty weight in params
+    penalty = torch.relu(min_Iagg - Iagg)  # batch
+    penalty = penalty * penalty_weight 
+    penalty_Iagg = torch.mean(penalty)
+    # Combine the main loss with the penalty
+    total_loss = loss + penalty_Iagg
+    return total_loss
 
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
     ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).squeeze(0).unsqueeze(-1).expand(-1, params.ishock.size(0))#G, 5
@@ -93,8 +99,8 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
         print(f"epoch: {epoch}, avg_val_loss: {avg_val_loss}")
         
 def gm_fn(grid, dist, nn):
-    gm_tmp = nn.gm_model(grid.unsqueeze(-1))
-    gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
+    gm_tmp = nn.gm_model(grid.unsqueeze(-1))#batch, k_grid, 1
+    gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)#batch, 1
     return gm.squeeze(-1)
 
 def policy_fn(ashock, ishock, grid_k, dist_k, nn):
@@ -152,9 +158,9 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
 class NextGMDataset(Dataset):
     def __init__(self, gm, ashock):
         # 入力: gm[:, :-1], ターゲット: gm[:, 1:]
-        inputs = gm[100:-1]
-        targets = gm[101:]
-        ashock_reshaped = ashock[100:-1]
+        inputs = gm[:-1]
+        targets = gm[1:]
+        ashock_reshaped = ashock[:-1]
         
         # 2列のテンソルに結合
         self.data = torch.stack((inputs, ashock_reshaped, targets), dim=-1)  # shape: (num_samples * (T-1), 3)
@@ -181,9 +187,9 @@ def next_gm_train(data, nn, params, optimizer, T, num_sample, epochs, save_plot_
     
     with torch.no_grad():
         ashock = torch.tensor(data["ashock"], dtype=TORCH_DTYPE)
-        dist = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["grid_k"]]
+        dist = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["dist_k"]]
         dist = torch.stack(dist, dim=0)
-        grid = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["dist_k"]]
+        grid = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["grid_k"]]
         grid = torch.stack(grid, dim=0)
         nn.gm_model.to("cpu")
         gm = gm_fn(grid, dist, nn)
@@ -307,19 +313,19 @@ class MyDataset(Dataset):
             self.data['ishock'] = ishock
         if grid is not None:
             grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
-            self.data['grid'] = torch.stack(grid, dim=0)[100:, :,:]
+            self.data['grid'] = torch.stack(grid, dim=0)
             
         if dist is not None:
             dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
-            self.data['dist'] = torch.stack(dist, dim=0)[100:, :,:]
+            self.data['dist'] = torch.stack(dist, dim=0)
         
         if grid_k is not None:
             grid_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid_k]
-            self.data['grid_k'] = torch.stack(grid_k, dim=0)[100:, :]
+            self.data['grid_k'] = torch.stack(grid_k, dim=0)
         
         if dist_k is not None:
             dist_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist_k]
-            self.data['dist_k'] = torch.stack(dist_k, dim=0)[100:, :]
+            self.data['dist_k'] = torch.stack(dist_k, dim=0)
         
 
     def __len__(self):

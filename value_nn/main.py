@@ -28,10 +28,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class ValueNN(nn.Module):
     def __init__(self, d_in):
         super(ValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 32)
-        self.fc4 = nn.Linear(32, 1)
+        self.fc1 = nn.Linear(d_in, 24)
+        self.fc2 = nn.Linear(24, 24)
+        self.fc3 = nn.Linear(24, 24)
+        self.fc4 = nn.Linear(24, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
     
@@ -61,10 +61,10 @@ class GeneralizedMomModel(nn.Module):
 class NextkNN(nn.Module):
     def __init__(self, d_in):
         super(NextkNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 32)
-        self.fc4 = nn.Linear(32, 1)
+        self.fc1 = nn.Linear(d_in, 24)
+        self.fc2 = nn.Linear(24, 24)
+        self.fc3 = nn.Linear(24, 24)
+        self.fc4 = nn.Linear(24, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
@@ -136,9 +136,9 @@ class nn_class:
         params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(params_value, lr=0.0001)
-        self.optimizer_pol = optim.Adam(params_policy, lr=0.0001)
-        self.optimizer_pri = optim.Adam(params_price, lr=0.0001)
+        self.optimizer_val = optim.Adam(params_value, lr=0.0005)
+        self.optimizer_pol = optim.Adam(params_policy, lr=0.005)
+        self.optimizer_pri = optim.Adam(params_price, lr=0.00005)
         self.optimizer_next_gm = optim.Adam(params_next_gm, lr=0.001)
 
 def initialize_weights(model):
@@ -170,15 +170,12 @@ dataset_grid = vi.get_dataset(params, 1000, n_model, 10, init_price)
 train_ds = basic_dataset(dataset_grid)
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price)
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10, init_price)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 200, 64, 900, 1e-5)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 200, 64, 1000, 1e-5)
 #pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
 #pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 200, 128, 900, 1e-5)
-#train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-#pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 100, 128, 900, 1e-5)
-#pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
-#vi.policy_iter(train_ds.data, params    , n_model.optimizer_pol, n_model, 1000, 10, price=True)
-#train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+#pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
+
 
 #for _ in range(10):
 count = 0
@@ -187,15 +184,20 @@ loss_policy = []
 for _ in range(50):
     #params.B = 0.06
     count += 1
-    loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10)
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10)
-    pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
+    if count < 4:
+        init_price = 3.5
+    else:
+        init_price = None
+    
+    loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, p_init=init_price)
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price)
     loss_value.append(loss_v)
     loss_policy.append(loss_p)
-    #pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
+    pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
     if count % 3 == 0:
         for _ in range(3):
-            pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 200, 64, 900, 1e-5)
+            pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 200, 64, 1000, 1e-5)
+            pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
             train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #params.B = 0.0083
