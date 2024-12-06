@@ -558,12 +558,12 @@ def get_dataset(params, T, nn, num_sample, p_init=None):
         a = a_new  # Update aggregate shock if necessary
     move_models_to_device(nn, "cuda")
 
-    return {
-        "grid": k_history,
-        "dist": dist_history,
-        "dist_k": dist_k_history,
-        "grid_k": grid_k_history,
-        "ashock": ashock_history,
+     return {
+        "grid": k_history[100:],         # 100番目から最後まで
+        "dist": dist_history[100:],      # 100番目から最後まで
+        "dist_k": dist_k_history[100:],  # 100番目から最後まで
+        "grid_k": grid_k_history[100:],  # 100番目から最後まで
+        "ashock": ashock_history[100:],  # 100番目から最後まで
     }
 
 
