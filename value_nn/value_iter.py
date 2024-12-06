@@ -9,6 +9,7 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import Dataset, DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 import pred_train as pred
+from param import params
 
 DTYPE = "float32"
 if DTYPE == "float64":
@@ -145,28 +146,32 @@ def padding(list_of_arrays):
     return data
 
 def value_fn(train_data, nn, params):
-    gm_tmp = nn.gm_model(train_data["grid_k"].unsqueeze(-1))
+    grid_norm = (train_data["grid_k"] - params.k_grid_mean) / params.k_grid_std
+    gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * train_data["dist_k"].unsqueeze(-1), dim=-2)
     state = torch.cat([train_data["k_cross"].unsqueeze(-1), train_data["ashock"].unsqueeze(-1), train_data["ishock"].unsqueeze(-1), gm], dim=1)
     value = nn.value0(state)
     return value
 
 def policy_fn(ashock, ishock,  grid, dist, nn):
-    gm_tmp = nn.gm_model_policy(grid.unsqueeze(-1))
+    grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
+    gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=1)#エラー出ると思う。
     next_k = nn.policy(state)
     return next_k
 
 def policy_fn_sim(ashock, ishock, grid_k, dist_k, nn):
-    gm_tmp = nn.gm_model_policy(grid_k.unsqueeze(-1))
+    grid_norm = (grid_k - params.k_grid_mean) / params.k_grid_std
+    gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)#batch, i, 1
     state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=-1)
     next_k = nn.policy(state)
     return next_k
 
 def price_fn(grid, dist, ashock, nn):
-    gm_tmp = nn.gm_model_price(grid.unsqueeze(-1))
+    grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
+    gm_tmp = nn.gm_model_price(grid_norm.unsqueeze(-1))
     gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     state = torch.cat([ashock.unsqueeze(-1), gm_price], dim=1)
     price = nn.price_model(state)
@@ -293,7 +298,8 @@ def get_profit(k_cross, ashock, ishock, price, params):
     return v0temp*price.squeeze(-1)
 
 def dist_gm(grid, dist, ashock, nn):
-    gm_tmp = nn.gm_model(grid.unsqueeze(-1))
+    grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
+    gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     state = torch.cat([ashock.unsqueeze(-1), gm], dim=1)
     next_gm = nn.next_gm_model(state)

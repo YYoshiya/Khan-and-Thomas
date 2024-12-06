@@ -7,10 +7,11 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import Dataset, DataLoader, random_split
+from torch.optim.lr_scheduler import StepLR
 import matplotlib.pyplot as plt
 import seaborn as sns
 import value_iter as vi
-from param import KTParam as params
+from param import params
 
 sns.set(style="whitegrid")
 
@@ -68,41 +69,85 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     return total_loss
 
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
-    ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).squeeze(0).unsqueeze(-1).expand(-1, params.ishock.size(0))#G, 5
-    ishock_data = params.ishock.unsqueeze(0).expand(T, -1)#G, 5
-    dataset = MyDataset(grid=data["grid"], dist=data["dist"], grid_k=data["grid_k"], dist_k=data["dist_k"], ashock=ashock_data, ishock=ishock_data)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # 学習率の初期設定（例: 0.0005）
+    initial_lr = 0.0005
+    # 最終的な学習率（例: 0.00001）
+    final_lr = 0.0001
+
+    # オプティマイザの設定（例: Adam）
+    optimizer = torch.optim.Adam(nn.params_price, lr=initial_lr)
+
+    # 必要に応じて学習率スケジューラを設定
+    # scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
+
+    # データ準備
+    ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).squeeze(0).unsqueeze(-1).expand(-1, params.ishock.size(0))
+    ishock_data = params.ishock.unsqueeze(0).expand(T, -1)
+    dataset = MyDataset(grid=data["grid"], dist=data["dist"], grid_k=data["grid_k"], dist_k=data["dist_k"],
+                       ashock=ashock_data, ishock=ishock_data)
     valid_size = 64
     train_size = len(dataset) - valid_size
     train_data, valid_data = random_split(dataset, [train_size, valid_size])
     train_loader = DataLoader(train_data, batch_size, shuffle=True)
     valid_loader = DataLoader(valid_data, 32, shuffle=True)
+
     avg_val_loss = 100
     epoch = 0
+
+    # 学習率調整フラグ
+    lr_adjusted = False
+
     while avg_val_loss > threshold and epoch < num_epochs:
         epoch += 1
         loss_list = []
-        for i, train_data in enumerate(train_loader):
-            
-            train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
+
+        # トレーニングフェーズ
+        nn.price_model.train()  
+        nn.gm_model_price.train()# モデルをトレーニングモードに設定
+        for i, batch_data in enumerate(train_loader):
+            # データをデバイスに移動
+            batch_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in batch_data.items()}
             optimizer.zero_grad()
-            loss = price_loss(nn, train_data, params)
+            loss = price_loss(nn, batch_data, params)
             loss.backward()
             optimizer.step()
+
+        # バリデーションフェーズ
+        nn.price_model.eval()  
+        nn.gm_model_price.eval()  # モデルを評価モードに設定
         with torch.no_grad():
-            for valid_data in valid_loader:
-                valid_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in valid_data.items()}
-                loss = price_loss(nn, valid_data, params)
-                loss_list.append(loss)
-            avg_val_loss = sum(loss_list) / len(loss_list)
-        print(f"epoch: {epoch}, avg_val_loss: {avg_val_loss}")
+            val_losses = []
+            for v_data in valid_loader:
+                v_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in v_data.items()}
+                val_loss = price_loss(nn, v_data, params)
+                val_losses.append(val_loss.item())
+            avg_val_loss = sum(val_losses) / len(val_losses)
+
+        print(f"Epoch: {epoch}, Avg Val Loss: {avg_val_loss:.6f}, LR: {optimizer.param_groups[0]['lr']}")
+
+        # 学習率の調整条件
+        if not lr_adjusted and avg_val_loss < 0.02:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = final_lr
+            lr_adjusted = True  # フラグを設定して再度の調整を防ぐ
+            print(f"Learning rate adjusted to {final_lr}")
+
+        # もし他のスケジューラを使用する場合はここで step() を呼び出す
+        # scheduler.step()
+
+    print("Training completed.")
         
 def gm_fn(grid, dist, nn):
-    gm_tmp = nn.gm_model(grid.unsqueeze(-1))#batch, k_grid, 1
+    grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
+    gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))#batch, k_grid, 1
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)#batch, 1
     return gm.squeeze(-1)
 
 def policy_fn(ashock, ishock, grid_k, dist_k, nn):
-    gm_tmp = nn.gm_model_policy(grid_k.unsqueeze(-1))
+    grid_norm = (grid_k - params.k_grid_mean) / params.k_grid_std
+    gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)
     state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=-1)
     next_k = nn.policy(state)

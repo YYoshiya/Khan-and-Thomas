@@ -41,6 +41,8 @@ class KTParam():
         start = torch.log10(torch.tensor(0.1))
         end = torch.log10(torch.tensor(8))
         self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
+        self.k_grid_mean = self.k_grid_tmp.mean()
+        self.k_grid_std = self.k_grid_tmp.std()
         
         self.k_grid = self.k_grid_tmp.view(-1, 1).repeat(1, self.nz)
         self.K_grid_np = np.linspace(0.1, 3, 10)
@@ -56,6 +58,6 @@ class KTParam():
         self.penalty_weight = 30000
         self.negative_Cagg_weight = 1000
 
-
+params = KTParam()
 
 
