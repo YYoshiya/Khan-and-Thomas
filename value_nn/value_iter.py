@@ -187,7 +187,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
             next_k = nn.policy(train_data['X']).squeeze(-1)
-            target = torch.full_like(next_k, 2, dtype=TORCH_DTYPE).to(device)
+            target = torch.full_like(next_k, 2.0, dtype=TORCH_DTYPE).to(device)
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
             loss.backward()
@@ -211,9 +211,9 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
-            optimizer.zero_grad()
             next_v, _ = next_value(train_data, nn, params, "cuda", p_init=p_init)
             loss = -torch.mean(next_v)
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             if countp % 100 == 0:
@@ -307,18 +307,16 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     else:
         price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
     next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"],nn)
-    ashock_ts = torch.tensor(params.ashock, dtype=TORCH_DTYPE).to(device)
-    ishock_ts = torch.tensor(params.ishock, dtype=TORCH_DTYPE).to(device)
     ashock = train_data["ashock"]
-    ashock_idx = [torch.where(ashock_ts == val)[0].item() for val in ashock]
-    ashock_exp = torch.tensor(params.pi_a[ashock_idx], dtype=TORCH_DTYPE).unsqueeze(-1).to(device)
+    ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
+    ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)
     ishock = train_data["ishock"]
-    ishock_idx = [torch.where(ishock_ts == val)[0].item() for val in ishock]
-    ishock_exp = torch.tensor(params.pi_i[ishock_idx], dtype=TORCH_DTYPE).unsqueeze(1).to(device)
+    ishock_idx = [torch.where(params.ishock_gpu == val)[0].item() for val in ishock]
+    ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
     probabilities = ashock_exp * ishock_exp
     
     next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], nn)#batch, 
-    a_mesh, i_mesh = torch.meshgrid(ashock_ts, ishock_ts, indexing='ij')
+    a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
     a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
     i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
     next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1

@@ -53,21 +53,19 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     ynow = ashock_3d*ishock_3d * data["grid"]**params.theta * nnow**params.nu
     ynow_check = ynow[0, :, :]
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
-    #penalty_weight = 50000
-    #penalty = torch.mean(torch.relu(min_Iagg - Iagg) * penalty_weight)
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
     Cagg = Yagg - Iagg#batch
     Cagg = torch.clamp(Cagg, min=0.1)
     target = 1 / Cagg
     loss = F.huber_loss(price, target.unsqueeze(-1))
-    min_Iagg = params.min_Iagg  # Define a minimum threshold in params
-    penalty_weight = params.penalty_weight  # Define penalty weight in params
-    penalty = torch.relu(min_Iagg - Iagg)  # batch
-    penalty = penalty * penalty_weight 
-    penalty_Iagg = torch.mean(penalty)
+    #min_Iagg = params.min_Iagg  # Define a minimum threshold in params
+    #penalty_weight = params.penalty_weight  # Define penalty weight in params
+    #penalty = torch.relu(min_Iagg - Iagg)  # batch
+    #penalty = penalty * penalty_weight 
+    #penalty_Iagg = torch.mean(penalty)
     # Combine the main loss with the penalty
-    total_loss = loss + penalty_Iagg
-    return total_loss
+    #total_loss = loss + penalty_Iagg
+    return loss
 
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
     ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).squeeze(0).unsqueeze(-1).expand(-1, params.ishock.size(0))#G, 5
