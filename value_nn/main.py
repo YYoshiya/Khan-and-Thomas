@@ -170,10 +170,10 @@ dataset_grid = vi.get_dataset(params, 1000, n_model, 10, init_price)
 train_ds = basic_dataset(dataset_grid)
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 900, 10, p_init=init_price)
 train_ds.data = vi.get_dataset(params, 1000, n_model, 10, init_price)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 500, 64, 900, 1e-5)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 300, 32, 900, 1e-5)
 pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 900, 10, 30)
-train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 500, 128, 900, 1e-5)
+#train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
+#pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 300, 128, 900, 1e-5)
 #pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
 
 
@@ -192,7 +192,7 @@ for _ in range(50):
     #loss_policy.append(loss_p)
     if count % 3 == 0:
         for _ in range(2):
-            pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 500, 64, 900, 1e-5)
+            pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 300, 32, 900, 1e-5)
             train_ds.data = vi.get_dataset(params, 1000, n_model, 10)
     #pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
     
