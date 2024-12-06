@@ -79,10 +79,10 @@ class NextkNN(nn.Module):
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 128)
-        self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, 64)
-        self.output = nn.Linear(64, 1)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, 32)
+        self.output = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
