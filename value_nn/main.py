@@ -79,28 +79,28 @@ class NextkNN(nn.Module):
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 64)
+        self.fc1 = nn.Linear(d_in, 128)
+        self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, 32)
         self.output = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
-        x = self.softplus(self.output(x))
+        x = self.tanh(self.fc1(x))
+        x = self.tanh(self.fc2(x))
+        x = self.tanh(self.fc3(x))
+        x = self.output(x)
         return x
 
 
 class Next_gmNN(nn.Module):
     def __init__(self, d_in):
         super(Next_gmNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 32)
-        self.output = nn.Linear(32, 1)
+        self.fc1 = nn.Linear(d_in, 24)
+        self.fc2 = nn.Linear(24, 24)
+        self.fc3 = nn.Linear(24, 24)
+        self.output = nn.Linear(24, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
@@ -136,8 +136,8 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.00001)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00001)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.0001)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0001)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.0005)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
 
@@ -160,7 +160,7 @@ n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
 n_model.price_model.apply(initialize_weights)
 
-init_price = 2.5
+init_price = 2.15
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -169,10 +169,10 @@ vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
 
 dataset_grid = vi.get_dataset(params, 1000, n_model, init_price, mean)
 train_ds = basic_dataset(dataset_grid)
-vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 900, 10, p_init=init_price, mean=mean)
-train_ds.data = vi.get_dataset(params, 1000, n_model, init_price, mean)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 300, 32, 900, 1e-5, mean)
-pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 900, 10, 30)
+#vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 900, 10, p_init=init_price, mean=mean)
+#train_ds.data = vi.get_dataset(params, 1000, n_model, init_price, mean)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 300, 128, 1000, 1e-5, mean)
+pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
 
 
 
@@ -183,14 +183,13 @@ loss_policy = []
 for _ in range(50):
 
     count += 1
-    
-    loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 900, 10, mean=mean)
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 900, 10, mean=mean)
-    pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 900, 10, 100)
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+    loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 60)
     loss_value.append(loss_v)
     #loss_policy.append(loss_p)
-    if count % 3 == 0:
-        for _ in range(2):
-            pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 300, 32, 900, 1e-5, mean)
-            train_ds.data = vi.get_dataset(params, 1000, n_model, mean=mean)
+    if count % 5 == 0:
+        pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 200, 128, 1000, 1e-5, mean)
+        train_ds.data = vi.get_dataset(params, 1000, n_model, mean=mean, init_dist=True)
+        pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 200, 128, 1000, 1e-5, mean)    
   

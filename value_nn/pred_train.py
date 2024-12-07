@@ -134,7 +134,7 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
             lr_stage = 1
             print(f"Learning rate adjusted to mid_lr: {mid_lr}")
         
-        elif lr_stage == 1 and avg_val_loss < 0.02:
+        elif lr_stage == 1 and avg_val_loss < 0.005:
             for param_group in optimizer.param_groups:
                 param_group['lr'] = final_lr
             lr_stage = 2
@@ -146,13 +146,13 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
 
         
 def gm_fn(grid, dist, nn):
-    grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
+    grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))#batch, k_grid, 1
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)#batch, 1
     return gm.squeeze(-1)
 
 def policy_fn(ashock, ishock, grid_k, dist_k, nn):
-    grid_norm = (grid_k - params.k_grid_mean) / params.k_grid_std
+    grid_norm = (grid_k - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)
     state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=-1)
