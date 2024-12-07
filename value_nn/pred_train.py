@@ -56,34 +56,31 @@ def price_loss(nn, data, params, mean):#k_gridに関してxiを求める他は�
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
     Cagg = Yagg - Iagg#batch
-    Cagg = torch.clamp(Cagg, min=0.1)
     target = 1 / Cagg
-    loss = F.huber_loss(price, target.unsqueeze(-1))
-    min_Iagg = params.min_Iagg  # Define a minimum threshold in params
-    penalty_weight = params.penalty_weight  # Define penalty weight in params
-    penalty = torch.relu(min_Iagg - Iagg)  # batch
-    penalty = penalty * penalty_weight 
-    penalty_Iagg = torch.mean(penalty)
+    loss = F.mse_loss(price, target.unsqueeze(-1))
+    #min_Iagg = params.min_Iagg  # Define a minimum threshold in params
+    #penalty_weight = params.penalty_weight  # Define penalty weight in params
+    #penalty = torch.relu(min_Iagg - Iagg)  # batch
+    #penalty = penalty * penalty_weight 
+    #penalty_Iagg = torch.mean(penalty)
+    penalty_Cagg =  torch.mean(torch.exp(- (Cagg - 0) * 5))
     # Combine the main loss with the penalty
-    total_loss = loss + penalty_Iagg
-    return total_loss
+    loss_total = loss + penalty_Cagg
+    return loss_total
 
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold, mean=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 学習率の初期設定（例: 0.0005）
-    initial_lr = 0.0005
-    # 最終的な学習率（例: 0.00001）
-    final_lr = 0.0001
+    # 学習率の設定
+    initial_lr = 0.001
+    mid_lr = 0.0005
+    final_lr = 0.00001
 
-    # オプティマイザの設定（例: Adam）
+    # オプティマイザの設定
     if mean is None:
         optimizer = torch.optim.Adam(nn.params_price, lr=initial_lr)
     else:
         optimizer = torch.optim.Adam(nn.price_model.parameters(), lr=initial_lr)
-
-    # 必要に応じて学習率スケジューラを設定
-    # scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
     # データ準備
     ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).squeeze(0).unsqueeze(-1).expand(-1, params.ishock.size(0))
@@ -94,13 +91,13 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
     train_size = len(dataset) - valid_size
     train_data, valid_data = random_split(dataset, [train_size, valid_size])
     train_loader = DataLoader(train_data, batch_size, shuffle=True)
-    valid_loader = DataLoader(valid_data, 32, shuffle=True)
+    valid_loader = DataLoader(valid_data, 32, shuffle=False)
 
-    avg_val_loss = 100
+    avg_val_loss = float('inf')
     epoch = 0
 
-    # 学習率調整フラグ
-    lr_adjusted = False
+    # 学習率調整ステージ管理
+    lr_stage = 0  # 0: initial_lr, 1: mid_lr, 2: final_lr
 
     while avg_val_loss > threshold and epoch < num_epochs:
         epoch += 1
@@ -108,7 +105,7 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
 
         # トレーニングフェーズ
         nn.price_model.train()  
-        nn.gm_model_price.train()# モデルをトレーニングモードに設定
+        nn.gm_model_price.train()
         for i, batch_data in enumerate(train_loader):
             # データをデバイスに移動
             batch_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in batch_data.items()}
@@ -119,7 +116,7 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
 
         # バリデーションフェーズ
         nn.price_model.eval()  
-        nn.gm_model_price.eval()  # モデルを評価モードに設定
+        nn.gm_model_price.eval()
         with torch.no_grad():
             val_losses = []
             for v_data in valid_loader:
@@ -130,17 +127,23 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
 
         print(f"Epoch: {epoch}, Avg Val Loss: {avg_val_loss:.6f}, LR: {optimizer.param_groups[0]['lr']}")
 
-        # 学習率の調整条件
-        if not lr_adjusted and avg_val_loss < 0.02:
+        # 学習率の調整
+        if lr_stage == 0 and avg_val_loss < 0.5:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = mid_lr
+            lr_stage = 1
+            print(f"Learning rate adjusted to mid_lr: {mid_lr}")
+        
+        elif lr_stage == 1 and avg_val_loss < 0.02:
             for param_group in optimizer.param_groups:
                 param_group['lr'] = final_lr
-            lr_adjusted = True  # フラグを設定して再度の調整を防ぐ
-            print(f"Learning rate adjusted to {final_lr}")
+            lr_stage = 2
+            print(f"Learning rate adjusted to final_lr: {final_lr}")
 
-        # もし他のスケジューラを使用する場合はここで step() を呼び出す
-        # scheduler.step()
+        # 学習率をさらに調整する条件を追加する場合はここに記述
 
     print("Training completed.")
+
         
 def gm_fn(grid, dist, nn):
     grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
