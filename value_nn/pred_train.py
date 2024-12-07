@@ -56,18 +56,18 @@ def price_loss(nn, data, params, mean):#k_gridに関してxiを求める他は�
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
     Cagg = Yagg - Iagg#batch
+    Cagg = torch.clamp(Cagg, min=0.1)
     target = 1 / Cagg
-    loss = F.mse_loss(price, target.unsqueeze(-1))
+    loss = F.huber_loss(price, target.unsqueeze(-1))
     #min_Iagg = params.min_Iagg  # Define a minimum threshold in params
     #penalty_weight = params.penalty_weight  # Define penalty weight in params
     #penalty = torch.relu(min_Iagg - Iagg)  # batch
     #penalty = penalty * penalty_weight 
     #penalty_Iagg = torch.mean(penalty)
-    penalty_Cagg =  torch.mean(torch.exp(- (Cagg - 0) * 5))
-    # Combine the main loss with the penalty
-    loss_total = loss + penalty_Cagg
-    return loss_total
 
+    # Combine the main loss with the penalty
+    #loss_total = loss + penalty_Cagg
+    return loss
 def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold, mean=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

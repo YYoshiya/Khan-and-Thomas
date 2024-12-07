@@ -56,7 +56,7 @@ class KTParam():
         
         self.min_Iagg = 1e-4
         self.penalty_weight = 10000
-        self.negative_Cagg_weight = 1000
+        self.negative_Cagg_weight = 10
 
 params = KTParam()
 
