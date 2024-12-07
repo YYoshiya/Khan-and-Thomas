@@ -73,41 +73,43 @@ class NextkNN(nn.Module):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
-        x = self.softplus(self.fc4(x))
+        x = self.fc4(x)
         return x
     
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 32)
+        self.fc1 = nn.Linear(d_in, 32)
+        self.fc2 = nn.Linear(32,32)
+        self.fc3 = nn.Linear(32, 32)
+        self.fc4 = nn.Linear(32, 32)
         self.output = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
+        self.leakyrelu = nn.LeakyReLU()
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
-        x = self.softplus(self.output(x))
+        x = self.tanh(self.fc1(x))
+        x = self.tanh(self.fc2(x))
+        x = self.tanh(self.fc3(x))
+        #x = self.tanh(self.fc4(x))
+        x = self.output(x)
         return x
 
 
 class Next_gmNN(nn.Module):
     def __init__(self, d_in):
         super(Next_gmNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 32)
-        self.output = nn.Linear(32, 1)
+        self.fc1 = nn.Linear(d_in, 24)
+        self.fc2 = nn.Linear(24, 24)
+        self.fc3 = nn.Linear(24, 24)
+        self.output = nn.Linear(24, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
     def forward(self, x):
         x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
+        #x = self.relu(self.fc2(x))
         x = self.output(x)
         return x
 
@@ -129,7 +131,7 @@ class nn_class:
         self.gm_model_policy = GeneralizedMomModel(1).to(self.device)
         self.next_gm_model = Next_gmNN(2).to(self.device)
         self.gm_model_price = GeneralizedMomModel(1).to(self.device)
-        self.price_model = PriceNN(2).to(self.device)
+        self.price_model = PriceNN(6).to(self.device)
         self.params_value = list(self.value0.parameters()) + list(self.gm_model.parameters())
         self.params_policy = list(self.policy.parameters()) + list(self.gm_model_policy.parameters())
         self.params_price = list(self.gm_model_price.parameters()) + list(self.price_model.parameters())

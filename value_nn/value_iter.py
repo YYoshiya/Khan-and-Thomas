@@ -59,11 +59,13 @@ class MyDataset(Dataset):
             self.data['ishock'] = ishock
         if grid is not None:
             grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
-            self.data['grid'] = torch.stack(grid, dim=0).repeat(num_sample, 1)
+            grid_tmp = torch.stack(grid, dim=0).repeat(num_sample, 1, 1)
+            self.data['grid'] = torch.permute(grid_tmp, (0, 2, 1))
             
         if dist is not None:
             dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
-            self.data['dist'] = torch.stack(dist, dim=0).repeat(num_sample, 1)
+            dist_tmp = torch.stack(dist, dim=0).repeat(num_sample, 1, 1)
+            self.data['dist'] = torch.permute(dist_tmp, (0, 2, 1))
         
         if grid_k is not None:
             grid_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid_k]
@@ -146,7 +148,7 @@ def padding(list_of_arrays):
     return data
 
 def value_fn(train_data, nn, params):
-    grid_norm = (train_data["grid_k"] - params.k_grid_mean) / params.k_grid_std
+    grid_norm = (train_data["grid_k"] - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * train_data["dist_k"].unsqueeze(-1), dim=-2)
     state = torch.cat([train_data["k_cross"].unsqueeze(-1), train_data["ashock"].unsqueeze(-1), train_data["ishock"].unsqueeze(-1), gm], dim=1)
@@ -154,7 +156,7 @@ def value_fn(train_data, nn, params):
     return value
 
 def policy_fn(ashock, ishock,  grid, dist, nn):
-    grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
+    grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=1)#エラー出ると思う。
@@ -162,7 +164,7 @@ def policy_fn(ashock, ishock,  grid, dist, nn):
     return next_k
 
 def policy_fn_sim(ashock, ishock, grid_k, dist_k, nn):
-    grid_norm = (grid_k - params.k_grid_mean) / params.k_grid_std
+    grid_norm = (grid_k - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)#batch, i, 1
     state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=-1)
@@ -174,11 +176,12 @@ def price_fn(grid, dist, ashock, nn, mean=None):
         mean = torch.sum(grid * dist, dim=-1)
         state = torch.stack([ashock, mean], dim=1)
     else:
-        grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
-        gm_tmp = nn.gm_model_price(grid_norm.unsqueeze(-1))
-        gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-        state = torch.cat([ashock.unsqueeze(-1), gm_price], dim=1)
-    price = nn.price_model(state)
+        grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
+        ashock_norm = (ashock - params.shock_min) / (params.shock_max - params.shock_min)
+        gm_tmp = nn.gm_model_price(grid_norm.unsqueeze(-1))#batch, i_size, k_grid_size,1
+        gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=(-1, -2))#batch, i_size
+        state = torch.cat([ashock_norm.unsqueeze(-1), gm_price], dim=1)#batch, i_size+1
+    price = nn.price_model(state)#batch, 1
     return price
 
 
@@ -213,7 +216,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
-    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid_k=data["grid_k"], dist_k=data["dist_k"])
+    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
     for epoch in range(10):
@@ -239,7 +242,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
-    dataset = MyDataset(num_sample, k_cross, ashock, ishock, grid_k=data["grid_k"], dist_k=data["dist_k"])
+    dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countv = 0
     for epoch in range(10):
@@ -247,7 +250,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
             with torch.no_grad():
-                price = price_fn(train_data["grid_k"],train_data["dist_k"], train_data["ashock"], nn, mean=mean)
+                price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn, mean=mean)
                 if p_init is not None:
                     price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
                 #入力は分布とashockかな。
@@ -302,7 +305,7 @@ def get_profit(k_cross, ashock, ishock, price, params):
     return v0temp*price.squeeze(-1)
 
 def dist_gm(grid, dist, ashock, nn):
-    grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
+    grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     state = torch.cat([ashock.unsqueeze(-1), gm], dim=1)
@@ -315,7 +318,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
     if p_init is not None:
         price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
     else:
-        price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn, mean=mean)
+        price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn, mean=mean)
     next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"],nn)
     ashock = train_data["ashock"]
     ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
@@ -357,7 +360,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
 def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     G = train_data["grid_k"].size(0)  # grid のサイズ
     i_size = params.ishock.size(0)  # i のサイズ
-    price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0], nn, mean=mean)#G,1
+    price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"][:,0], nn, mean=mean)#G,1
     if p_init is not None:
         price = torch.full_like(price, p_init, dtype=TORCH_DTYPE)
     next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0],nn)#G,1
@@ -397,6 +400,103 @@ def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(1).expand(-1, i_size) * price.expand(G, i_size) + params.beta * expected_value1
     
     return e0, e1
+
+def get_dataset(params, T, nn, p_init=None, mean=None):
+    move_models_to_device(nn, "cpu")
+    i_size = params.ishock.size(0)
+    grid_size = params.grid_size
+
+    # Initialize distribution over capital and idiosyncratic shocks
+    dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=params.pi_i.dtype)
+    k_now = params.k_grid  # (grid_size, nz)
+    dist_now_k = torch.sum(dist_now, dim=1)  # Aggregate over idiosyncratic shocks
+    k_now_k = k_now[:, 0]  # Assuming ashock is scalar for now
+
+    # Initialize aggregate shock 'a'
+    a_value = torch.randint(0, len(params.ashock), (1,))
+    a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=params.pi_i.dtype)
+
+    dist_history = []
+    k_history = []
+    dist_k_history = []
+    grid_k_history = []
+    ashock_history = []
+
+    for t in range(T):
+        grid_size = dist_now.size(0)
+        dist_now_sum = dist_now.sum()
+        # Prepare data for the policy functions
+        basic_s = {
+            "k_cross": k_now_k,  # Current capital grid (G,)
+            "ashock": a,         # Current aggregate shock (G, I)
+            "ishock": params.ishock.unsqueeze(0).expand(grid_size, -1),  # Idiosyncratic shocks (G, I)
+            "grid": k_now.unsqueeze(0).repeat(grid_size, 1, 1).transpose(1, 2),  
+            "dist": dist_now.unsqueeze(0).repeat(grid_size, 1, 1).transpose(1, 2),  
+            "grid_k": k_now_k.unsqueeze(0).repeat(grid_size, 1),         # (G, G)
+            "dist_k": dist_now_k.unsqueeze(0).repeat(grid_size, 1),      # (G, G)
+        }
+
+        # Compute expected values for adjustment decision
+        e0, e1 = next_value_sim(basic_s, nn, params, p_init, mean)  # Returns (G, I) tensors
+        xi_tmp = ((e0 - e1) / params.eta)  # Adjustment condition
+        xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
+        alpha = xi / params.B  # Probability of adjustment (G, I)
+
+        # Policy function for adjusted capital
+        k_prime_adj = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], basic_s["grid_k"], basic_s["dist_k"], nn)  # (G, I, 1)
+        k_prime_adj = k_prime_adj.squeeze(-1)  # (G, I)
+
+        # Capital for non-adjusting agents
+        k_prime_non_adj = (1 - params.delta) * basic_s["k_cross"].unsqueeze(1).expand(-1, i_size)  # (G, I)
+
+        # Map k_prime to the capital grid using the refactored function
+        idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(k_prime_adj, params.k_grid)
+        idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_prime_non_adj, params.k_grid)
+
+        # Initialize new distribution
+        dist_new = torch.zeros_like(dist_now)
+
+        
+        update_distribution(dist_new, dist_now, alpha, idx_adj_lower, idx_adj_upper, weight_adj, params.pi_i, adjusting=True)
+        
+        update_distribution(dist_new, dist_now, alpha, idx_non_adj_lower, idx_non_adj_upper, weight_non_adj, params.pi_i, adjusting=False)
+
+
+
+        dist_sum = dist_new.sum()
+        # Normalize distribution to prevent numerical errors
+        dist_new /= dist_sum
+
+        # Update aggregate capital distribution
+        dist_new_k = dist_new.sum(dim=1)  # Sum over idiosyncratic shocks
+        k_new_k = params.k_grid[:, 0]
+
+        next_a = next_ashock(a[0,0], params.ashock, params.pi_a)
+        a_new = torch.full((grid_size, i_size), next_a.item(), dtype=TORCH_DTYPE)
+        
+
+        # Record history
+        dist_history.append(dist_now.clone())
+        k_history.append(k_now.clone())
+        dist_k_history.append(dist_now_k.clone())
+        grid_k_history.append(k_now_k.clone())
+        ashock_history.append(a[0, 0].item())  # Record scalar 'a'
+
+        # Update for the next iteration
+        dist_now = dist_new
+        k_now = k_now  # Capital grid remains the same
+        dist_now_k = dist_new_k
+        k_now_k = k_new_k
+        a = a_new  # Update aggregate shock if necessary
+    move_models_to_device(nn, "cuda")
+
+    return {
+        "grid": k_history[100:],         # 100番目から最後まで
+        "dist": dist_history[100:],      # 100番目から最後まで
+        "dist_k": dist_k_history[100:],  # 100番目から最後まで
+        "grid_k": grid_k_history[100:],  # 100番目から最後まで
+        "ashock": ashock_history[100:],  # 100番目から最後まで
+    }
     
 def map_to_grid(k_prime, k_grid):
     """
@@ -481,100 +581,6 @@ def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight,
 
     
 
-def get_dataset(params, T, nn, p_init=None, mean=None):
-    move_models_to_device(nn, "cpu")
-    i_size = params.ishock.size(0)
-    grid_size = params.grid_size
-
-    # Initialize distribution over capital and idiosyncratic shocks
-    dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=params.pi_i.dtype)
-    k_now = params.k_grid  # (grid_size, nz)
-    dist_now_k = torch.sum(dist_now, dim=1)  # Aggregate over idiosyncratic shocks
-    k_now_k = k_now[:, 0]  # Assuming ashock is scalar for now
-
-    # Initialize aggregate shock 'a'
-    a_value = torch.randint(0, len(params.ashock), (1,))
-    a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=params.pi_i.dtype)
-
-    dist_history = []
-    k_history = []
-    dist_k_history = []
-    grid_k_history = []
-    ashock_history = []
-
-    for t in range(T):
-        grid_size = dist_now.size(0)
-        dist_now_sum = dist_now.sum()
-        # Prepare data for the policy functions
-        basic_s = {
-            "k_cross": k_now_k,  # Current capital grid (G,)
-            "ashock": a,         # Current aggregate shock (G, I)
-            "ishock": params.ishock.unsqueeze(0).expand(grid_size, -1),  # Idiosyncratic shocks (G, I)
-            "grid_k": k_now_k.unsqueeze(0).repeat(grid_size, 1),         # (G, G)
-            "dist_k": dist_now_k.unsqueeze(0).repeat(grid_size, 1),      # (G, G)
-        }
-
-        # Compute expected values for adjustment decision
-        e0, e1 = next_value_sim(basic_s, nn, params, p_init, mean)  # Returns (G, I) tensors
-        xi_tmp = ((e0 - e1) / params.eta)  # Adjustment condition
-        xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
-        alpha = xi / params.B  # Probability of adjustment (G, I)
-
-        # Policy function for adjusted capital
-        k_prime_adj = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], basic_s["grid_k"], basic_s["dist_k"], nn)  # (G, I, 1)
-        k_prime_adj = k_prime_adj.squeeze(-1)  # (G, I)
-
-        # Capital for non-adjusting agents
-        k_prime_non_adj = (1 - params.delta) * basic_s["k_cross"].unsqueeze(1).expand(-1, i_size)  # (G, I)
-
-        # Map k_prime to the capital grid using the refactored function
-        idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(k_prime_adj, params.k_grid)
-        idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_prime_non_adj, params.k_grid)
-
-        # Initialize new distribution
-        dist_new = torch.zeros_like(dist_now)
-
-        
-        update_distribution(dist_new, dist_now, alpha, idx_adj_lower, idx_adj_upper, weight_adj, params.pi_i, adjusting=True)
-        
-        update_distribution(dist_new, dist_now, alpha, idx_non_adj_lower, idx_non_adj_upper, weight_non_adj, params.pi_i, adjusting=False)
-
-
-
-        dist_sum = dist_new.sum()
-        # Normalize distribution to prevent numerical errors
-        dist_new /= dist_sum
-
-        # Update aggregate capital distribution
-        dist_new_k = dist_new.sum(dim=1)  # Sum over idiosyncratic shocks
-        k_new_k = params.k_grid[:, 0]
-
-        next_a = next_ashock(a[0,0], params.ashock, params.pi_a)
-        a_new = torch.full((grid_size, i_size), next_a.item(), dtype=TORCH_DTYPE)
-        
-
-        # Record history
-        dist_history.append(dist_now.clone())
-        k_history.append(k_now.clone())
-        dist_k_history.append(dist_now_k.clone())
-        grid_k_history.append(k_now_k.clone())
-        ashock_history.append(a[0, 0].item())  # Record scalar 'a'
-
-        # Update for the next iteration
-        dist_now = dist_new
-        k_now = k_now  # Capital grid remains the same
-        dist_now_k = dist_new_k
-        k_now_k = k_new_k
-        a = a_new  # Update aggregate shock if necessary
-    move_models_to_device(nn, "cuda")
-
-    return {
-        "grid": k_history[100:],         # 100番目から最後まで
-        "dist": dist_history[100:],      # 100番目から最後まで
-        "dist_k": dist_k_history[100:],  # 100番目から最後まで
-        "grid_k": grid_k_history[100:],  # 100番目から最後まで
-        "ashock": ashock_history[100:],  # 100番目から最後まで
-    }
 
 
 
