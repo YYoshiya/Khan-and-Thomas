@@ -169,11 +169,15 @@ def policy_fn_sim(ashock, ishock, grid_k, dist_k, nn):
     next_k = nn.policy(state)
     return next_k
 
-def price_fn(grid, dist, ashock, nn):
-    grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
-    gm_tmp = nn.gm_model_price(grid_norm.unsqueeze(-1))
-    gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock.unsqueeze(-1), gm_price], dim=1)
+def price_fn(grid, dist, ashock, nn, mean=None):
+    if mean is not None:
+        mean = torch.sum(grid * dist, dim=-1)
+        state = torch.stack([ashock, mean], dim=1)
+    else:
+        grid_norm = (grid - params.k_grid_mean) / params.k_grid_std
+        gm_tmp = nn.gm_model_price(grid_norm.unsqueeze(-1))
+        gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
+        state = torch.cat([ashock.unsqueeze(-1), gm_price], dim=1)
     price = nn.price_model(state)
     return price
 
@@ -201,7 +205,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
                 print(f"count: {count}, loss: {loss.item()}")
 
 
-def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
+def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=None):
     for param in nn.value0.parameters():
         param.requires_grad = False
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
@@ -216,7 +220,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
-            next_v, _ = next_value(train_data, nn, params, "cuda", p_init=p_init)
+            next_v, _ = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)
             loss = -torch.mean(next_v)
             optimizer.zero_grad()
             loss.backward()
@@ -229,7 +233,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None):
     return loss.item()
 
 
-def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
+def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=None):
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
@@ -243,13 +247,13 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None):
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
             with torch.no_grad():
-                price = price_fn(train_data["grid_k"],train_data["dist_k"], train_data["ashock"], nn)
+                price = price_fn(train_data["grid_k"],train_data["dist_k"], train_data["ashock"], nn, mean=mean)
                 if p_init is not None:
                     price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
                 #入力は分布とashockかな。
                 wage = params.eta / price
                 profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
-                e0, e1 = next_value(train_data, nn, params, "cuda", p_init=p_init)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+                e0, e1 = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
                 xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
@@ -307,11 +311,11 @@ def dist_gm(grid, dist, ashock, nn):
 
 
 
-def next_value(train_data, nn, params, device, grid=None, p_init=None):
+def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None):
     if p_init is not None:
         price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
     else:
-        price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
+        price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn, mean=mean)
     next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"],nn)
     ashock = train_data["ashock"]
     ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
@@ -350,10 +354,10 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None):
     return e0, e1
 
 
-def next_value_sim(train_data, nn, params, p_init=None):
+def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     G = train_data["grid_k"].size(0)  # grid のサイズ
     i_size = params.ishock.size(0)  # i のサイズ
-    price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0], nn)#G,1
+    price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0], nn, mean=mean)#G,1
     if p_init is not None:
         price = torch.full_like(price, p_init, dtype=TORCH_DTYPE)
     next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0],nn)#G,1
@@ -477,7 +481,7 @@ def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight,
 
     
 
-def get_dataset(params, T, nn, num_sample, p_init=None):
+def get_dataset(params, T, nn, p_init=None, mean=None):
     move_models_to_device(nn, "cpu")
     i_size = params.ishock.size(0)
     grid_size = params.grid_size
@@ -511,7 +515,7 @@ def get_dataset(params, T, nn, num_sample, p_init=None):
         }
 
         # Compute expected values for adjustment decision
-        e0, e1 = next_value_sim(basic_s, nn, params, p_init)  # Returns (G, I) tensors
+        e0, e1 = next_value_sim(basic_s, nn, params, p_init, mean)  # Returns (G, I) tensors
         xi_tmp = ((e0 - e1) / params.eta)  # Adjustment condition
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B  # Probability of adjustment (G, I)

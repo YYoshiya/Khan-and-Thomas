@@ -27,13 +27,13 @@ else:
     raise ValueError("Unknown dtype.")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当でよい。
+def price_loss(nn, data, params, mean):#k_gridに関してxiを求める他は適当でよい。
     eps = 1e-6
     i_size = params.ishock_gpu.size(0)
     max_cols = data["grid"].size(1)
     ashock_3d = data["ashock"].unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size
     ishock_3d = data["ishock"].unsqueeze(1).expand(-1, max_cols, -1)
-    price = vi.price_fn(data["grid_k"], data["dist_k"], data["ashock"][:, 0],nn)
+    price = vi.price_fn(data["grid_k"], data["dist_k"], data["ashock"][:, 0],nn, mean)
     wage = params.eta/price
     wage = wage.unsqueeze(-1).expand(-1, max_cols, i_size)#batch, max_cols, i_size
     e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols, i_size
@@ -68,7 +68,7 @@ def price_loss(nn, data, params):#k_gridに関してxiを求める他は適当�
     total_loss = loss + penalty_Iagg
     return total_loss
 
-def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold):
+def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold, mean=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 学習率の初期設定（例: 0.0005）
@@ -77,7 +77,10 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
     final_lr = 0.0001
 
     # オプティマイザの設定（例: Adam）
-    optimizer = torch.optim.Adam(nn.params_price, lr=initial_lr)
+    if mean is None:
+        optimizer = torch.optim.Adam(nn.params_price, lr=initial_lr)
+    else:
+        optimizer = torch.optim.Adam(nn.price_model.parameters(), lr=initial_lr)
 
     # 必要に応じて学習率スケジューラを設定
     # scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
@@ -110,7 +113,7 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
             # データをデバイスに移動
             batch_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in batch_data.items()}
             optimizer.zero_grad()
-            loss = price_loss(nn, batch_data, params)
+            loss = price_loss(nn, batch_data, params, mean)
             loss.backward()
             optimizer.step()
 
@@ -121,7 +124,7 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
             val_losses = []
             for v_data in valid_loader:
                 v_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in v_data.items()}
-                val_loss = price_loss(nn, v_data, params)
+                val_loss = price_loss(nn, v_data, params, mean)
                 val_losses.append(val_loss.item())
             avg_val_loss = sum(val_losses) / len(val_losses)
 
