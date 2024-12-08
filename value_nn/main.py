@@ -57,6 +57,22 @@ class GeneralizedMomModel(nn.Module):
         x = self.tanh(self.fc3(x))
         x = self.fc4(x)
         return x #このあとこれと分布の内積をとる。
+    
+class Price_GM(nn.Module):
+    def __init__(self, d_in):
+        super(Price_GM, self).__init__()
+        self.fc1 = nn.Linear(d_in, 12)
+        self.fc2 = nn.Linear(12, 12)
+        self.fc3 = nn.Linear(12, 12)
+        self.fc4 = nn.Linear(12, 5)
+        self.relu = nn.ReLU()
+        self.tanh = nn.Tanh()
+    def forward(self, x):
+        x = self.tanh(self.fc1(x))
+        x = self.tanh(self.fc2(x))
+        x = self.tanh(self.fc3(x))
+        x = self.fc4(x)
+        return x #このあとこれと分布の内積をとる。
 
 class NextkNN(nn.Module):
     def __init__(self, d_in):
@@ -79,9 +95,9 @@ class NextkNN(nn.Module):
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 128)
-        self.fc2 = nn.Linear(128,64)
-        self.fc3 = nn.Linear(64, 32)
+        self.fc1 = nn.Linear(d_in, 32)
+        self.fc2 = nn.Linear(32,32)
+        self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 32)
         self.output = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -92,7 +108,7 @@ class PriceNN(nn.Module):
         x = self.tanh(self.fc1(x))
         x = self.tanh(self.fc2(x))
         x = self.tanh(self.fc3(x))
-        x = self.tanh(self.fc4(x))
+        #x = self.tanh(self.fc4(x))
         x = self.output(x)
         return x
 
@@ -130,7 +146,7 @@ class nn_class:
         self.gm_model = GeneralizedMomModel(1).to(self.device)
         self.gm_model_policy = GeneralizedMomModel(1).to(self.device)
         self.next_gm_model = Next_gmNN(2).to(self.device)
-        self.gm_model_price = GeneralizedMomModel(1).to(self.device)
+        self.gm_model_price =Price_GM(5).to(self.device)
         self.price_model = PriceNN(6).to(self.device)
         self.params_value = list(self.value0.parameters()) + list(self.gm_model.parameters())
         self.params_policy = list(self.policy.parameters()) + list(self.gm_model_policy.parameters())
@@ -173,7 +189,7 @@ dataset_grid = vi.get_dataset(params, 1000, n_model, init_price, mean)
 train_ds = basic_dataset(dataset_grid)
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
 train_ds.data = vi.get_dataset(params, 1000, n_model, init_price, mean)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 500, 128, 1000, 1e-5, mean)
+pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 500, 16, 1000, 1e-5, mean)
 pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
 
 

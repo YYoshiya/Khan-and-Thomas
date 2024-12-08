@@ -33,7 +33,7 @@ def price_loss(nn, data, params, mean):#k_gridに関してxiを求める他は�
     max_cols = data["grid"].size(1)
     ashock_3d = data["ashock"].unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size
     ishock_3d = data["ishock"].unsqueeze(1).expand(-1, max_cols, -1)
-    price = vi.price_fn(data["grid"].transpose(1,2), data["dist"].transpose(1,2), data["ashock"][:, 0],nn, mean)
+    price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:, 0],nn, mean)
     wage = params.eta/price
     wage = wage.unsqueeze(-1).expand(-1, max_cols, i_size)#batch, max_cols, i_size
     e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols, i_size
@@ -73,9 +73,9 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 学習率の設定
-    initial_lr = 0.001
-    mid_lr = 0.0005
-    final_lr = 0.00005
+    initial_lr = 0.0005
+    mid_lr = 0.00005
+    final_lr = 0.00001
 
     # オプティマイザの設定
     if mean is None:
@@ -134,7 +134,7 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
                 param_group['lr'] = mid_lr
             lr_stage = 1
             print(f"Learning rate adjusted to mid_lr: {mid_lr}")
-        elif lr_stage == 1 and avg_val_loss < 0.001:
+        elif lr_stage == 1 and avg_val_loss < 0.002:
             for param_group in optimizer.param_groups:
                 param_group['lr'] = final_lr
             lr_stage = 2
@@ -167,7 +167,7 @@ def next_gm_fn(gm, ashock, nn):
 def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     G = data["grid"].size(0)
     i_size = params.ishock_gpu.size(0)
-    price = vi.price_fn(data["grid"].transpose(1,2), data["dist"].transpose(1,2), data["ashock"][:,0], nn)#batch, 1
+    price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:,0], nn)#batch, 1
     next_gm = vi.dist_gm(data["grid_k"], data["dist_k"], data["ashock"][:,0],nn)#batch, 1
     ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in data["ashock"][:,0]]#batch
     ashock_exp = params.pi_a_gpu[ashock_idx].to(device)#batch, 5

@@ -59,13 +59,11 @@ class MyDataset(Dataset):
             self.data['ishock'] = ishock
         if grid is not None:
             grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
-            grid_tmp = torch.stack(grid, dim=0).repeat(num_sample, 1, 1)
-            self.data['grid'] = torch.permute(grid_tmp, (0, 2, 1))
+            self.data['grid'] = torch.stack(grid, dim=0).repeat(num_sample, 1, 1)
             
         if dist is not None:
             dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
-            dist_tmp = torch.stack(dist, dim=0).repeat(num_sample, 1, 1)
-            self.data['dist'] = torch.permute(dist_tmp, (0, 2, 1))
+            self.data['dist'] = torch.stack(dist, dim=0).repeat(num_sample, 1, 1)
         
         if grid_k is not None:
             grid_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid_k]
@@ -178,8 +176,8 @@ def price_fn(grid, dist, ashock, nn, mean=None):
     else:
         grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
         ashock_norm = (ashock - params.shock_min) / (params.shock_max - params.shock_min)
-        gm_tmp = nn.gm_model_price(grid_norm.unsqueeze(-1))#batch, i_size, k_grid_size,1
-        gm_price = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=(-1, -2))#batch, i_size
+        gm_tmp = nn.gm_model_price(grid_norm)#batch, grid_size, i_size
+        gm_price = torch.sum(gm_tmp * dist, dim=-2)#batch, i_size
         state = torch.cat([ashock_norm.unsqueeze(-1), gm_price], dim=1)#batch, i_size+1
     price = nn.price_model(state)#batch, 1
     return price
@@ -434,8 +432,8 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
             "k_cross": k_now_k,  # Current capital grid (G,)
             "ashock": a,         # Current aggregate shock (G, I)
             "ishock": params.ishock.unsqueeze(0).expand(grid_size, -1),  # Idiosyncratic shocks (G, I)
-            "grid": k_now.unsqueeze(0).repeat(grid_size, 1, 1).transpose(1, 2),  
-            "dist": dist_now.unsqueeze(0).repeat(grid_size, 1, 1).transpose(1, 2),  
+            "grid": k_now.unsqueeze(0).repeat(grid_size, 1, 1),  
+            "dist": dist_now.unsqueeze(0).repeat(grid_size, 1, 1),  
             "grid_k": k_now_k.unsqueeze(0).repeat(grid_size, 1),         # (G, G)
             "dist_k": dist_now_k.unsqueeze(0).repeat(grid_size, 1),      # (G, G)
         }
