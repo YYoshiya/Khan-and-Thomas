@@ -73,9 +73,9 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 学習率の設定
-    initial_lr = 0.0001
-    mid_lr = 0.00001
-
+    initial_lr = 0.001
+    mid_lr = 0.0005
+    final_lr = 0.00005
 
     # オプティマイザの設定
     if mean is None:
@@ -129,17 +129,20 @@ def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshol
         print(f"Epoch: {epoch}, Avg Val Loss: {avg_val_loss:.6f}, LR: {optimizer.param_groups[0]['lr']}")
 
         # 学習率の調整
-        if lr_stage == 0 and avg_val_loss < 0.01:
+        if lr_stage == 0 and avg_val_loss < 0.005:
             for param_group in optimizer.param_groups:
                 param_group['lr'] = mid_lr
             lr_stage = 1
             print(f"Learning rate adjusted to mid_lr: {mid_lr}")
-        
+        elif lr_stage == 1 and avg_val_loss < 0.001:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = final_lr
+            lr_stage = 2
+            print(f"Learning rate adjusted to final_lr: {final_lr}")
 
         # 学習率をさらに調整する条件を追加する場合はここに記述
 
     print("Training completed.")
-
         
 def gm_fn(grid, dist, nn):
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)

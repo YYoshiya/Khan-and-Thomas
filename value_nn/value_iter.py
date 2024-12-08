@@ -217,7 +217,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
     countp = 0
     for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
@@ -243,7 +243,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
     countv = 0
     for epoch in range(10):
         for train_data in dataloader:
@@ -288,7 +288,7 @@ def value_init(nn, params, optimizer, T, num_sample):
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             v = nn.value0(train_data['X']).squeeze(-1)
-            loss = F.mse_loss(v, 4*(train_data['y'])**0.7)
+            loss = F.mse_loss(v, 6*(train_data['y'])**0.4)
             loss.backward()
             optimizer.step()
             if countv % 100 == 0:
@@ -401,15 +401,19 @@ def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     
     return e0, e1
 
-def get_dataset(params, T, nn, p_init=None, mean=None):
+def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
     move_models_to_device(nn, "cpu")
     i_size = params.ishock.size(0)
     grid_size = params.grid_size
 
     # Initialize distribution over capital and idiosyncratic shocks
-    dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=params.pi_i.dtype)
+    if init_dist is not None:
+        dist_now = nn.init_dist
+        dist_now_k = nn.init_dist_k
+    else:
+        dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=params.pi_i.dtype)
+        dist_now_k = torch.sum(dist_now, dim=1)  # Aggregate over idiosyncratic shocks
     k_now = params.k_grid  # (grid_size, nz)
-    dist_now_k = torch.sum(dist_now, dim=1)  # Aggregate over idiosyncratic shocks
     k_now_k = k_now[:, 0]  # Assuming ashock is scalar for now
 
     # Initialize aggregate shock 'a'
@@ -489,13 +493,15 @@ def get_dataset(params, T, nn, p_init=None, mean=None):
         k_now_k = k_new_k
         a = a_new  # Update aggregate shock if necessary
     move_models_to_device(nn, "cuda")
+    nn.init_dist = dist_now
+    nn.init_dist_k = dist_now_k
 
     return {
-        "grid": k_history[100:],         # 100番目から最後まで
-        "dist": dist_history[100:],      # 100番目から最後まで
-        "dist_k": dist_k_history[100:],  # 100番目から最後まで
-        "grid_k": grid_k_history[100:],  # 100番目から最後まで
-        "ashock": ashock_history[100:],  # 100番目から最後まで
+        "grid": k_history,         # 100番目から最後まで
+        "dist": dist_history,      # 100番目から最後まで
+        "dist_k": dist_k_history,  # 100番目から最後まで
+        "grid_k": grid_k_history,  # 100番目から最後まで
+        "ashock": ashock_history,  # 100番目から最後まで
     }
     
 def map_to_grid(k_prime, k_grid):
