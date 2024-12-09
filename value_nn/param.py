@@ -47,6 +47,7 @@ class KTParam():
         self.k_grid_min = self.k_grid_tmp.min()
         
         self.k_grid = self.k_grid_tmp.view(-1, 1).repeat(1, self.nz)
+        self.k_grid_gpu = self.k_grid.to(self.device)
         self.K_grid_np = np.linspace(0.1, 3, 10)
 
         

@@ -27,15 +27,133 @@ else:
     raise ValueError("Unknown dtype.")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    
+def map_to_grid(k_prime, k_grid):
+    """
+    Map k_prime (B,G,I) to the capital grid (G,) using linear interpolation.
+    Returns idx_lower, idx_upper, weight all as (B,G,I) tensors.
+
+    Parameters:
+    - k_prime: (B,G,I) Tensor of new capital values
+    - k_grid: (G,) 1D capital grid (sorted, ascending)
+
+    Returns:
+    - idx_lower: (B,G,I)
+    - idx_upper: (B,G,I)
+    - weight: (B,G,I)
+    """
+    B, G, I = k_prime.shape
+    grid_size = k_grid.size(0)
+    k_min = k_grid[0]
+    k_max = k_grid[-1]
+
+    # Flatten k_prime for search
+    k_prime_flat = k_prime.view(-1)  # (B*G*I,)
+
+    # Searchsorted
+    idx = torch.searchsorted(k_grid, k_prime_flat)
+    idx = idx.view(B, G, I)
+
+    # Clamp indices
+    idx = torch.clamp(idx, 0, grid_size - 1)
+
+    # Define lower and upper indices
+    idx_lower = torch.clamp(idx - 1, 0, grid_size - 1)
+    idx_upper = idx
+
+    # Expand k_grid for easy gathering: (B,G,I) 
+    # We replicate the 1D k_grid along B and I dims so we can gather directly.
+    k_grid_expanded = k_grid.view(1, grid_size, 1).expand(B, grid_size, I)  # (B,G,I)
+
+    # Gather k_lower and k_upper
+    # gather along dim=1 (the grid dimension), idx_* must have the same shape as we gather from
+    k_lower = torch.gather(k_grid_expanded, 1, idx_lower)
+    k_upper = torch.gather(k_grid_expanded, 1, idx_upper)
+
+    # Compute weights
+    denom = k_upper - k_lower
+    zero_denom_mask = denom.abs() < 1e-8
+    denom = denom + zero_denom_mask * 1e-8
+    weight = (k_prime - k_lower) / denom
+
+    # Handle out-of-bound cases
+    weight = torch.where(k_prime <= k_min, torch.zeros_like(weight), weight)
+    weight = torch.where(k_prime >= k_max, torch.ones_like(weight), weight)
+
+    idx_lower = torch.where(k_prime <= k_min, torch.zeros_like(idx_lower), idx_lower)
+    idx_upper = torch.where(k_prime <= k_min, torch.zeros_like(idx_upper), idx_upper)
+
+    idx_lower = torch.where(k_prime >= k_max, (grid_size - 1) * torch.ones_like(idx_lower), idx_lower)
+    idx_upper = torch.where(k_prime >= k_max, (grid_size - 1) * torch.ones_like(idx_upper), idx_upper)
+
+    # Ensure integer indices
+    idx_lower = idx_lower.long()
+    idx_upper = idx_upper.long()
+
+    # Clamp weights to [0, 1]
+    weight = torch.clamp(weight, 0.0, 1.0)
+
+    return idx_lower, idx_upper, weight
+#これpi_iのとこにエラー出る
+def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight, pi_i, adjusting):
+    """
+    Update the distribution with capital transitions and state transitions in a (B,G,I) setting.
+
+    Parameters:
+    - dist_new: (B,G,I) Tensor, distribution at next iteration (will be updated)
+    - dist_now: (B,G,I) Tensor, current distribution
+    - alpha: scalar or (B,G,I)-broadcastable Tensor, adjustment rate
+    - idx_lower: (B,G,I) Tensor, lower grid indices
+    - idx_upper: (B,G,I) Tensor, upper grid indices
+    - weight: (B,G,I) Tensor, interpolation weights
+    - pi_i: (I,I) Tensor, transition probabilities between states i->i_prime
+    - adjusting: bool, if True use dist_now*alpha else dist_now*(1-alpha)
+
+    Returns:
+    - None (dist_new is updated in-place)
+    """
+    B, G, I = dist_now.shape
+
+    if adjusting:
+        dist_adjust = dist_now * alpha  # (B,G,I)
+    else:
+        dist_adjust = dist_now * (1 - alpha)  # (B,G,I)
+
+    # Loop over i and i_prime as in the original logic
+    # We'll do scatter_add_ on dist_new for each i_prime
+    # dist_new is (B,G,I), we select dist_new for each i_prime: dist_new[..., i_prime] is (B,G)
+    for i in range(I):
+        # Extract the indexing and weight for this i
+        idx_l_i = idx_lower[:, :, i]  # (B,G)
+        idx_u_i = idx_upper[:, :, i]  # (B,G)
+        w_i = weight[:, :, i]         # (B,G)
+        
+        # dist_adjust[..., i] is (B,G)
+        # For each i_prime we distribute mass according to pi_i[i, i_prime]
+        for i_prime in range(I):
+            pi_val = pi_i[i, i_prime]
+
+            # dist_contrib: how much mass flows from state i to i_prime
+            dist_contrib = dist_adjust[:, :, i] * pi_val  # (B,G)
+
+            # dist_new_i_prime is (B,G), slice out along i_prime dimension
+            dist_new_i_prime = dist_new[..., i_prime]
+
+            # Add mass to lower index
+            dist_new_i_prime.scatter_add_(1, idx_l_i, dist_contrib * (1 - w_i))
+            # Add mass to upper index
+            dist_new_i_prime.scatter_add_(1, idx_u_i, dist_contrib * w_i)
+
+
 def bisectp(nn, params, data):
     diff = 1e-4
     iter_count = 0
     pL = params.pL
     pH = params.pH
 
-    while diff > params.critbp:
+    while diff.max() > params.critbp:
         p0 = (pL + pH) / 2
-        pnew, thetanew  = eq_price(nn, data, params, p0)
+        pnew, dist_new  = eq_price(nn, data, params, p0)
         B0 = p0 - pnew
         if B0 < 0:
             pL = p0
@@ -44,9 +162,7 @@ def bisectp(nn, params, data):
         diff = pH - pL
         iter_count += 1
     
-    return pnew, thetanew
-    
-
+    return pnew, dist_new
 
 
 def eq_price(nn, data, params, price):
@@ -56,11 +172,17 @@ def eq_price(nn, data, params, price):
     ishock_3d = params.ishock.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
     price = price.view(-1, 1, 1).expand(-1, max_cols, i_size)
     wage = params.eta/price
-    e0, e1 = next_value_price(data, nn, params, max_cols)#作らなきゃいけない。
+    e0, e1 = next_value_price(data, nn, params, max_cols,price)#作らなきゃいけない。
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
     alpha = (xi / params.B).squeeze(-1)
     k_next = vi.policy_fn_sim(data["ashock"], data["ishock"],data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)
+    k_next_non_adj = (1-params.delta) * params.k_grid_gpu.view(1, -1, i_size).expand(data["grid"].size(0), -1, -1)
+    idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(k_next, params.k_grid)
+    idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_next_non_adj, params.k_grid)
+    dist_new = torch.zeros_like(data["dist"])
+    update_distribution(dist_new, data["dist"], alpha, idx_adj_lower, idx_adj_upper, weight_adj, params.pi_i_gpu, True)
+    update_distribution(dist_new, data["dist"], alpha, idx_non_adj_lower, idx_non_adj_upper, weight_non_adj, params.pi_i_gpu, False)
     yterm = ashock_3d * ishock_3d  * data["grid"]**params.theta
     numerator = params.nu * yterm / (wage + 1e-6)
     numerator = torch.clamp(numerator, min=1e-6, max=1e8)  # 数値の範囲を制限
@@ -71,8 +193,43 @@ def eq_price(nn, data, params, price):
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))
     Cagg = Yagg - Iagg
     target = 1 / Cagg
-    return target
+    return target, dist_new
+
+def next_value_price(data, nn, params, max_cols, price):#batch, max_cols, i_size, i*a, 4
+    G = data["grid"].size(0)
+    i_size = params.ishock_gpu.size(0)
     
+    next_gm = vi.dist_gm(data["grid_k"], data["dist_k"], data["ashock"][:,0],nn)#batch, 1
+    ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in data["ashock"][:,0]]#batch
+    ashock_exp = params.pi_a_gpu[ashock_idx].to(device)#batch, 5
+    prob = torch.einsum('ik,nj->nijk', params.pi_i_gpu, ashock_exp).unsqueeze(1).expand(G, max_cols, i_size, i_size, i_size)#batch, max_cols, i_size, a, i
+    
+    next_k = vi.policy_fn_sim(data["ashock"], data["ishock"], data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
+    next_k_expa = next_k.squeeze(-1).unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size, 
+    a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')  # indexing='ij' を明示的に指定
+    a_flat = a_mesh.flatten()  # shape: [I*A]
+    i_flat = i_mesh.flatten()  # shape: [I*A]
+    a_5d = a_flat.view(1, 1, 1, -1, 1).expand(G, max_cols, i_size, -1 ,1)#batch, max_cols, i_size, i*a, 1
+    i_5d = i_flat.view(1, 1, 1, -1, 1).expand(G, max_cols, i_size, -1, 1)#batch, max_cols, i_size, 1, i*a
+    next_k_flat = next_k_expa.view(G, max_cols, i_size, 1, 1).expand(-1, -1, -1, a_flat.size(0), 1)#batch, max_cols, i_size, i*a, 1
+    next_gm_flat = next_gm.view(G, 1, 1, 1, 1).expand(G, max_cols, i_size, a_flat.size(0), 1)#batch, max_cols, i_size, i*a, 1
+
+    k_cross_flat = data["grid"].view(G, max_cols, i_size, 1, 1).expand(-1, -1, -1, a_flat.size(0), 1)#batch, max_cols, i_size, i*a, 1
+    pre_k_flat = (1-params.delta) * k_cross_flat#batch, max_cols, i*a
+    
+    data_e0 = torch.stack([next_k_flat, a_5d, i_5d, next_gm_flat], dim=-1)#batch, max_cols, i_size, i*a, 4
+    data_e1 = torch.stack([pre_k_flat, a_5d, i_5d, next_gm_flat], dim=-1)#batch, max_cols, i_size, i*a, 4
+    
+    value0 = nn.value0(data_e0).view(G, max_cols, i_size, len(params.ashock), len(params.ishock))#batch, max_cols, i_size, a, i
+    value1 = nn.value0(data_e1).view(G, max_cols, i_size, len(params.ashock), len(params.ishock))#batch, max_cols, i_size, a, i
+
+    expected_v0 = (value0 *  prob).sum(dim=(3,4))#batch, max_cols, i_size,
+    expected_v1 = (value1 *  prob).sum(dim=(3,4))#batch, max_cols, i_size
+    
+    e0 = -next_k_expa * price + params.beta * expected_v0
+    e1 = -(1-params.delta)*data["grid"] * price + params.beta * expected_v1
+    
+    return e0, e1
 
 
 
