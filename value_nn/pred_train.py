@@ -27,6 +27,56 @@ else:
     raise ValueError("Unknown dtype.")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def bisectp(nn, params, data):
+    diff = 1e-4
+    iter_count = 0
+    pL = params.pL
+    pH = params.pH
+
+    while diff > params.critbp:
+        p0 = (pL + pH) / 2
+        pnew, thetanew  = eq_price(nn, data, params, p0)
+        B0 = p0 - pnew
+        if B0 < 0:
+            pL = p0
+        else:
+            pH = p0
+        diff = pH - pL
+        iter_count += 1
+    
+    return pnew, thetanew
+    
+
+
+
+def eq_price(nn, data, params, price):
+    i_size = params.ishock_gpu.size(0)
+    max_cols = data["grid"].size(1)
+    ashock_3d = params.ishock.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
+    ishock_3d = params.ishock.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
+    price = price.view(-1, 1, 1).expand(-1, max_cols, i_size)
+    wage = params.eta/price
+    e0, e1 = next_value_price(data, nn, params, max_cols)#作らなきゃいけない。
+    threshold = (e0 - e1) / params.eta
+    xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
+    alpha = (xi / params.B).squeeze(-1)
+    k_next = vi.policy_fn_sim(data["ashock"], data["ishock"],data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)
+    yterm = ashock_3d * ishock_3d  * data["grid"]**params.theta
+    numerator = params.nu * yterm / (wage + 1e-6)
+    numerator = torch.clamp(numerator, min=1e-6, max=1e8)  # 数値の範囲を制限
+    nnow = torch.pow(numerator, 1 / (1 - params.nu))
+    inow = alpha * (k_next - (1-params.delta) * data["grid"])
+    ynow = ashock_3d*ishock_3d * data["grid"]**params.theta * nnow**params.nu
+    Iagg = torch.sum(data["dist"] * inow, dim=(1,2))
+    Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))
+    Cagg = Yagg - Iagg
+    target = 1 / Cagg
+    return target
+    
+
+
+
+
 def price_loss(nn, data, params, mean):#k_gridに関してxiを求める他は適当でよい。
     eps = 1e-6
     i_size = params.ishock_gpu.size(0)
