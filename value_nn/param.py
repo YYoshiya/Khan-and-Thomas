@@ -47,6 +47,7 @@ class KTParam():
         self.k_grid_min = self.k_grid_tmp.min()
         
         self.k_grid = self.k_grid_tmp.view(-1, 1).repeat(1, self.nz)
+        self.k_grid_1d_gpu = self.k_grid_tmp.to(self.device)
         self.k_grid_gpu = self.k_grid.to(self.device)
         self.K_grid_np = np.linspace(0.1, 3, 10)
 
@@ -60,6 +61,9 @@ class KTParam():
         self.min_Iagg = 1e-4
         self.penalty_weight = 10000
         self.negative_Cagg_weight = 10
+        
+        
+        self.critbp = 1e-4
 
 params = KTParam()
 

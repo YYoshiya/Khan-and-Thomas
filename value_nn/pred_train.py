@@ -48,7 +48,8 @@ def map_to_grid(k_prime, k_grid):
     k_max = k_grid[-1]
 
     # Flatten k_prime for search
-    k_prime_flat = k_prime.view(-1)  # (B*G*I,)
+    k_prime_flat = k_prime.reshape(-1)
+  # (B*G*I,)
 
     # Searchsorted
     idx = torch.searchsorted(k_grid, k_prime_flat)
@@ -146,20 +147,21 @@ def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight,
 
 
 def bisectp(nn, params, data):
-    diff = 1e-4
+    diff = torch.full((data["grid"].size(0),), 1, dtype=TORCH_DTYPE)
     iter_count = 0
-    pL = params.pL
-    pH = params.pH
+    p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
+    pL = p_init * 0.5
+    pH = p_init * 1.5
 
     while diff.max() > params.critbp:
         p0 = (pL + pH) / 2
         pnew, dist_new  = eq_price(nn, data, params, p0)
         B0 = p0 - pnew
-        if B0 < 0:
-            pL = p0
-        else:
-            pH = p0
-        diff = pH - pL
+        
+        pL = torch.where(B0 < 0, p0, pL)
+        pH = torch.where(B0 >= 0, pH, p0)
+
+        diff = torch.abs(B0)
         iter_count += 1
     
     return pnew, dist_new
@@ -168,18 +170,20 @@ def bisectp(nn, params, data):
 def eq_price(nn, data, params, price):
     i_size = params.ishock_gpu.size(0)
     max_cols = data["grid"].size(1)
-    ashock_3d = params.ishock.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
-    ishock_3d = params.ishock.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
+    ashock_3d = params.ishock_gpu.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
+    ishock_3d = params.ishock_gpu.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
     price = price.view(-1, 1, 1).expand(-1, max_cols, i_size)
     wage = params.eta/price
     e0, e1 = next_value_price(data, nn, params, max_cols,price)#作らなきゃいけない。
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
     alpha = (xi / params.B).squeeze(-1)
-    k_next = vi.policy_fn_sim(data["ashock"], data["ishock"],data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)
+    ishock_2d = params.ishock_gpu.unsqueeze(0).expand(data["grid"].size(0), -1)
+    ashock_2d = data["ashock"].unsqueeze(1).expand(-1, i_size)
+    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)
     k_next_non_adj = (1-params.delta) * params.k_grid_gpu.view(1, -1, i_size).expand(data["grid"].size(0), -1, -1)
-    idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(k_next, params.k_grid)
-    idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_next_non_adj, params.k_grid)
+    idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(next_k, params.k_grid_1d_gpu)
+    idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_next_non_adj, params.k_grid_1d_gpu)
     dist_new = torch.zeros_like(data["dist"])
     update_distribution(dist_new, data["dist"], alpha, idx_adj_lower, idx_adj_upper, weight_adj, params.pi_i_gpu, True)
     update_distribution(dist_new, data["dist"], alpha, idx_non_adj_lower, idx_non_adj_upper, weight_non_adj, params.pi_i_gpu, False)
@@ -187,7 +191,7 @@ def eq_price(nn, data, params, price):
     numerator = params.nu * yterm / (wage + 1e-6)
     numerator = torch.clamp(numerator, min=1e-6, max=1e8)  # 数値の範囲を制限
     nnow = torch.pow(numerator, 1 / (1 - params.nu))
-    inow = alpha * (k_next - (1-params.delta) * data["grid"])
+    inow = alpha * (next_k - (1-params.delta) * data["grid"])
     ynow = ashock_3d*ishock_3d * data["grid"]**params.theta * nnow**params.nu
     Iagg = torch.sum(data["dist"] * inow, dim=(1,2))
     Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))
@@ -199,12 +203,14 @@ def next_value_price(data, nn, params, max_cols, price):#batch, max_cols, i_size
     G = data["grid"].size(0)
     i_size = params.ishock_gpu.size(0)
     
-    next_gm = vi.dist_gm(data["grid_k"], data["dist_k"], data["ashock"][:,0],nn)#batch, 1
-    ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in data["ashock"][:,0]]#batch
+    next_gm = vi.dist_gm(data["grid_k"], data["dist_k"], data["ashock"],nn)#batch, 1
+    ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in data["ashock"]]#batch
     ashock_exp = params.pi_a_gpu[ashock_idx].to(device)#batch, 5
     prob = torch.einsum('ik,nj->nijk', params.pi_i_gpu, ashock_exp).unsqueeze(1).expand(G, max_cols, i_size, i_size, i_size)#batch, max_cols, i_size, a, i
     
-    next_k = vi.policy_fn_sim(data["ashock"], data["ishock"], data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
+    ishock_2d = params.ishock_gpu.unsqueeze(0).expand(data["grid"].size(0), -1)
+    ashock_2d = data["ashock"].unsqueeze(1).expand(-1, i_size)
+    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
     next_k_expa = next_k.squeeze(-1).unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')  # indexing='ij' を明示的に指定
     a_flat = a_mesh.flatten()  # shape: [I*A]

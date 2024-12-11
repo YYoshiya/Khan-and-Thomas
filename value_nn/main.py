@@ -24,6 +24,17 @@ def set_seed(seed=42):
 set_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+DTYPE = "float32"
+if DTYPE == "float64":
+    NP_DTYPE = np.float64
+    TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定
+elif DTYPE == "float32":
+    NP_DTYPE = np.float32
+    TORCH_DTYPE = torch.float32  # PyTorchのデータ型を指定
+else:
+    raise ValueError("Unknown dtype.")
+
+
 
 class ValueNN(nn.Module):
     def __init__(self, d_in):
@@ -133,9 +144,73 @@ class basic_dataset:
     def __init__(self, data):
         self.data = data
 
-class basic_dataset_gm:
-    def __init__(self, data):
-        self.data = data
+class BasicDatasetGM:
+    def __init__(self, data, device=None):
+        """
+        初期化メソッド。データをGPUまたは指定されたデバイスに送ります。
+
+        Args:
+            data (dict): GPUに送信したいデータの辞書。
+            device (torch.device, optional): データを送るデバイス。指定がない場合はCUDAが利用可能ならCUDAを使用し、それ以外はCPUを使用。
+        """
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = device
+        self.data = self.send_to_device(data)
+
+    def send_to_device(self, data):
+        """
+        データを指定されたデバイスに送るメソッド。
+
+        Args:
+            data (dict): GPUに送信したいデータの辞書。
+
+        Returns:
+            dict: デバイスに送られたデータの辞書。
+        """
+        data_gpu = {}
+        for key, value in data.items():
+            if isinstance(value, list):
+                if key == "ashock":
+                    # スカラー値のリストをテンソルに変換
+                    data_gpu[key] = torch.tensor(value, dtype=torch.float32).to(self.device)
+                elif all(isinstance(v, torch.Tensor) for v in value):
+                    try:
+                        # テンソルのリストをスタックして1つのテンソルに
+                        data_gpu[key] = torch.stack(value, dim=0).to(self.device)
+                    except ValueError as e:
+                        print(f"Error stacking tensors for key '{key}': {e}")
+                        raise
+                else:
+                    print(f"Unsupported list element types for key '{key}'.")
+                    raise TypeError(f"Unsupported list element types for key '{key}'.")
+            elif isinstance(value, torch.Tensor):
+                # 既にテンソルであれば直接デバイスに移動
+                data_gpu[key] = value.to(self.device)
+            else:
+                print(f"Unsupported data type for key '{key}': {type(value)}")
+                raise TypeError(f"Unsupported data type for key '{key}': {type(value)}")
+        return data_gpu
+
+    def get_data(self):
+        """
+        データを取得するメソッド。
+
+        Returns:
+            dict: デバイスに送られたデータの辞書。
+        """
+        return self.data
+
+    def update_data(self, new_data):
+        """
+        データを更新するメソッド。新しいデータをデバイスに送ってself.dataを更新します。
+
+        Args:
+            new_data (dict): 新しいデータの辞書。
+        """
+        self.data = self.send_to_device(new_data)
+
 
 
 class nn_class:
@@ -186,11 +261,16 @@ pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
 
 dataset_grid = vi.get_dataset(params, 1000, n_model, init_price, mean)
-train_ds = basic_dataset(dataset_grid)
+train_ds = BasicDatasetGM(dataset_grid)
+
+
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
-train_ds.data = vi.get_dataset(params, 1000, n_model, init_price, mean)
-pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 500, 16, 1000, 1e-5, mean)
-pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
+new_data = vi.get_dataset(params, 1000, n_model, init_price, mean)
+train_ds.update_data(new_data)
+pred.bisectp(n_model, params, train_ds.data)
+#train_ds.data = vi.get_dataset(params, 1000, n_model, init_price, mean)
+#pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 500, 16, 1000, 1e-5, mean)
+#pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
 
 
 
