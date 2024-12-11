@@ -229,8 +229,8 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.00001)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00001)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.001)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.001)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.0005)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
 
@@ -261,16 +261,16 @@ pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
 
 dataset_grid = vi.get_dataset(params, 1000, n_model, init_price, mean)
-train_ds = BasicDatasetGM(dataset_grid)
-
+train_ds_gm = BasicDatasetGM(dataset_grid)
+train_ds = basic_dataset(dataset_grid)
 
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
 new_data = vi.get_dataset(params, 1000, n_model, init_price, mean)
-train_ds.update_data(new_data)
-pred.bisectp(n_model, params, train_ds.data)
-#train_ds.data = vi.get_dataset(params, 1000, n_model, init_price, mean)
-#pred.price_train(train_ds.data, params, n_model, n_model.optimizer_pri, 500, 16, 1000, 1e-5, mean)
-#pred.next_gm_train(train_ds.data, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
+train_ds_gm.update_data(new_data)
+with torch.no_grad():
+    true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data, 2)
+pred.price_train(train_ds.data, true_price, n_model, 50)
+pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
 
 
 

@@ -146,25 +146,33 @@ def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight,
             dist_new_i_prime.scatter_add_(1, idx_u_i, dist_contrib * w_i)
 
 
-def bisectp(nn, params, data):
-    diff = torch.full((data["grid"].size(0),), 1, dtype=TORCH_DTYPE)
+def bisectp(nn, params, data, init=None):
+    diff = torch.full((data["grid"].size(0),), 1, dtype=TORCH_DTYPE).to(device)
     iter_count = 0
-    p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
-    pL = p_init * 0.5
-    pH = p_init * 1.5
+    if init is not None:
+        p_init = torch.full((data["grid"].size(0),), init, dtype=TORCH_DTYPE).to(device)
+        pL = p_init * 0.01
+        pH = p_init * 3   
+    else:
+        p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
+        pL = p_init * 0.5
+        pH = p_init * 1.5
 
     while diff.max() > params.critbp:
         p0 = (pL + pH) / 2
         pnew, dist_new  = eq_price(nn, data, params, p0)
         B0 = p0 - pnew
         
+        # ベクトル化された条件分岐
+        # B0 < 0 の場合、pL を p0 に更新
+        # B0 >= 0 の場合、pH を p0 に更新
         pL = torch.where(B0 < 0, p0, pL)
-        pH = torch.where(B0 >= 0, pH, p0)
+        pH = torch.where(B0 < 0, pH, p0)
 
         diff = torch.abs(B0)
         iter_count += 1
     
-    return pnew, dist_new
+    return pnew.to("cpu"), dist_new.to("cpu")
 
 
 def eq_price(nn, data, params, price):
@@ -176,7 +184,7 @@ def eq_price(nn, data, params, price):
     wage = params.eta/price
     e0, e1 = next_value_price(data, nn, params, max_cols,price)#作らなきゃいけない。
     threshold = (e0 - e1) / params.eta
-    xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
+    xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
     alpha = (xi / params.B).squeeze(-1)
     ishock_2d = params.ishock_gpu.unsqueeze(0).expand(data["grid"].size(0), -1)
     ashock_2d = data["ashock"].unsqueeze(1).expand(-1, i_size)
@@ -237,126 +245,35 @@ def next_value_price(data, nn, params, max_cols, price):#batch, max_cols, i_size
     
     return e0, e1
 
+class Pred_Dataset(Dataset):
+    def __init__(self, grid, dist, ashock, price):
+        grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
+        self.grid = torch.stack(grid, dim=0)
+        dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
+        self.dist = torch.stack(dist, dim=0)
+        self.ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
+        self.target = price
+    
+    def __len__(self):
+        return self.grid.size(0)
+    
+    def __getitem__(self, idx):
+        return self.grid[idx].to(device), self.dist[idx].to(device), self.ashock[idx].to(device), self.target[idx].to(device)
+    
 
-
-
-def price_loss(nn, data, params, mean):#k_gridに関してxiを求める他は適当でよい。
-    eps = 1e-6
-    i_size = params.ishock_gpu.size(0)
-    max_cols = data["grid"].size(1)
-    ashock_3d = data["ashock"].unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size
-    ishock_3d = data["ishock"].unsqueeze(1).expand(-1, max_cols, -1)
-    price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:, 0],nn, mean)
-    wage = params.eta/price
-    wage = wage.unsqueeze(-1).expand(-1, max_cols, i_size)#batch, max_cols, i_size
-    e0, e1 = next_value_gm(data, nn,params, data["grid"].size(1))#batch, max_cols, i_size
-    e0_check = e0[0, :, :]
-    e1_check = e1[0, :, :]
-    threshold = (e0 - e1) / params.eta#batch, max_cols,i_size
-    threshold_check = threshold[0, :, :]
-    xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))#batch, max_cols,i_size
-    alpha = (xi / params.B).squeeze(-1)#batch, max_cols,i_size
-    alpha_check = alpha[0, :, :]
-    k_next = vi.policy_fn_sim(data["ashock"], data["ishock"],data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)#batch, i_sizeで出てくるからmax_colsに合わせる
-    yterm = ashock_3d * ishock_3d  * data["grid"]**params.theta#batch, max_cols, i_size
-    numerator = params.nu * yterm / (wage + eps)
-    numerator = torch.clamp(numerator, min=eps, max=1e8)  # 数値の範囲を制限
-    nnow = torch.pow(numerator, 1 / (1 - params.nu))
-    inow = alpha * (k_next - (1-params.delta) * data["grid"])
-    inow_check = inow[0, :, :]
-    ynow = ashock_3d*ishock_3d * data["grid"]**params.theta * nnow**params.nu
-    ynow_check = ynow[0, :, :]
-    Iagg = torch.sum(data["dist"] * inow, dim=(1,2))#batch
-    Yagg = torch.sum(data["dist"]* ynow, dim=(1,2))#batch
-    Cagg = Yagg - Iagg#batch
-    Cagg = torch.clamp(Cagg, min=0.1)
-    target = 1 / Cagg
-    loss = F.huber_loss(price, target.unsqueeze(-1))
-    #min_Iagg = params.min_Iagg  # Define a minimum threshold in params
-    #penalty_weight = params.penalty_weight  # Define penalty weight in params
-    #penalty = torch.relu(min_Iagg - Iagg)  # batch
-    #penalty = penalty * penalty_weight 
-    #penalty_Iagg = torch.mean(penalty)
-
-    # Combine the main loss with the penalty
-    #loss_total = loss + penalty_Cagg
-    return loss
-
-def price_train(data, params, nn, optimizer, num_epochs, batch_size, T, threshold, mean=None):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # 学習率の設定
-    initial_lr = 0.0005
-    mid_lr = 0.00005
-    final_lr = 0.00001
-
-    # オプティマイザの設定
-    if mean is None:
-        optimizer = torch.optim.Adam(nn.params_price, lr=initial_lr)
-    else:
-        optimizer = torch.optim.Adam(nn.price_model.parameters(), lr=initial_lr)
-
-    # データ準備
-    ashock_data = vi.generate_ashock(1, T, params.ashock, params.pi_a).squeeze(0).unsqueeze(-1).expand(-1, params.ishock.size(0))
-    ishock_data = params.ishock.unsqueeze(0).expand(T, -1)
-    dataset = MyDataset(grid=data["grid"], dist=data["dist"], grid_k=data["grid_k"], dist_k=data["dist_k"],
-                       ashock=ashock_data, ishock=ishock_data)
-    valid_size = 64
-    train_size = len(dataset) - valid_size
-    train_data, valid_data = random_split(dataset, [train_size, valid_size])
-    train_loader = DataLoader(train_data, batch_size, shuffle=True)
-    valid_loader = DataLoader(valid_data, 32, shuffle=False)
-
-    avg_val_loss = float('inf')
-    epoch = 0
-
-    # 学習率調整ステージ管理
-    lr_stage = 0  # 0: initial_lr, 1: mid_lr, 2: final_lr
-
-    while avg_val_loss > threshold and epoch < num_epochs:
-        epoch += 1
-        loss_list = []
-
-        # トレーニングフェーズ
-        nn.price_model.train()  
-        nn.gm_model_price.train()
-        for i, batch_data in enumerate(train_loader):
-            # データをデバイスに移動
-            batch_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in batch_data.items()}
+def price_train(data, price, nn, num_epochs):
+    with torch.no_grad():
+        train_dataset = Pred_Dataset(data["grid"], data["dist"], data["ashock"], price)
+        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+        optimizer = optim.Adam(nn.params_price, lr=0.01)
+    for epoch in range(num_epochs):
+        for grid, dist, ashock, target in train_loader:
             optimizer.zero_grad()
-            loss = price_loss(nn, batch_data, params, mean)
+            pred = vi.price_fn(grid, dist, ashock, nn).squeeze(-1)
+            loss = F.mse_loss(pred, target)
             loss.backward()
             optimizer.step()
-
-        # バリデーションフェーズ
-        nn.price_model.eval()  
-        nn.gm_model_price.eval()
-        with torch.no_grad():
-            val_losses = []
-            for v_data in valid_loader:
-                v_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in v_data.items()}
-                val_loss = price_loss(nn, v_data, params, mean)
-                val_losses.append(val_loss.item())
-            avg_val_loss = sum(val_losses) / len(val_losses)
-
-        print(f"Epoch: {epoch}, Avg Val Loss: {avg_val_loss:.6f}, LR: {optimizer.param_groups[0]['lr']}")
-
-        # 学習率の調整
-        if lr_stage == 0 and avg_val_loss < 0.005:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = mid_lr
-            lr_stage = 1
-            print(f"Learning rate adjusted to mid_lr: {mid_lr}")
-        elif lr_stage == 1 and avg_val_loss < 0.002:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = final_lr
-            lr_stage = 2
-            print(f"Learning rate adjusted to final_lr: {final_lr}")
-
-        # 学習率をさらに調整する条件を追加する場合はここに記述
-
-    print("Training completed.")
-        
+    
 def gm_fn(grid, dist, nn):
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))#batch, k_grid, 1
@@ -417,32 +334,20 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     
     
 class NextGMDataset(Dataset):
-    def __init__(self, gm, ashock):
+    def __init__(self, gm, ashock, next_gm):
         # 入力: gm[:, :-1], ターゲット: gm[:, 1:]
-        inputs = gm[:-1]
-        targets = gm[1:]
-        ashock_reshaped = ashock[:-1]
-        
-        # 2列のテンソルに結合
-        self.data = torch.stack((inputs, ashock_reshaped, targets), dim=-1)  # shape: (num_samples * (T-1), 3)
+        self.gm = gm
+        self.ashock = ashock
+        self.next_gm = next_gm
     
     def __len__(self):
-        return self.data.shape[0]
+        return self.gm.size(0)
     
     def __getitem__(self, idx):
-        """
-        Args:
-            idx (int): サンプルのインデックス
-        Returns:
-            tuple: (input, target) のタプル
-        """
-        input_val = self.data[idx, 0:1].to(device)    # shape: ()
-        ashock_val = self.data[idx, 1:2].to(device)   # shape: ()
-        target_val = self.data[idx, 2:3].to(device)   # shape: ()
-        return input_val, ashock_val, target_val
+        return self.gm[idx].to(device), self.ashock[idx].to(device), self.next_gm[idx].to(device)
     
 
-def next_gm_train(data, nn, params, optimizer, T, num_sample, epochs, save_plot_dir='plots'):
+def next_gm_train(data, new_dist, nn, params, optimizer, T, num_sample, epochs, save_plot_dir='plots'):
     # プロット用ディレクトリの作成
     os.makedirs(save_plot_dir, exist_ok=True)
     
@@ -454,7 +359,9 @@ def next_gm_train(data, nn, params, optimizer, T, num_sample, epochs, save_plot_
         grid = torch.stack(grid, dim=0)
         nn.gm_model.to("cpu")
         gm = gm_fn(grid, dist, nn)
-        dataset = NextGMDataset(gm, ashock)
+        new_dist = torch.sum(new_dist, dim=-1)
+        next_gm = gm_fn(grid, new_dist, nn)
+        dataset = NextGMDataset(gm, ashock, next_gm)
         valid_size = 64
         train_size = len(dataset) - valid_size
         train_data, valid_data = random_split(dataset, [train_size, valid_size])
@@ -493,7 +400,7 @@ def next_gm_train(data, nn, params, optimizer, T, num_sample, epochs, save_plot_
                 # データを収集
                 val_inputs.append(input.cpu())
                 val_targets.append(target.cpu())
-                next_gm = next_gm_fn(input, ashock_val, nn)
+                next_gm = next_gm_fn(input.unsqueeze(-1), ashock_val.unsqueeze(-1), nn)
                 val_predictions.append(next_gm.cpu())
     
             avg_val_loss = epoch_val_loss / len(valid_loader)
@@ -547,9 +454,9 @@ def next_gm_train(data, nn, params, optimizer, T, num_sample, epochs, save_plot_
     plt.close()
     print(f"Final loss plot saved to {final_loss_plot}")
 
-def next_gm_loss(nn, input, ashock, target):
-    next_gm = next_gm_fn(input, ashock, nn)
-    loss = torch.mean((next_gm - target)**2)
+def next_gm_loss(nn, gm, ashock, target):
+    next_gm = next_gm_fn(gm.unsqueeze(-1), ashock.unsqueeze(-1), nn)
+    loss = F.mse_loss(next_gm, target)
     return loss
 
 
