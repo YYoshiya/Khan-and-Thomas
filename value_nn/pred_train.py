@@ -171,6 +171,8 @@ def bisectp(nn, params, data, init=None):
 
         diff = torch.abs(B0)
         iter_count += 1
+        if iter_count == 30:
+            break
     
     return pnew.to("cpu"), dist_new.to("cpu")
 
@@ -264,7 +266,11 @@ class Pred_Dataset(Dataset):
 def price_train(data, price, nn, num_epochs):
     with torch.no_grad():
         train_dataset = Pred_Dataset(data["grid"], data["dist"], data["ashock"], price)
-        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+        valid_size = 64
+        train_size = len(train_dataset) - valid_size
+        train_data, valid_data = random_split(train_dataset, [train_size, valid_size])
+        train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+        valid_loader = DataLoader(valid_data, batch_size=32, shuffle=True)
         optimizer = optim.Adam(nn.params_price, lr=0.01)
     for epoch in range(num_epochs):
         for grid, dist, ashock, target in train_loader:
@@ -273,6 +279,12 @@ def price_train(data, price, nn, num_epochs):
             loss = F.mse_loss(pred, target)
             loss.backward()
             optimizer.step()
+        with torch.no_grad():
+            for grid, dist, ashock, target in valid_loader:
+                pred = vi.price_fn(grid, dist, ashock, nn).squeeze(-1)
+                valid_loss = F.mse_loss(pred, target)
+            if epoch % 10 == 0:
+                print(f"Epoch: {epoch}, Train Loss: {loss.item()}, Validation Loss: {valid_loss.item()}")
     
 def gm_fn(grid, dist, nn):
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
@@ -402,11 +414,12 @@ def next_gm_train(data, new_dist, nn, params, optimizer, T, num_sample, epochs, 
                 val_targets.append(target.cpu())
                 next_gm = next_gm_fn(input.unsqueeze(-1), ashock_val.unsqueeze(-1), nn)
                 val_predictions.append(next_gm.cpu())
-    
+
             avg_val_loss = epoch_val_loss / len(valid_loader)
             val_losses.append(avg_val_loss)
-            print(f"Epoch: {epoch+1}, Train Loss: {avg_train_loss:.10f}, Validation Loss: {avg_val_loss:.10f}")
-    
+            if epoch % 10 == 0:
+                print(f"Epoch: {epoch+1}, Train Loss: {avg_train_loss:.10f}, Validation Loss: {avg_val_loss:.10f}")
+        
         # プロット（10エポックごとまたは最後のエポック）
         if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
             val_inputs_tensor = torch.cat(val_inputs, dim=0).view(-1)
@@ -455,7 +468,7 @@ def next_gm_train(data, new_dist, nn, params, optimizer, T, num_sample, epochs, 
     print(f"Final loss plot saved to {final_loss_plot}")
 
 def next_gm_loss(nn, gm, ashock, target):
-    next_gm = next_gm_fn(gm.unsqueeze(-1), ashock.unsqueeze(-1), nn)
+    next_gm = next_gm_fn(gm.unsqueeze(-1), ashock.unsqueeze(-1), nn).squeeze(-1)
     loss = F.mse_loss(next_gm, target)
     return loss
 
