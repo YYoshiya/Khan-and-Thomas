@@ -264,6 +264,12 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             loss = F.mse_loss(v, vnew)
             optimizer.zero_grad()
             loss.backward()
+            for param in nn.gm_model.parameters():
+                if torch.isnan(param.grad).any():
+                    print("NaN detected in gradients")
+                    import sys
+                    sys.exit("Training stopped due to NaN in gradients")
+
             optimizer.step()
             if countv % 100 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")

@@ -99,7 +99,7 @@ class NextkNN(nn.Module):
     def forward(self, x):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
+        #x = self.relu(self.fc3(x))
         x = self.fc4(x)
         return x
     
@@ -118,7 +118,7 @@ class PriceNN(nn.Module):
     def forward(self, x):
         x = self.tanh(self.fc1(x))
         x = self.tanh(self.fc2(x))
-        x = self.tanh(self.fc3(x))
+        #x = self.tanh(self.fc3(x))
         #x = self.tanh(self.fc4(x))
         x = self.output(x)
         return x
@@ -229,9 +229,9 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.001)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.001)
-        self.optimizer_pri = optim.Adam(self.params_price, lr=0.01)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.0001)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
+        self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.01)
 
 def initialize_weights(model):
@@ -265,7 +265,7 @@ train_ds_gm = BasicDatasetGM(dataset_grid)
 train_ds = basic_dataset(dataset_grid)
 
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
-new_data = vi.get_dataset(params, 1000, n_model, init_price, mean)
+new_data = vi.get_dataset(params, 1000, n_model, init_price, mean, init_dist=True)
 train_ds_gm.update_data(new_data)
 train_ds.data = new_data
 with torch.no_grad():
@@ -289,7 +289,7 @@ for _ in range(50):
         with torch.no_grad():
             true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
         pred.price_train(train_ds.data, true_price, n_model, 50)
-        new_data = vi.get_dataset(params, 1000, n_model, mean=mean)
+        new_data = vi.get_dataset(params, 1000, n_model, mean=mean, init_dist=True)
         train_ds_gm.update_data(new_data)
         with torch.no_grad():
             true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
