@@ -10,6 +10,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 import pred_train as pred
 from param import params
+import matplotlib.pyplot as plt
 
 DTYPE = "float32"
 if DTYPE == "float64":
@@ -217,7 +218,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countp = 0
-    for epoch in range(5):
+    for epoch in range(3):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
@@ -241,9 +242,9 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countv = 0
-    for epoch in range(5):
+    for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
@@ -283,7 +284,7 @@ def value_init(nn, params, optimizer, T, num_sample):
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countv = 0
     for epoch in range(10):
         for train_data in dataloader:
@@ -429,6 +430,7 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
     dist_k_history = []
     grid_k_history = []
     ashock_history = []
+    mean_k_history = []
 
     for t in range(T):
         grid_size = dist_now.size(0)
@@ -481,7 +483,7 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
 
         next_a = next_ashock(a[0,0], params.ashock, params.pi_a)
         a_new = torch.full((grid_size, i_size), next_a.item(), dtype=TORCH_DTYPE)
-        
+        mean_k = torch.sum(k_now * dist_now, dim=(-1,-2))
 
         # Record history
         dist_history.append(dist_now.clone())
@@ -489,6 +491,7 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
         dist_k_history.append(dist_now_k.clone())
         grid_k_history.append(k_now_k.clone())
         ashock_history.append(a[0, 0].item())  # Record scalar 'a'
+        mean_k_history.append(mean_k)
 
         # Update for the next iteration
         dist_now = dist_new
@@ -506,6 +509,7 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
         "dist_k": dist_k_history[100:],  # 100番目から最後まで
         "grid_k": grid_k_history[100:],  # 100番目から最後まで
         "ashock": ashock_history[100:],  # 100番目から最後まで
+        "mean_k": mean_k_history[100:],  # 100番目から最後まで
     }
 
 
@@ -731,3 +735,46 @@ def next_ishock(current, shock, Pi):
     next_indices = torch.multinomial(probs_ts, 1).squeeze()
     next_shocks = shock[next_indices]
     return next_shocks
+
+
+def plot_mean_k(dataset, start_iteration, end_iteration):
+    """
+    mean_k_history の指定範囲をプロットする関数
+
+    Parameters:
+    - dataset (dict): get_dataset 関数から返される辞書
+    - start_iteration (int): プロット開始の反復番号（例: 500）
+    - end_iteration (int): プロット終了の反復番号（例: 600）
+    """
+    mean_k_history = dataset.get("mean_k", None)
+    
+    if mean_k_history is None:
+        raise ValueError("Dataset does not contain 'mean_k'. Ensure that get_dataset returns 'mean_k_history'.")
+    
+    total_iterations = len(mean_k_history) + 100  # get_datasetで100番目から返されているため
+    if end_iteration > total_iterations:
+        raise ValueError(f"end_iteration ({end_iteration}) exceeds the total available iterations ({total_iterations}).")
+    
+    # get_datasetが100番目以降のデータを返しているため、スライスを調整
+    adjusted_start = start_iteration - 100
+    adjusted_end = end_iteration - 100
+    
+    if adjusted_start < 0 or adjusted_end > len(mean_k_history):
+        raise ValueError("指定された範囲がデータセットの範囲を超えています。")
+    
+    mean_k_slice = mean_k_history[adjusted_start:adjusted_end]
+    
+    # テンソルをスカラー値に変換
+    mean_k_values = [mk.detach().cpu().item() for mk in mean_k_slice]
+    
+    iterations = range(start_iteration, end_iteration)
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(iterations, mean_k_values, label='Mean Capital', color='blue')
+    plt.xlabel('Iteration')
+    plt.ylabel('Mean Capital (mean_k)')
+    plt.title(f'Mean Capital from Iteration {start_iteration} to {end_iteration}')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()

@@ -58,9 +58,6 @@ class KTParam():
         nSS = self.nu / self.eta * ycSS
         self.kSS = (ykSS * nSS ** (-self.nu)) ** (1 / (self.theta - 1))
         
-        self.min_Iagg = 1e-4
-        self.penalty_weight = 10000
-        self.negative_Cagg_weight = 10
         
         
         self.critbp = 1e-4

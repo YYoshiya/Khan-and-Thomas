@@ -278,7 +278,10 @@ def price_train(data, price, nn, num_epochs):
         train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
         valid_loader = DataLoader(valid_data, batch_size=32, shuffle=True)
         optimizer = optim.Adam(nn.params_price, lr=0.01)
-    for epoch in range(num_epochs):
+        valid_loss = 1
+        epoch = 0
+    while epoch < num_epochs and valid_loss > 1e-6:
+        epoch += 1
         for grid, dist, ashock, target in train_loader:
             optimizer.zero_grad()
             pred = vi.price_fn(grid, dist, ashock, nn).squeeze(-1)
