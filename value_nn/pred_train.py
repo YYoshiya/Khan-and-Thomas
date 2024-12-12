@@ -151,8 +151,8 @@ def bisectp(nn, params, data, init=None):
     iter_count = 0
     if init is not None:
         p_init = torch.full((data["grid"].size(0),), init, dtype=TORCH_DTYPE).to(device)
-        pL = p_init * 0.01
-        pH = p_init * 3   
+        pL = p_init * 0.1
+        pH = p_init * 2
     else:
         p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
         pL = p_init * 0.5
@@ -160,20 +160,26 @@ def bisectp(nn, params, data, init=None):
 
     while diff.max() > params.critbp:
         p0 = (pL + pH) / 2
-        pnew, dist_new  = eq_price(nn, data, params, p0)
+        pnew, dist_new = eq_price(nn, data, params, p0)
         B0 = p0 - pnew
-        
-        # ベクトル化された条件分岐
-        # B0 < 0 の場合、pL を p0 に更新
-        # B0 >= 0 の場合、pH を p0 に更新
-        pL = torch.where(B0 < 0, p0, pL)
-        pH = torch.where(B0 < 0, pH, p0)
+
+        # pnew < 0 の箇所は pL を p0 に更新 (pH は変更なし)
+        negative_mask = (pnew < 0)
+        pL = torch.where(negative_mask, p0, pL)
+        # ここで pH はそのまま (negative_mask 部分は変更せず)
+
+        # pnew >= 0 の箇所のみ B0 に基づいて更新を行う
+        nonnegative_mask = (pnew >= 0)
+        # B0 < 0 の場合、pL = p0
+        pL = torch.where(nonnegative_mask & (B0 < 0), p0, pL)
+        # B0 >= 0 の場合、pH = p0
+        pH = torch.where(nonnegative_mask & (B0 >= 0), p0, pH)
 
         diff = torch.abs(B0)
         iter_count += 1
         if iter_count == 30:
             break
-    
+
     return pnew.to("cpu"), dist_new.to("cpu")
 
 
