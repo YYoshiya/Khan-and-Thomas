@@ -215,9 +215,9 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countp = 0
-    for epoch in range(10):
+    for epoch in range(5):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
@@ -241,9 +241,9 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countv = 0
-    for epoch in range(10):
+    for epoch in range(5):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
@@ -501,13 +501,15 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
     nn.init_dist_k = dist_now_k
 
     return {
-        "grid": k_history,         # 100番目から最後まで
-        "dist": dist_history,      # 100番目から最後まで
-        "dist_k": dist_k_history,  # 100番目から最後まで
-        "grid_k": grid_k_history,  # 100番目から最後まで
-        "ashock": ashock_history,  # 100番目から最後まで
+        "grid": k_history[100:],         # 100番目から最後まで
+        "dist": dist_history[100:],      # 100番目から最後まで
+        "dist_k": dist_k_history[100:],  # 100番目から最後まで
+        "grid_k": grid_k_history[100:],  # 100番目から最後まで
+        "ashock": ashock_history[100:],  # 100番目から最後まで
     }
-    
+
+
+
 def map_to_grid(k_prime, k_grid):
     """
     Map k_prime to the capital grid using linear interpolation.
