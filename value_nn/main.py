@@ -289,7 +289,7 @@ for _ in range(50):
     pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
     loss_value.append(loss_v)
     loss_policy.append(loss_p)
-    if count % 5 == 0:
+    if count % 7 == 0:
         with torch.no_grad():
             true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
         pred.price_train(train_ds.data, true_price, n_model, 100)
