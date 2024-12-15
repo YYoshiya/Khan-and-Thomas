@@ -155,8 +155,8 @@ def bisectp(nn, params, data, init=None):
         pH = p_init * 2
     else:
         p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
-        pL = p_init * 0.5
-        pH = p_init * 1.5
+        pL = p_init * 0.1
+        pH = p_init * 4
 
     while diff.max() > params.critbp:
         p0 = (pL + pH) / 2
@@ -177,7 +177,7 @@ def bisectp(nn, params, data, init=None):
 
         diff = torch.abs(B0)
         iter_count += 1
-        if iter_count == 30:
+        if iter_count == 50:
             break
 
     return pnew.to("cpu"), dist_new.to("cpu")
