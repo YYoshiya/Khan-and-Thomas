@@ -103,7 +103,7 @@ class NextkNN(nn.Module):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
-        x = self.fc4(x)
+        x = self.softplus(self.fc4(x))
         return x
     
 class PriceNN(nn.Module):
@@ -295,7 +295,7 @@ for _ in range(50):
     pred.price_train(train_ds.data, true_price, n_model, 100)
         
         
-    if count % 4 == 0:
+    if count % 5 == 0:
         new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
         vi.plot_mean_k(new_data, 500, 600)
         train_ds_gm.update_data(new_data)
