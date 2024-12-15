@@ -67,7 +67,7 @@ class GeneralizedMomModel(nn.Module):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
-        x = self.fc4(x)
+        x = self.softplus(self.fc4(x))
         return x #このあとこれと分布の内積をとる。
     
 class Price_GM(nn.Module):
@@ -85,7 +85,7 @@ class Price_GM(nn.Module):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
-        x = self.fc4(x)
+        x = self.softplus(self.fc4(x))
         return x #このあとこれと分布の内積をとる。
 
 class NextkNN(nn.Module):
@@ -234,7 +234,7 @@ class nn_class:
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
         self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
-        self.optimizer_pri = optim.Adam(self.params_price, lr=0.01)
+        self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.01)
 
 def initialize_weights(model):
@@ -295,7 +295,7 @@ for _ in range(50):
     pred.price_train(train_ds.data, true_price, n_model, 100)
         
         
-    if count % 5 == 0:
+    if count % 4 == 0:
         new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
         vi.plot_mean_k(new_data, 500, 600)
         train_ds_gm.update_data(new_data)
