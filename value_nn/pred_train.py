@@ -154,7 +154,7 @@ def bisectp(nn, params, data, init=None):
         pL = p_init * 0.1
         pH = p_init * 2
     else:
-        p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
+        p_init = vi.price_fn(data["grid_k"], data["dist_k"], data["ashock"], nn).squeeze(-1)
         pL = p_init * 0.5
         pH = p_init * 1.5
 
@@ -271,13 +271,13 @@ class Pred_Dataset(Dataset):
 
 def price_train(data, price, nn, num_epochs):
     with torch.no_grad():
-        train_dataset = Pred_Dataset(data["grid"], data["dist"], data["ashock"], price)
+        train_dataset = Pred_Dataset(data["grid_k"], data["dist_k"], data["ashock"], price)
         valid_size = 64
         train_size = len(train_dataset) - valid_size
         train_data, valid_data = random_split(train_dataset, [train_size, valid_size])
         train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
         valid_loader = DataLoader(valid_data, batch_size=32, shuffle=True)
-        optimizer = optim.Adam(nn.params_price, lr=0.01)
+        optimizer = optim.Adam(nn.params_price, lr=0.001)
         valid_loss = 1
         epoch = 0
     while epoch < num_epochs and valid_loss > 1e-6:
@@ -318,7 +318,7 @@ def next_gm_fn(gm, ashock, nn):
 def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     G = data["grid"].size(0)
     i_size = params.ishock_gpu.size(0)
-    price = vi.price_fn(data["grid"], data["dist"], data["ashock"][:,0], nn)#batch, 1
+    price = vi.price_fn(data["grid_k"], data["dist_k"], data["ashock"][:,0], nn)#batch, 1
     next_gm = vi.dist_gm(data["grid_k"], data["dist_k"], data["ashock"][:,0],nn)#batch, 1
     ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in data["ashock"][:,0]]#batch
     ashock_exp = params.pi_a_gpu[ashock_idx].to(device)#batch, 5

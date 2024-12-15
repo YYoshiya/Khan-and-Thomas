@@ -175,11 +175,11 @@ def price_fn(grid, dist, ashock, nn, mean=None):
         mean = torch.sum(grid * dist, dim=-1)
         state = torch.stack([ashock, mean], dim=1)
     else:
-        grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
-        ashock_norm = (ashock - params.shock_min) / (params.shock_max - params.shock_min)
-        gm_tmp = nn.gm_model_price(grid_norm)#batch, grid_size, i_size
-        gm_price = torch.sum(gm_tmp * dist, dim=-2)#batch, i_size
-        state = torch.cat([ashock_norm.unsqueeze(-1), gm_price], dim=1)#batch, i_size+1
+        grid_norm = ((grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)).unsqueeze(-1)
+        #ashock_norm = (ashock - params.shock_min) / (params.shock_max - params.shock_min)
+        gm_tmp = nn.gm_model_price(grid_norm).squeeze(-1)#batch, grid_size
+        gm_price = torch.sum(gm_tmp * dist, dim=-1)#batch
+        state = torch.cat([ashock.unsqueeze(-1), gm_price.unsqueeze(-1)], dim=1)#batch, i_s
     price = nn.price_model(state)#batch, 1
     return price
 
@@ -249,7 +249,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
             with torch.no_grad():
-                price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn, mean=mean)
+                price = price_fn(train_data["grid_k"],train_data["dist_k"], train_data["ashock"], nn, mean=mean)
                 if p_init is not None:
                     price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
                 #入力は分布とashockかな。
@@ -323,7 +323,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
     if p_init is not None:
         price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
     else:
-        price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn, mean=mean)
+        price = price_fn(train_data["grid_k"],train_data["dist_k"], train_data["ashock"], nn, mean=mean)
     next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"],nn)
     ashock = train_data["ashock"]
     ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
@@ -365,7 +365,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
 def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     G = train_data["grid_k"].size(0)  # grid のサイズ
     i_size = params.ishock.size(0)  # i のサイズ
-    price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"][:,0], nn, mean=mean)#G,1
+    price = price_fn(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0], nn, mean=mean)#G,1
     if p_init is not None:
         price = torch.full_like(price, p_init, dtype=TORCH_DTYPE)
     next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0],nn)#G,1
