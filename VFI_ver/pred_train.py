@@ -156,7 +156,7 @@ def bisectp(nn, params, data, init=None):
     else:
         p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
         pL = p_init * 0.1
-        pH = p_init * 4
+        pH = p_init * 
 
     while diff.max() > params.critbp:
         p0 = (pL + pH) / 2
