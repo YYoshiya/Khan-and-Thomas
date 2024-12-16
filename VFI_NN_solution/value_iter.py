@@ -223,9 +223,10 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)
-            loss_tmp = torch.mean(F.relu(0.1 - next_k) * 100)
+            loss_1 = torch.mean(F.relu(0.1 - next_k) * 10000)
+            loss_2 = torch.mean(F.relu(next_k - 4) * 10000)
             loss_p = -torch.mean(next_v)
-            loss = loss_p + loss_tmp
+            loss = loss_p + loss_1 + loss_2
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
