@@ -198,7 +198,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
             next_k = nn.policy(train_data['X']).squeeze(-1)
-            target = torch.full_like(next_k, 2, dtype=TORCH_DTYPE).to(device)
+            target = torch.full_like(next_k, 2.5, dtype=TORCH_DTYPE).to(device)
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
             loss.backward()
@@ -218,17 +218,19 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
-    for epoch in range(3):
+    for epoch in range(5):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
-            next_v, _ = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)
-            loss = -torch.mean(next_v)
+            next_v, _, next_k = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)
+            loss_tmp = torch.mean(F.relu(0.1 - next_k) * 100)
+            loss_p = -torch.mean(next_v)
+            loss = loss_p + loss_tmp
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             if countp % 100 == 0:
-                print(f"count: {countp}, loss: {-loss.item()}")
+                print(f"count: {countp}, loss: {-loss.item()}, next_k: {next_k.mean().item()}")
     
     for param in nn.value0.parameters():
         param.requires_grad = True
@@ -244,7 +246,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countv = 0
-    for epoch in range(3):
+    for epoch in range(5):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
@@ -255,12 +257,11 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 #入力は分布とashockかな。
                 wage = params.eta / price
                 profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
-                e0, e1 = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+                e0, e1, next_k = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
                 xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
-                check1 = - price*wage*xi**2/(2*params.B)
-                vnew = profit - price*wage*xi**2/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
+                vnew = profit - (price*wage*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
             v = value_fn(train_data, nn, params)
             loss = F.mse_loss(v, vnew)
             optimizer.zero_grad()
@@ -359,7 +360,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
     e0 = -next_k * price + params.beta * expected_value0
     e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
     
-    return e0, e1
+    return e0, e1, next_k
 
 
 def next_value_sim(train_data, nn, params, p_init=None, mean=None):
