@@ -38,7 +38,8 @@ def move_models_to_device(nn, device):
     nn.policy.to(device)
     nn.next_gm_model.to(device)
     nn.gm_model_price.to(device)
-
+    nn.target_value.to(device)
+    nn.target_gm_model.to(device)
 
 class MyDataset(Dataset):
     def __init__(self, num_sample, k_cross=None, ashock=None, ishock=None, grid=None, dist=None, grid_k=None, dist_k=None):
@@ -225,7 +226,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
-            next_v, _, next_k = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)
+            next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)
             loss_1 = torch.mean(F.relu(0.1 - next_k) * 10000)
             loss_2 = torch.mean(F.relu(next_k - 4) * 10000)
             loss_p = -torch.mean(next_v)
@@ -262,7 +263,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 #入力は分布とashockかな。
                 wage = params.eta / price
                 profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
-                e0, e1, next_k = next_value(train_data, nn, params, "cuda", p_init=p_init, mean=mean)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+                e0, e1, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
                 xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
@@ -511,7 +512,7 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
         dist_now_k = dist_new_k
         k_now_k = k_new_k
         a = a_new  # Update aggregate shock if necessary
-    move_models_to_device(nn, "cuda")
+    move_models_to_device(nn, device)
     nn.init_dist = dist_now
     nn.init_dist_k = dist_now_k
 

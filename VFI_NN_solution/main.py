@@ -276,7 +276,7 @@ n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
 n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
-
+n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
 init_price = 2.8
 mean=None
@@ -290,6 +290,8 @@ dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
 train_ds_gm = BasicDatasetGM(dataset_grid)
 train_ds = basic_dataset(dataset_grid)
 
+n_model.target_value.load_state_dict(n_model.value0.state_dict())
+n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
 #new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
