@@ -39,10 +39,27 @@ else:
 class ValueNN(nn.Module):
     def __init__(self, d_in):
         super(ValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 64)
-        self.fc4 = nn.Linear(64, 1)
+        self.fc1 = nn.Linear(d_in, 32)
+        self.fc2 = nn.Linear(32, 32)
+        self.fc3 = nn.Linear(32, 32)
+        self.fc4 = nn.Linear(32, 1)
+        self.relu = nn.ReLU()
+        self.tanh = nn.Tanh()
+    
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x
+    
+class TargetValueNN(nn.Module):
+    def __init__(self, d_in):
+        super(TargetValueNN, self).__init__()
+        self.fc1 = nn.Linear(d_in, 32)
+        self.fc2 = nn.Linear(32, 32)
+        self.fc3 = nn.Linear(32, 32)
+        self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
     
@@ -220,8 +237,10 @@ class nn_class:
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.value0 = ValueNN(4).to(self.device)
+        self.target_value = TargetValueNN(4).to(self.device)
         self.policy = NextkNN(3).to(self.device)
         self.gm_model = GeneralizedMomModel(1).to(self.device)
+        self.target_gm_model = GeneralizedMomModel(1).to(self.device)
         self.gm_model_policy = GeneralizedMomModel(1).to(self.device)
         self.next_gm_model = Next_gmNN(2).to(self.device)
         self.gm_model_price =Price_GM(5).to(self.device)
@@ -244,6 +263,7 @@ def initialize_weights(model):
             if layer.bias is not None:
                 init.constant_(layer.bias, 0)  # バイアスをゼロに初期化
 
+
         
 n_model = nn_class()
 params = KTParam()
@@ -255,6 +275,8 @@ n_model.gm_model_policy.apply(initialize_weights)
 n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
 n_model.price_model.apply(initialize_weights)
+n_model.target_value.load_state_dict(n_model.value0.state_dict())
+
 
 init_price = 2.8
 mean=None

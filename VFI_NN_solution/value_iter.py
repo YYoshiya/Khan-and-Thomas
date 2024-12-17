@@ -135,16 +135,19 @@ class Valueinit(Dataset):
         y = getattr(self, self.target_attr)[idx]  # Use the attribute specified by target_attr
         return {'X': X, 'y': y}
 
-        
 
-def padding(list_of_arrays):
-    max_cols = max(array.numel() for array in list_of_arrays)
-    padded_arrays = []
-    for array in list_of_arrays:
-        padded_array = F.pad(array, (0, max_cols - array.numel()), mode='constant', value=0)
-        padded_arrays.append(padded_array)
-    data = torch.stack(padded_arrays, dim=0)
-    return data
+def soft_update(target, source, tau):
+    """
+    ターゲットネットワークのパラメータをメインネットワークのパラメータでソフトに更新します。
+    
+    Parameters:
+        target (nn.Module): ターゲットネットワーク
+        source (nn.Module): メインネットワーク
+        tau (float): 更新割合
+    """
+    for target_param, source_param in zip(target.parameters(), source.parameters()):
+        target_param.data.copy_(tau * source_param.data + (1.0 - tau) * target_param.data)
+
 
 def value_fn(train_data, nn, params):
     grid_norm = (train_data["grid_k"] - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
@@ -247,6 +250,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countv = 0
+    tau = 0.001
     for epoch in range(5):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -274,6 +278,8 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                     sys.exit("Training stopped due to NaN in gradients")
 
             optimizer.step()
+            soft_update(nn.target_value, nn.value0, tau)
+            soft_update(nn.target_gm_model, nn.gm_model, tau)
             if countv % 100 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")
     return loss.item()
@@ -313,7 +319,7 @@ def get_profit(k_cross, ashock, ishock, price, params):
 
 def dist_gm(grid, dist, ashock, nn):
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
-    gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))
+    gm_tmp = nn.target_gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     state = torch.cat([ashock.unsqueeze(-1), gm], dim=1)
     next_gm = nn.next_gm_model(state)
@@ -351,8 +357,8 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
     data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    value0 = nn.value0(data_e0).squeeze(-1)
-    value1 = nn.value0(data_e1).squeeze(-1)
+    value0 = nn.target_value(data_e0).squeeze(-1)
+    value1 = nn.target_value(data_e1).squeeze(-1)
     value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     checkv0 = value0[:, 0, 0]
