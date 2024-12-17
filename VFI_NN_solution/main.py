@@ -308,13 +308,16 @@ for _ in range(50):
 
     count += 1
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    n_model.target_value.load_state_dict(n_model.value0.state_dict())
+    n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
     loss_value.append(loss_v)
     pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
     if count % 3 == 0:
         loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
         loss_policy.append(loss_p)
     
-    if count % 20 == 0:
+    if count % 10 == 0:
         with torch.no_grad():
             true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
         pred.price_train(train_ds.data, true_price, n_model, 100)
