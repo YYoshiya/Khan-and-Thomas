@@ -39,10 +39,10 @@ else:
 class ValueNN(nn.Module):
     def __init__(self, d_in):
         super(ValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32, 32)
-        self.fc3 = nn.Linear(32, 32)
-        self.fc4 = nn.Linear(32, 1)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, 64)
+        self.fc4 = nn.Linear(64, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
     
@@ -232,8 +232,8 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.00005)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00005)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.01)
 
@@ -277,7 +277,7 @@ with torch.no_grad():
     true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data, 2)
 pred.price_train(train_ds.data, true_price, n_model, 300)
 pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
-params.B = 0.1
+#params.B = 0.1
 
 count = 0
 loss_value = []
@@ -285,18 +285,21 @@ loss_policy = []
 for _ in range(50):
 
     count += 1
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
     loss_value.append(loss_v)
-    loss_policy.append(loss_p)
     pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
-      
     if count % 3 == 0:
+        loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        loss_policy.append(loss_p)
+    
+    if count % 20 == 0:
         with torch.no_grad():
             true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
-        pred.price_train(train_ds.data, true_price, n_model, 200)
+        pred.price_train(train_ds.data, true_price, n_model, 100)
         new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
         #vi.plot_mean_k(new_data, 500, 600)
         train_ds_gm.update_data(new_data)
         train_ds.data = new_data
-        
+        with torch.no_grad():
+            true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
+        pred.price_train(train_ds.data, true_price, n_model, 200)

@@ -216,9 +216,9 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countp = 0
-    for epoch in range(5):
+    for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
@@ -245,7 +245,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countv = 0
     for epoch in range(5):
         for train_data in dataloader:
@@ -262,7 +262,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
                 xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
-                vnew = profit - (price*wage*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
+                vnew = profit - (params.eta*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
             v = value_fn(train_data, nn, params)
             loss = F.mse_loss(v, vnew)
             optimizer.zero_grad()
@@ -325,15 +325,19 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
     if p_init is not None:
         price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
     else:
-        price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn, mean=mean)
-    next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"],nn)
-    ashock = train_data["ashock"]
-    ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
-    ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)
-    ishock = train_data["ishock"]
-    ishock_idx = [torch.where(params.ishock_gpu == val)[0].item() for val in ishock]
-    ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
-    probabilities = ashock_exp * ishock_exp
+        # price計算をno_gradで囲む
+        with torch.no_grad():
+            price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn, mean=mean)
+
+    with torch.no_grad():
+        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
+        ashock = train_data["ashock"]
+        ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
+        ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)
+        ishock = train_data["ishock"]
+        ishock_idx = [torch.where(params.ishock_gpu == val)[0].item() for val in ishock]
+        ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
+        probabilities = ashock_exp * ishock_exp
     
     next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], nn)#batch, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')

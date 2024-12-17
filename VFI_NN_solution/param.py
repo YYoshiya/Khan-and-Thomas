@@ -41,9 +41,9 @@ class KTParam():
         self.grid_size = 50
         # 0.1から50までのlogspaceで50個のグリッドを生成
         start = torch.log10(torch.tensor(0.1))
-        end = torch.log10(torch.tensor(5))
-        #self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
-        self.k_grid_tmp = torch.linspace(0.1, 4, self.grid_size)
+        end = torch.log10(torch.tensor(8))
+        self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
+        #self.k_grid_tmp = torch.linspace(0.1, 4, self.grid_size)
         self.k_grid_max = self.k_grid_tmp.max().item()
         self.k_grid_min = self.k_grid_tmp.min().item()
         
