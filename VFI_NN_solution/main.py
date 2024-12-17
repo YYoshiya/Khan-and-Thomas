@@ -52,6 +52,23 @@ class ValueNN(nn.Module):
         x = self.relu(self.fc3(x))
         x = self.fc4(x)
         return x
+    
+class TargetValueNN(nn.Module):
+    def __init__(self, d_in):
+        super(TargetValueNN, self).__init__()
+        self.fc1 = nn.Linear(d_in, 32)
+        self.fc2 = nn.Linear(32, 32)
+        self.fc3 = nn.Linear(32, 32)
+        self.fc4 = nn.Linear(32, 1)
+        self.relu = nn.ReLU()
+        self.tanh = nn.Tanh()
+    
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x
 
 class GeneralizedMomModel(nn.Module):
     def __init__(self, d_in):
@@ -121,7 +138,7 @@ class PriceNN(nn.Module):
     def forward(self, x):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
+        #x = self.relu(self.fc3(x))
         #x = self.tanh(self.fc4(x))
         x = self.output(x)
         return x
@@ -220,8 +237,10 @@ class nn_class:
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.value0 = ValueNN(4).to(self.device)
+        self.target_value = TargetValueNN(4).to(self.device)
         self.policy = NextkNN(3).to(self.device)
         self.gm_model = GeneralizedMomModel(1).to(self.device)
+        self.target_gm_model = GeneralizedMomModel(1).to(self.device)
         self.gm_model_policy = GeneralizedMomModel(1).to(self.device)
         self.next_gm_model = Next_gmNN(2).to(self.device)
         self.gm_model_price =Price_GM(5).to(self.device)
@@ -232,8 +251,8 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.00005)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00005)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.01)
 
@@ -243,6 +262,7 @@ def initialize_weights(model):
             init.kaiming_normal_(layer.weight, nonlinearity='relu')  # He Initialization
             if layer.bias is not None:
                 init.constant_(layer.bias, 0)  # バイアスをゼロに初期化
+
 
         
 n_model = nn_class()
@@ -255,8 +275,10 @@ n_model.gm_model_policy.apply(initialize_weights)
 n_model.next_gm_model.apply(initialize_weights)
 n_model.gm_model_price.apply(initialize_weights)
 n_model.price_model.apply(initialize_weights)
+n_model.target_value.load_state_dict(n_model.value0.state_dict())
+n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.85
+init_price = 2.8
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -268,16 +290,18 @@ dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
 train_ds_gm = BasicDatasetGM(dataset_grid)
 train_ds = basic_dataset(dataset_grid)
 
+n_model.target_value.load_state_dict(n_model.value0.state_dict())
+n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
-new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
+#new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
-train_ds_gm.update_data(new_data)
-train_ds.data = new_data
+#train_ds_gm.update_data(new_data)
+#train_ds.data = new_data
 with torch.no_grad():
     true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data, 2)
-pred.price_train(train_ds.data, true_price, n_model, 100)
+pred.price_train(train_ds.data, true_price, n_model, 300)
 pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
-params.B = 0.01
+#params.B = 0.1
 
 count = 0
 loss_value = []
@@ -285,23 +309,21 @@ loss_policy = []
 for _ in range(50):
 
     count += 1
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    n_model.target_value.load_state_dict(n_model.value0.state_dict())
     loss_value.append(loss_v)
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+    pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
     loss_policy.append(loss_p)
-    pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
-    #with torch.no_grad():
-        #true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
-    #pred.price_train(train_ds.data, true_price, n_model, 100)
-        
-        
-    if count % 10 == 0:
+    
+    if count % 5 == 0:
+        with torch.no_grad():
+            true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
+        pred.price_train(train_ds.data, true_price, n_model, 200)
         new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
         #vi.plot_mean_k(new_data, 500, 600)
         train_ds_gm.update_data(new_data)
         train_ds.data = new_data
-        pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
         with torch.no_grad():
             true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
         pred.price_train(train_ds.data, true_price, n_model, 200)
-        

@@ -9,7 +9,7 @@ class KTParam():
         self.delta = 0.069
         self.gamma = 1.0160
         self.eta = 2.40
-        self.B = 0.1
+        self.B = 0.2
         self.ashock = torch.tensor([0.9328, 0.9658, 1.0000, 1.0354, 1.0720])
         self.ashock_gpu = self.ashock.to(self.device)
         self.shock_max = self.ashock.max().item()
@@ -43,6 +43,7 @@ class KTParam():
         start = torch.log10(torch.tensor(0.1))
         end = torch.log10(torch.tensor(8))
         self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
+        #self.k_grid_tmp = torch.linspace(0.1, 4, self.grid_size)
         self.k_grid_max = self.k_grid_tmp.max().item()
         self.k_grid_min = self.k_grid_tmp.min().item()
         
