@@ -138,7 +138,7 @@ class PriceNN(nn.Module):
     def forward(self, x):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
+        #x = self.relu(self.fc3(x))
         #x = self.tanh(self.fc4(x))
         x = self.output(x)
         return x
@@ -311,16 +311,15 @@ for _ in range(50):
     count += 1
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
     n_model.target_value.load_state_dict(n_model.value0.state_dict())
-    n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
     loss_value.append(loss_v)
     loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-    pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 20)
+    pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
     loss_policy.append(loss_p)
     
     if count % 5 == 0:
         with torch.no_grad():
             true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
-        pred.price_train(train_ds.data, true_price, n_model, 100)
+        pred.price_train(train_ds.data, true_price, n_model, 200)
         new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
         #vi.plot_mean_k(new_data, 500, 600)
         train_ds_gm.update_data(new_data)
