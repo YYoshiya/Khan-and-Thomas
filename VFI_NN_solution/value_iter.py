@@ -222,7 +222,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countp = 0
-    for epoch in range(10):
+    for epoch in range(5):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
@@ -252,7 +252,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countv = 0
     tau = 0.001
-    for epoch in range(5):
+    for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
