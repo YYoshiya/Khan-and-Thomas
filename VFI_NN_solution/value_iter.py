@@ -241,7 +241,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
         param.requires_grad = True
     return loss.item()
 
-
+# By implementing hard targetting, we might be able to accelerate the training process. But, not yet.
 def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=None):
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
@@ -252,7 +252,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
     countv = 0
     tau = 0.001
-    for epoch in range(5):
+    for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
