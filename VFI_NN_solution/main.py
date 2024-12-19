@@ -254,8 +254,8 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.001)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.001)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.01)
 
@@ -313,10 +313,10 @@ previous_loss = 0
 for _ in range(50):
 
     count += 1
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
     n_model.target_value.load_state_dict(n_model.value0.state_dict())
     n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_value.append(loss_v)
     loss_policy.append(loss_p)
     loss_change = abs(loss_p - previous_loss)
