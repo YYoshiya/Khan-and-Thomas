@@ -366,7 +366,7 @@ class NextGMDataset(Dataset):
         return self.gm[idx].to(device), self.ashock[idx].to(device), self.next_gm[idx].to(device)
     
 
-def next_gm_train(data, new_dist, nn, params, optimizer, T, num_sample, epochs, save_plot_dir='plots'):
+def next_gm_train(data, new_dist, nn, params, optimizer, T, num_sample, epochs, save_plot_dir='results/next_gm'):
     # プロット用ディレクトリの作成
     os.makedirs(save_plot_dir, exist_ok=True)
     
@@ -424,44 +424,43 @@ def next_gm_train(data, new_dist, nn, params, optimizer, T, num_sample, epochs, 
 
             avg_val_loss = epoch_val_loss / len(valid_loader)
             val_losses.append(avg_val_loss)
-            if epoch % 10 == 0:
+            if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
                 print(f"Epoch: {epoch+1}, Train Loss: {avg_train_loss:.10f}, Validation Loss: {avg_val_loss:.10f}")
-        
-        # プロット（10エポックごとまたは最後のエポック）
-        if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
-            val_inputs_tensor = torch.cat(val_inputs, dim=0).view(-1)
-            val_targets_tensor = torch.cat(val_targets, dim=0).view(-1)
-            val_predictions_tensor = torch.cat(val_predictions, dim=0).view(-1)
     
-            plt.figure(figsize=(14, 6))
+    # 最後のエポックのプロットを保存
+    nn.gm_model.eval()
+    with torch.no_grad():
+        val_inputs = []
+        val_targets = []
+        val_predictions = []
+        for input, ashock_val, target in valid_loader:
+            val_inputs.append(input.cpu())
+            val_targets.append(target.cpu())
+            next_gm = next_gm_fn(input.unsqueeze(-1), ashock_val.unsqueeze(-1), nn)
+            val_predictions.append(next_gm.cpu())
     
-            # 真の値と予測値のプロット
-            plt.subplot(1, 2, 1)
-            sns.scatterplot(x=val_inputs_tensor.numpy(), y=val_targets_tensor.numpy(), label='True', alpha=0.5, s=40)
-            sns.scatterplot(x=val_inputs_tensor.numpy(), y=val_predictions_tensor.numpy(), label='Predicted', alpha=0.5, s=40)
-            plt.xlabel('Input')
-            plt.ylabel('Output')
-            plt.title(f'Epoch {epoch+1} Predictions')
-            plt.legend()
-    
-            # ロスのプロット
-            plt.subplot(1, 2, 2)
-            epochs_range = range(1, epoch+2)
-            sns.lineplot(x=epochs_range, y=train_losses, label='Train Loss')
-            sns.lineplot(x=epochs_range, y=val_losses, label='Validation Loss')
-            plt.xlabel('Epoch')
-            plt.ylabel('Loss')
-            plt.title('Loss over Epochs')
-            plt.legend()
-    
-            plt.tight_layout()
-            plot_filename = os.path.join(save_plot_dir, f'epoch_{epoch+1}.png')
-            plt.savefig(plot_filename)
-            plt.close()  # メモリを節約するためにプロットを閉じる
-    
-            print(f"Plot saved to {plot_filename}")
-    
-    # 最終的な損失曲線をプロット
+    val_inputs_tensor = torch.cat(val_inputs, dim=0).view(-1)
+    val_targets_tensor = torch.cat(val_targets, dim=0).view(-1)
+    val_predictions_tensor = torch.cat(val_predictions, dim=0).view(-1)
+
+    plt.figure(figsize=(8, 6))
+
+    # 真の値と予測値のプロット
+    sns.scatterplot(x=val_inputs_tensor.numpy(), y=val_targets_tensor.numpy(), label='True', alpha=0.5, s=40)
+    sns.scatterplot(x=val_inputs_tensor.numpy(), y=val_predictions_tensor.numpy(), label='Predicted', alpha=0.5, s=40)
+    plt.xlabel('Input')
+    plt.ylabel('Output')
+    plt.title(f'Final Epoch Predictions (Epoch {epochs})')
+    plt.legend()
+
+    plt.tight_layout()
+    plot_filename = os.path.join(save_plot_dir, f'epoch_{epochs}.png')
+    plt.savefig(plot_filename)
+    plt.close()  # メモリを節約するためにプロットを閉じる
+
+    print(f"Final epoch plot saved to {plot_filename}")
+
+    # 最終的な損失曲線をプロット（オプション）
     plt.figure(figsize=(8, 6))
     sns.lineplot(x=range(1, epochs+1), y=train_losses, label='Train Loss')
     sns.lineplot(x=range(1, epochs+1), y=val_losses, label='Validation Loss')

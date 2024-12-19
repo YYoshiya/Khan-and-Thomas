@@ -109,8 +109,8 @@ class Price_GM(nn.Module):
 class NextkNN(nn.Module):
     def __init__(self, d_in):
         super(NextkNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 32)
+        self.fc1 = nn.Linear(d_in, 32)
+        self.fc2 = nn.Linear(32, 32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -128,8 +128,8 @@ class NextkNN(nn.Module):
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32,32)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64,32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 32)
         self.output = nn.Linear(32, 1)
@@ -289,7 +289,7 @@ pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
 with torch.no_grad():
     dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
-#vi.plot_mean_k(dataset_grid, 500, 600)
+vi.plot_mean_k(dataset_grid, 500, 600)
 train_ds_gm = BasicDatasetGM(dataset_grid)
 train_ds = basic_dataset(dataset_grid)
 params.B = 0.0083
@@ -329,6 +329,7 @@ for _ in range(50):
     if count % 5 == 0:
         with torch.no_grad():
             new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
+            vi.plot_mean_k(dataset_grid, 500, 600)
         #vi.plot_mean_k(new_data, 500, 600)
         #train_ds_gm.update_data(new_data)
         #train_ds.data = new_data

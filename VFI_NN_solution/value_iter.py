@@ -228,7 +228,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
     for epoch in range(5):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
@@ -763,15 +763,19 @@ def next_ishock(current, shock, Pi):
     return next_shocks
 
 
-def plot_mean_k(dataset, start_iteration, end_iteration):
+def plot_mean_k(dataset, start_iteration, end_iteration, save_plot_dir='results/mean_k_sim'):
     """
-    mean_k_history の指定範囲をプロットする関数
+    mean_k_history の指定範囲をプロットして保存する関数
 
     Parameters:
     - dataset (dict): get_dataset 関数から返される辞書
     - start_iteration (int): プロット開始の反復番号（例: 500）
     - end_iteration (int): プロット終了の反復番号（例: 600）
+    - save_plot_dir (str): プロットを保存するディレクトリのパス（デフォルト: 'results/mean_k_sim'）
     """
+    # プロット用ディレクトリの作成
+    os.makedirs(save_plot_dir, exist_ok=True)
+    
     mean_k_history = dataset.get("mean_k", None)
     
     if mean_k_history is None:
@@ -781,7 +785,7 @@ def plot_mean_k(dataset, start_iteration, end_iteration):
     if end_iteration > total_iterations:
         raise ValueError(f"end_iteration ({end_iteration}) exceeds the total available iterations ({total_iterations}).")
     
-    # get_datasetが100番目以降のデータを返しているため、スライスを調整
+    
     adjusted_start = start_iteration - 100
     adjusted_end = end_iteration - 100
     
@@ -803,4 +807,11 @@ def plot_mean_k(dataset, start_iteration, end_iteration):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    
+   
+    plot_filename = f'mean_k_{start_iteration}_to_{end_iteration}.png'
+    plot_path = os.path.join(save_plot_dir, plot_filename)
+    plt.savefig(plot_path)
+    plt.close()  
+    
+    print(f"Plot saved to {plot_path}")
