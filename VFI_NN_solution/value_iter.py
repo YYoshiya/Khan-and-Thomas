@@ -356,19 +356,20 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
         probabilities = ashock_exp * ishock_exp
     
     next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], nn)#batch, 
+    next_k_norm = (next_k - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
     a_flat = a_mesh_norm.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
     i_flat = i_mesh_norm.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
-    next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
+    next_k_flat = next_k_norm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     k_cross_flat = train_data["k_cross"].unsqueeze(-1).repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     pre_k_flat = (1-params.delta)*k_cross_flat
-    k_check = train_data["k_cross"]*(1-params.delta)
+    pre_k_flat_norm = (pre_k_flat - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
+    data_e1 = torch.cat([pre_k_flat_norm, a_flat, i_flat, next_gm_flat], dim=2)
     value0 = nn.target_value(data_e0).squeeze(-1)
     value1 = nn.target_value(data_e1).squeeze(-1)
     value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
@@ -399,6 +400,7 @@ def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     
 
     next_k = policy_fn_sim(train_data["ashock"], train_data["ishock"], train_data["grid_k"], train_data["dist_k"], nn)#G, i_size, 1
+    next_k_norm = (next_k - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
@@ -413,13 +415,14 @@ def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     # next_k の形状: [5, 1]
     # 1. 次元を追加して [1, 5, 1, 1] に変換
     # 2. expand で [G, 5, 25, 1] に拡張
-    next_k_flat = next_k.expand(-1, -1, a_flat.size(0)).unsqueeze(-1)  # [G, 5, I*A, 1]
+    next_k_flat = next_k_norm.expand(-1, -1, a_flat.size(0)).unsqueeze(-1)  # [G, 5, I*A, 1]
     next_gm_flat = next_gm.view(-1, 1, 1, 1).expand(G, i_size, a_flat.size(0), 1)  # [G, 5, I*A, 1]
     k_cross_flat = train_data["k_cross"].view(G, 1, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
     pre_k_flat = (1-params.delta) * k_cross_flat
+    pre_k_flat_norm = (pre_k_flat - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     
-    data_v0 = torch.cat([next_k_flat, a_4d, i_4d, next_gm_flat], dim=3)  # [G, 5, I*A, 4]
-    data_v1 = torch.cat([pre_k_flat, a_4d, i_4d, next_gm_flat], dim=3)  # [G, 5, I*A, 4]
+    data_v0 = torch.cat([next_k_flat, a_4d, i_4d, next_gm_flat], dim=3)  # [G, 5, I*A, 4] aleady normed
+    data_v1 = torch.cat([pre_k_flat_norm, a_4d, i_4d, next_gm_flat], dim=3)  # [G, 5, I*A, 4]
     value0 = nn.value0(data_v0).view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
     value1 = nn.value0(data_v1).view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
     
