@@ -281,7 +281,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.5
+init_price = 2.75
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -310,10 +310,12 @@ count = 0
 loss_value = []
 loss_policy = []
 previous_loss = 0
+loss_v = 1
 for _ in range(50):
 
     count += 1
-    loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    while loss_v > 0.01:
+        loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
     n_model.target_value.load_state_dict(n_model.value0.state_dict())
     n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
     loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)

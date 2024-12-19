@@ -88,7 +88,8 @@ class Valueinit(Dataset):
         if k_cross is not None:
             if not isinstance(k_cross, torch.Tensor):
                 k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE)
-            self.k_cross = k_cross.view(-1, 1).squeeze(-1)
+                k_cross_norm = (k_cross - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
+            self.k_cross = k_cross_norm.view(-1, 1).squeeze(-1)
 
         if ashock is not None:
             if not isinstance(ashock, torch.Tensor):
@@ -158,7 +159,8 @@ def value_fn(train_data, nn, params):
     ishock_norm = (train_data["ishock"] - params.ishock_min) / (params.ishock_max - params.ishock_min)
     gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * train_data["dist_k"].unsqueeze(-1), dim=-2)
-    state = torch.cat([train_data["k_cross"].unsqueeze(-1), ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=1)
+    k_cross_norm = (train_data["k_cross"] - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
+    state = torch.cat([k_cross_norm.unsqueeze(-1), ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=1)
     value = nn.value0(state)
     return value
 
@@ -291,6 +293,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             soft_update(nn.target_gm_model, nn.gm_model, tau)
             if countv % 100 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")
+            
     return loss.item()
 
 def value_init(nn, params, optimizer, T, num_sample):   
@@ -310,7 +313,8 @@ def value_init(nn, params, optimizer, T, num_sample):
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             v = nn.value0(train_data['X']).squeeze(-1)
-            loss = F.mse_loss(v, 4*(train_data['y']**0.8))
+            target = train_data['y'] * (params.k_grid_max - params.k_grid_min) + params.k_grid_min
+            loss = F.mse_loss(v, 4*(target**0.8))
             loss.backward()
             optimizer.step()
             if countv % 100 == 0:
