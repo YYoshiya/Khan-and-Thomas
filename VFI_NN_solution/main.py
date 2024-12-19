@@ -82,10 +82,10 @@ class GeneralizedMomModel(nn.Module):
         self.leakyrelu = nn.LeakyReLU()
         self.softplus = nn.Softplus()
     def forward(self, x):
-        x = self.leakyrelu(self.fc1(x))
-        x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
-        x = self.leakyrelu(self.fc4(x))
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.softplus(self.fc4(x))
         return x #このあとこれと分布の内積をとる。
     
 class Price_GM(nn.Module):
@@ -100,10 +100,10 @@ class Price_GM(nn.Module):
         self.softplus = nn.Softplus()
         self.leakyrelu = nn.LeakyReLU()
     def forward(self, x):
-        x = self.leakyrelu(self.fc1(x))
-        x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
-        x = self.fc4(x)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.softplus(self.fc4(x))
         return x #このあとこれと分布の内積をとる。
 
 class NextkNN(nn.Module):
