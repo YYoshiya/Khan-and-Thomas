@@ -229,8 +229,10 @@ def next_value_price(data, nn, params, max_cols, price):#batch, max_cols, i_size
     next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
     next_k_expa = next_k.squeeze(-1).unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')  # indexing='ij' を明示的に指定
-    a_flat = a_mesh.flatten()  # shape: [I*A]
-    i_flat = i_mesh.flatten()  # shape: [I*A]
+    a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
+    a_flat = a_mesh_norm.flatten()  # shape: [I*A]
+    i_flat = i_mesh_norm.flatten()  # shape: [I*A]
     a_5d = a_flat.view(1, 1, 1, -1, 1).expand(G, max_cols, i_size, -1 ,1)#batch, max_cols, i_size, i*a, 1
     i_5d = i_flat.view(1, 1, 1, -1, 1).expand(G, max_cols, i_size, -1, 1)#batch, max_cols, i_size, 1, i*a
     next_k_flat = next_k_expa.view(G, max_cols, i_size, 1, 1).expand(-1, -1, -1, a_flat.size(0), 1)#batch, max_cols, i_size, i*a, 1
@@ -301,17 +303,11 @@ def gm_fn(grid, dist, nn):
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)#batch, 1
     return gm.squeeze(-1)
 
-def policy_fn(ashock, ishock, grid_k, dist_k, nn):
-    grid_norm = (grid_k - params.k_grid_mean) / params.k_grid_std
-    gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
-    gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)
-    state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=-1)
-    next_k = nn.policy(state)
-    return next_k
 
 
 def next_gm_fn(gm, ashock, nn):
-    state = torch.cat([ashock, gm], dim=1)
+    ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    state = torch.cat([ashock_norm, gm], dim=1)
     next_gm = nn.next_gm_model(state)
     return next_gm
 
@@ -327,8 +323,10 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     next_k = vi.policy_fn_sim(data["ashock"], data["ishock"], data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
     next_k_expa = next_k.squeeze(-1).unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')  # indexing='ij' を明示的に指定
-    a_flat = a_mesh.flatten()  # shape: [I*A]
-    i_flat = i_mesh.flatten()  # shape: [I*A]
+    a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
+    a_flat = a_mesh_norm.flatten()  # shape: [I*A]
+    i_flat = i_mesh_norm.flatten()  # shape: [I*A]
     a_5d = a_flat.view(1, 1, 1, -1, 1).expand(G, max_cols, i_size, -1 ,1)#batch, max_cols, i_size, i*a, 1
     i_5d = i_flat.view(1, 1, 1, -1, 1).expand(G, max_cols, i_size, -1, 1)#batch, max_cols, i_size, 1, i*a
     next_k_flat = next_k_expa.view(G, max_cols, i_size, 1, 1).expand(-1, -1, -1, a_flat.size(0), 1)#batch, max_cols, i_size, i*a, 1

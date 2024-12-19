@@ -93,12 +93,14 @@ class Valueinit(Dataset):
         if ashock is not None:
             if not isinstance(ashock, torch.Tensor):
                 ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
-            self.ashock = ashock
+            ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
+            self.ashock = ashock_norm
 
         if ishock is not None:
             if not isinstance(ishock, torch.Tensor):
                 ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
-            self.ishock = ishock
+            ishock_norm = (ishock - params.ishock_min) / (params.ishock_max - params.ishock_min)
+            self.ishock = ishock_norm
 
         if K_cross is not None:
             if not isinstance(K_cross, torch.Tensor):
@@ -152,25 +154,31 @@ def soft_update(target, source, tau):
 
 def value_fn(train_data, nn, params):
     grid_norm = (train_data["grid_k"] - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
+    ashock_norm = (train_data["ashock"] - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    ishock_norm = (train_data["ishock"] - params.ishock_min) / (params.ishock_max - params.ishock_min)
     gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * train_data["dist_k"].unsqueeze(-1), dim=-2)
-    state = torch.cat([train_data["k_cross"].unsqueeze(-1), train_data["ashock"].unsqueeze(-1), train_data["ishock"].unsqueeze(-1), gm], dim=1)
+    state = torch.cat([train_data["k_cross"].unsqueeze(-1), ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=1)
     value = nn.value0(state)
     return value
 
 def policy_fn(ashock, ishock,  grid, dist, nn):
+    ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    ishock_norm = (ishock - params.ishock_min) / (params.ishock_max - params.ishock_min)
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=1)#エラー出ると思う。
+    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=1)#エラー出ると思う。
     next_k = nn.policy(state)
     return next_k
 
 def policy_fn_sim(ashock, ishock, grid_k, dist_k, nn):
+    ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    ishock_norm = (ishock - params.ishock_min) / (params.ishock_max - params.ishock_min)
     grid_norm = (grid_k - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)#batch, i, 1
-    state = torch.cat([ashock.unsqueeze(-1), ishock.unsqueeze(-1), gm], dim=-1)
+    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=-1)
     next_k = nn.policy(state)
     return next_k
 
@@ -180,7 +188,7 @@ def price_fn(grid, dist, ashock, nn, mean=None):
         state = torch.stack([ashock, mean], dim=1)
     else:
         grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
-        ashock_norm = (ashock - params.shock_min) / (params.shock_max - params.shock_min)
+        ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
         gm_tmp = nn.gm_model_price(grid_norm)#batch, grid_size, i_size
         gm_price = torch.sum(gm_tmp * dist, dim=-2)#batch, i_size
         state = torch.cat([ashock_norm.unsqueeze(-1), gm_price], dim=1)#batch, i_size+1
@@ -227,15 +235,15 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)
-            #loss_1 = torch.mean(F.relu(0.1 - next_k) * 10000)
-            #loss_2 = torch.mean(F.relu(next_k - 4) * 10000)
+            loss_1 = torch.mean(F.relu(0.1 - next_k) * 10000)
+            loss_2 = torch.mean(F.relu(next_k - 8) * 10000)
             loss_p = -torch.mean(next_v)
-            loss = loss_p
+            loss = loss_p + loss_1 + loss_2
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             if countp % 100 == 0:
-                print(f"count: {countp}, loss: {-loss.item()}, next_k: {next_k.mean().item()}")
+                print(f"count: {countp}, loss: {-loss.item()}, next_k_max: {next_k.max().item()}, next_k_min: {next_k.min().item()}")
     
     for param in nn.value0.parameters():
         param.requires_grad = True
@@ -251,7 +259,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
     countv = 0
-    tau = 0.001
+    tau = 0.005
     for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -320,9 +328,10 @@ def get_profit(k_cross, ashock, ishock, price, params):
 
 def dist_gm(grid, dist, ashock, nn):
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
+    ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
     gm_tmp = nn.target_gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock.unsqueeze(-1), gm], dim=1)
+    state = torch.cat([ashock_norm.unsqueeze(-1), gm], dim=1)
     next_gm = nn.next_gm_model(state)
     return next_gm
 
@@ -348,8 +357,10 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
     
     next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], nn)#batch, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
-    a_flat = a_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
-    i_flat = i_mesh.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
+    a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
+    a_flat = a_mesh_norm.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
+    i_flat = i_mesh_norm.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
     next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     k_cross_flat = train_data["k_cross"].unsqueeze(-1).repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
@@ -389,8 +400,10 @@ def next_value_sim(train_data, nn, params, p_init=None, mean=None):
 
     next_k = policy_fn_sim(train_data["ashock"], train_data["ishock"], train_data["grid_k"], train_data["dist_k"], nn)#G, i_size, 1
     a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
-    a_flat = a_mesh.flatten()  # shape: [I*A]
-    i_flat = i_mesh.flatten()  # shape: [I*A]
+    a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
+    a_flat = a_mesh_norm.flatten()  # shape: [I*A]
+    i_flat = i_mesh_norm.flatten()  # shape: [I*A]
     
     # a_flat と i_flat を [G, 5, I*A, 1] の形状に拡張
     a_4d = a_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
