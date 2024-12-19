@@ -236,7 +236,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)
             loss_1 = torch.mean(F.relu(0.1 - next_k) * 10000)
-            loss_2 = torch.mean(F.relu(next_k - 8) * 10000)
+            loss_2 = torch.mean(F.relu(next_k - 5) * 10000)
             loss_p = -torch.mean(next_v)
             loss = loss_p + loss_1 + loss_2
             optimizer.zero_grad()
