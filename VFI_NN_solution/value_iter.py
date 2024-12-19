@@ -291,6 +291,8 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             soft_update(nn.target_gm_model, nn.gm_model, tau)
             if countv % 100 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")
+            if loss < 1e-4:
+                break
     return loss.item()
 
 def value_init(nn, params, optimizer, T, num_sample):   
