@@ -109,8 +109,8 @@ class Price_GM(nn.Module):
 class NextkNN(nn.Module):
     def __init__(self, d_in):
         super(NextkNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32, 32)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -128,11 +128,11 @@ class NextkNN(nn.Module):
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64,32)
-        self.fc3 = nn.Linear(32, 32)
-        self.fc4 = nn.Linear(32, 32)
-        self.output = nn.Linear(32, 1)
+        self.fc1 = nn.Linear(d_in, 24)
+        self.fc2 = nn.Linear(24,24)
+        self.fc3 = nn.Linear(24, 24)
+        self.fc4 = nn.Linear(24, 24)
+        self.output = nn.Linear(24, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
@@ -140,7 +140,7 @@ class PriceNN(nn.Module):
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
+        #x = self.leakyrelu(self.fc3(x))
         #x = self.tanh(self.fc4(x))
         x = self.output(x)
         return x
@@ -314,8 +314,10 @@ for _ in range(50):
 
     count += 1
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
-    n_model.target_value.load_state_dict(n_model.value0.state_dict())
-    n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
+    if loss_v < 1e-4:
+        break
+    #n_model.target_value.load_state_dict(n_model.value0.state_dict())
+    #n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
     loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_value.append(loss_v)
     loss_policy.append(loss_p)
@@ -336,3 +338,6 @@ for _ in range(50):
         #with torch.no_grad():
             #true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
         #pred.price_train(train_ds.data, true_price, n_model, 200)
+
+loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+check_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)

@@ -230,7 +230,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
-    for epoch in range(5):
+    for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
@@ -258,6 +258,8 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
+    test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
     countv = 0
     tau = 0.005
     for epoch in range(10):
@@ -293,6 +295,25 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 print(f"count: {countv}, loss: {loss.item()}")
             if loss < 1e-4:
                 break
+    nn.target_value.load_state_dict(nn.value0.state_dict())
+    nn.target_gm_model.load_state_dict(nn.gm_model.state_dict())
+    with torch.no_grad():
+        test_count = 0
+        for test_data in test_dataloader:
+            test_count += 1
+            test_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in test_data.items()}
+            price = price_fn(test_data["grid"], test_data["dist"], test_data["ashock"], nn, mean=mean)
+            if p_init is not None:
+                price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
+            wage = params.eta / price
+            profit = get_profit(test_data["k_cross"], test_data["ashock"], test_data["ishock"], price, params).unsqueeze(-1)
+            e0, e1, next_k = next_value(test_data, nn, params, device, p_init=p_init, mean=mean)
+            threshold = (e0 - e1) / params.eta
+            xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
+            vnew = profit - (params.eta*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
+            v = value_fn(test_data, nn, params)
+            loss_test = F.l1_loss(v, vnew)
+            print(f"test_count: {test_count}, loss: {loss_test.item()}")
     return loss.item()
 
 def value_init(nn, params, optimizer, T, num_sample):   
