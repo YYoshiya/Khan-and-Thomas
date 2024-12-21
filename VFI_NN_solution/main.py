@@ -82,10 +82,10 @@ class GeneralizedMomModel(nn.Module):
         self.leakyrelu = nn.LeakyReLU()
         self.softplus = nn.Softplus()
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
-        x = self.softplus(self.fc4(x))
+        x = self.leakyrelu(self.fc1(x))
+        x = self.leakyrelu(self.fc2(x))
+        x = self.leakyrelu(self.fc3(x))
+        x = self.fc4(x)
         return x #このあとこれと分布の内積をとる。
     
 class Price_GM(nn.Module):
@@ -257,7 +257,7 @@ class nn_class:
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
         self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
-        self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
+        self.optimizer_pri = optim.Adam(self.params_price, lr=0.01)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.01)
 
 def initialize_weights(model):
@@ -282,7 +282,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.7
+init_price = 2.6
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -317,8 +317,8 @@ for _ in range(20):
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
     if loss_v < 1e-4:
         break
-    #n_model.target_value.load_state_dict(n_model.value0.state_dict())
-    #n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
+    n_model.target_value.load_state_dict(n_model.value0.state_dict())
+    n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
     loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_value.append(loss_v)
     loss_policy.append(loss_p)
