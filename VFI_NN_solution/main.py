@@ -100,10 +100,10 @@ class Price_GM(nn.Module):
         self.softplus = nn.Softplus()
         self.leakyrelu = nn.LeakyReLU()
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
-        x = self.softplus(self.fc4(x))
+        x = self.leakyrelu(self.fc1(x))
+        x = self.leakyrelu(self.fc2(x))
+        #x = self.leakyrelu(self.fc3(x))
+        x = self.fc4(x)
         return x #このあとこれと分布の内積をとる。
 
 class NextkNN(nn.Module):
@@ -128,11 +128,11 @@ class NextkNN(nn.Module):
 class PriceNN(nn.Module):
     def __init__(self, d_in):
         super(PriceNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 24)
-        self.fc2 = nn.Linear(24,24)
-        self.fc3 = nn.Linear(24, 24)
+        self.fc1 = nn.Linear(d_in, 32)
+        self.fc2 = nn.Linear(32,32)
+        self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(24, 24)
-        self.output = nn.Linear(24, 1)
+        self.output = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
@@ -140,7 +140,7 @@ class PriceNN(nn.Module):
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
-        #x = self.leakyrelu(self.fc3(x))
+        x = self.leakyrelu(self.fc3(x))
         #x = self.tanh(self.fc4(x))
         x = self.output(x)
         return x
@@ -149,10 +149,10 @@ class PriceNN(nn.Module):
 class Next_gmNN(nn.Module):
     def __init__(self, d_in):
         super(Next_gmNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 24)
-        self.fc2 = nn.Linear(24, 24)
-        self.fc3 = nn.Linear(24, 24)
-        self.output = nn.Linear(24, 1)
+        self.fc1 = nn.Linear(d_in, 32)
+        self.fc2 = nn.Linear(32, 32)
+        self.fc3 = nn.Linear(32, 32)
+        self.output = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
@@ -160,6 +160,7 @@ class Next_gmNN(nn.Module):
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
+        #x = self.leakyrelu(self.fc3(x))
         x = self.output(x)
         return x
 
@@ -281,7 +282,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.5
+init_price = 2.7
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -310,7 +311,7 @@ count = 0
 loss_value = []
 loss_policy = []
 previous_loss = 0
-for _ in range(50):
+for _ in range(20):
 
     count += 1
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
