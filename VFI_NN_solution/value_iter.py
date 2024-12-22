@@ -259,7 +259,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
-    test_dataloader = DataLoader(test_data, batch_size=128, shuffle=True)
+    test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
     countv = 0
     tau = 0.01
     for epoch in range(10):
