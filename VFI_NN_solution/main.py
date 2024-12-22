@@ -39,8 +39,8 @@ else:
 class ValueNN(nn.Module):
     def __init__(self, d_in):
         super(ValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32, 32)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -56,8 +56,8 @@ class ValueNN(nn.Module):
 class TargetValueNN(nn.Module):
     def __init__(self, d_in):
         super(TargetValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32, 32)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -109,8 +109,8 @@ class Price_GM(nn.Module):
 class NextkNN(nn.Module):
     def __init__(self, d_in):
         super(NextkNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32, 32)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -282,7 +282,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.7
+init_price = 2.5
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -303,8 +303,8 @@ vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, 
 #train_ds.data = new_data
 with torch.no_grad():
     true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data, 2)
-pred.price_train(train_ds.data, true_price, n_model, 300)
-pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
+pred.price_train(train_ds.data, true_price, n_model, 200)
+pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
 
 
 count = 0
@@ -325,7 +325,7 @@ for _ in range(20):
     loss_change = abs(loss_p - previous_loss)
     with torch.no_grad():
             true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
-    pred.price_train(train_ds.data, true_price, n_model, 200)
+    pred.price_train(train_ds.data, true_price, n_model, 100)
     pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
     
     previous_loss = loss_p
