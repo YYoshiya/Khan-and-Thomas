@@ -42,8 +42,8 @@ class KTParam():
         self.pi_i_gpu = self.pi_i.to(self.device)
         self.grid_size = 50
         # 0.1から50までのlogspaceで50個のグリッドを生成
-        start = torch.log10(torch.tensor(0.2))
-        end = torch.log10(torch.tensor(5))
+        start = torch.log10(torch.tensor(0.1))
+        end = torch.log10(torch.tensor(8))
         self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
         #self.k_grid_tmp = torch.linspace(0.1, 5, self.grid_size)
         self.k_grid_max = self.k_grid_tmp.max().item()

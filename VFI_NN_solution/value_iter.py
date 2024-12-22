@@ -235,8 +235,8 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)
-            loss_1 = torch.mean(F.relu(0.1 - next_k))
-            loss_2 = torch.mean(F.relu(next_k - 5))
+            loss_1 = torch.mean(F.relu((0.1 - next_k)*10))
+            loss_2 = torch.mean(F.relu((next_k - 8)*10))
             loss_p = -torch.mean(next_v)
             loss = loss_p + loss_1 + loss_2
             optimizer.zero_grad()
@@ -319,7 +319,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             total_loss += loss_test.item()
         average_loss = total_loss / test_count if test_count > 0 else float('nan')
         print(f'Average Test Loss: {average_loss}')
-    return loss.item()
+    return average_loss
 
 def value_init(nn, params, optimizer, T, num_sample):   
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
