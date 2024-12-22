@@ -230,13 +230,13 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
-    for epoch in range(10):
+    for epoch in range(5):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)
-            loss_1 = torch.mean(F.relu(0.1 - next_k) * 10000)
-            loss_2 = torch.mean(F.relu(next_k - 5) * 10000)
+            loss_1 = torch.mean(F.relu(0.1 - next_k))
+            loss_2 = torch.mean(F.relu(next_k - 5))
             loss_p = -torch.mean(next_v)
             loss = loss_p + loss_1 + loss_2
             optimizer.zero_grad()
@@ -257,11 +257,11 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
-    test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
+    test_dataloader = DataLoader(test_data, batch_size=128, shuffle=True)
     countv = 0
-    tau = 0.005
+    tau = 0.01
     for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -299,6 +299,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     nn.target_gm_model.load_state_dict(nn.gm_model.state_dict())
     with torch.no_grad():
         test_count = 0
+        total_loss = 0.0
         for test_data in test_dataloader:
             test_count += 1
             test_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in test_data.items()}
@@ -312,8 +313,12 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
             vnew = profit - (params.eta*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
             v = value_fn(test_data, nn, params)
-            loss_test = F.l1_loss(v, vnew)
-            print(f"test_count: {test_count}, loss: {loss_test.item()}")
+            log_v = torch.log(v)
+            log_vnew = torch.log(vnew)
+            loss_test = torch.abs(log_v - log_vnew).max()
+            total_loss += loss_test.item()
+        average_loss = total_loss / test_count if test_count > 0 else float('nan')
+        print(f'Average Test Loss: {average_loss}')
     return loss.item()
 
 def value_init(nn, params, optimizer, T, num_sample):   
