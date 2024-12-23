@@ -311,29 +311,32 @@ count = 0
 loss_value = []
 loss_policy = []
 previous_loss = 0
-for _ in range(20):
+for _ in range(50):
 
     count += 1
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
-    if loss_v < 0.01:
-        n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)
-        n_model.optimizer_pol = optim.Adam(n_model.params_policy, lr=0.00001)
-    n_model.target_value.load_state_dict(n_model.value0.state_dict())
-    n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
+    #if loss_v < 0.01:
+        #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)
+        #n_model.optimizer_pol = optim.Adam(n_model.params_policy, lr=0.00001)
     loss_value.append(loss_v)
-    loss_policy.append(loss_p)
-    loss_change = abs(loss_p - previous_loss)
+    #loss_policy.append(loss_p)
+    #loss_change = abs(loss_p - previous_loss)
     with torch.no_grad():
-            true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
+        true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
     pred.price_train(train_ds.data, true_price, n_model, 100)
     pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
-    
-    previous_loss = loss_p
-    if count % 10 == 0:
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+    if count % 5 == 0:
         with torch.no_grad():
-            new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
-            vi.plot_mean_k(dataset_grid, 500, 600)
+                new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True, last_dist=False)
+                vi.plot_mean_k(dataset_grid, 500, 600)
+        
+    
+    #previous_loss = loss_p
+    #if count % 10 == 0:
+        #with torch.no_grad():
+            #new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
+            #vi.plot_mean_k(dataset_grid, 500, 600)
         #vi.plot_mean_k(new_data, 500, 600)
         #train_ds_gm.update_data(new_data)
         #train_ds.data = new_data
@@ -342,4 +345,4 @@ for _ in range(20):
         #pred.price_train(train_ds.data, true_price, n_model, 200)
 
 loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-check_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
+check_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True, last_dist=False)

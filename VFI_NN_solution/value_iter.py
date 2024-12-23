@@ -220,7 +220,9 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
 
 
 def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=None):
-    for param in nn.value0.parameters():
+    for param in nn.target_value.parameters():
+        param.requires_grad = False
+    for param in nn.target_gm_model.parameters():
         param.requires_grad = False
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
@@ -235,17 +237,19 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)
-            loss_1 = torch.mean(F.relu((0.1 - next_k)*10))
-            loss_2 = torch.mean(F.relu((next_k - 8)*10))
-            loss_p = -torch.mean(next_v)
-            loss = loss_p + loss_1 + loss_2
+            #loss_1 = torch.mean(F.relu((0.1 - next_k)*10))
+            #loss_2 = torch.mean(F.relu((next_k - 8)*10))
+            loss_p = torch.mean(-next_v)
+            loss = loss_p# + loss_1 + loss_2
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             if countp % 100 == 0:
                 print(f"count: {countp}, loss: {-loss.item()}, next_k_max: {next_k.max().item()}, next_k_min: {next_k.min().item()}")
     
-    for param in nn.value0.parameters():
+    for param in nn.target_value.parameters():
+        param.requires_grad = True
+    for param in nn.target_gm_model.parameters():
         param.requires_grad = True
     return loss.item()
 
@@ -293,8 +297,6 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             soft_update(nn.target_gm_model, nn.gm_model, tau)
             if countv % 100 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")
-            if loss < 1e-4:
-                break
     nn.target_value.load_state_dict(nn.value0.state_dict())
     nn.target_gm_model.load_state_dict(nn.gm_model.state_dict())
     with torch.no_grad():
@@ -393,7 +395,6 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
     next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     k_cross_flat = train_data["k_cross"].unsqueeze(-1).repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
     pre_k_flat = (1-params.delta)*k_cross_flat
-    k_check = train_data["k_cross"]*(1-params.delta)
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
     data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
@@ -460,7 +461,7 @@ def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     
     return e0, e1
 
-def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
+def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist=True):
     move_models_to_device(nn, "cpu")
     i_size = params.ishock.size(0)
     grid_size = params.grid_size
@@ -554,8 +555,9 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None):
         k_now_k = k_new_k
         a = a_new  # Update aggregate shock if necessary
     move_models_to_device(nn, device)
-    nn.init_dist = dist_now
-    nn.init_dist_k = dist_now_k
+    if last_dist is True:
+        nn.init_dist = dist_now
+        nn.init_dist_k = dist_now_k
 
     return {
         "grid": k_history[100:],         # 100番目から最後まで
