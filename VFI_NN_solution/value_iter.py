@@ -169,7 +169,8 @@ def policy_fn(ashock, ishock,  grid, dist, nn):
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=1)#エラー出ると思う。
-    next_k = nn.policy(state)
+    output = nn.policy(state)
+    next_k = 0.1 + 7.9 * output
     return next_k
 
 def policy_fn_sim(ashock, ishock, grid_k, dist_k, nn):
@@ -179,7 +180,8 @@ def policy_fn_sim(ashock, ishock, grid_k, dist_k, nn):
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)#batch, i, 1
     state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=-1)
-    next_k = nn.policy(state)
+    output = nn.policy(state)
+    next_k = 0.1 + 7.9 * output
     return next_k
 
 def price_fn(grid, dist, ashock, nn, mean=None):
@@ -201,7 +203,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    K_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(ashock=ashock,ishock=ishock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross'])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     count = 0
@@ -209,7 +211,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
-            next_k = nn.policy(train_data['X']).squeeze(-1)
+            next_k = 0.1 + 7.9 * nn.policy(train_data['X']).squeeze(-1)
             target = torch.full_like(next_k, 2.5, dtype=TORCH_DTYPE).to(device)
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
@@ -237,10 +239,10 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)
-            #loss_1 = torch.mean(F.relu((0.1 - next_k)*10))
-            #loss_2 = torch.mean(F.relu((next_k - 8)*10))
+            loss_1 = torch.mean(F.relu((0.1 - next_k)*100))
+            loss_2 = torch.mean(F.relu((next_k - 6)*100))
             loss_p = torch.mean(-next_v)
-            loss = loss_p# + loss_1 + loss_2
+            loss = loss_p + loss_1 + loss_2
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
