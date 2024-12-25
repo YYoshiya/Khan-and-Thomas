@@ -243,7 +243,7 @@ class nn_class:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.value0 = ValueNN(4).to(self.device)
         self.target_value = TargetValueNN(4).to(self.device)
-        self.policy = NextkNN(3).to(self.device)
+        self.policy = NextkNN(4).to(self.device)
         self.gm_model = GeneralizedMomModel(1).to(self.device)
         self.target_gm_model = GeneralizedMomModel(1).to(self.device)
         self.gm_model_policy = GeneralizedMomModel(1).to(self.device)
@@ -283,12 +283,12 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.4
+init_price = 2.6
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
-vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
+vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, init_price)
 with torch.no_grad():
     dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
 vi.plot_mean_k(dataset_grid, 500, 600)
@@ -298,7 +298,7 @@ params.B = 0.0083
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-#vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
+vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
 #new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
 #train_ds_gm.update_data(new_data)
@@ -316,8 +316,7 @@ previous_loss = 0
 for _ in range(50):
 
     count += 1
-    if count % 2 == 0:
-        loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
     #if loss_v < 0.01:
         #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)

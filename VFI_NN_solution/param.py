@@ -54,6 +54,8 @@ class KTParam():
         self.k_grid_gpu = self.k_grid.to(self.device)
         self.K_grid_np = np.linspace(0.1, 3, 10)
 
+        self.price_min = 1
+        self.price_max = 3
         
         ykSS = (self.gamma - self.beta * (1 - self.delta)) / self.beta / self.theta
         ckSS = ykSS + (1 - self.gamma - self.delta)

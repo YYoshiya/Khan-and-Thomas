@@ -188,15 +188,17 @@ def eq_price(nn, data, params, price):
     max_cols = data["grid"].size(1)
     ashock_3d = params.ishock_gpu.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
     ishock_3d = params.ishock_gpu.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
+    price_policy = price.view(-1, 1).expand(-1, i_size)
     price = price.view(-1, 1, 1).expand(-1, max_cols, i_size)
+    
     wage = params.eta/price
-    e0, e1 = next_value_price(data, nn, params, max_cols,price)#作らなきゃいけない。
+    e0, e1 = next_value_price(data, nn, params, max_cols, price_policy)#作らなきゃいけない。
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
     alpha = (xi / params.B).squeeze(-1)
     ishock_2d = params.ishock_gpu.unsqueeze(0).expand(data["grid"].size(0), -1)
     ashock_2d = data["ashock"].unsqueeze(1).expand(-1, i_size)
-    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)
+    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], price_policy, nn).view(-1,1, i_size).expand(-1, max_cols, i_size)
     k_next_non_adj = (1-params.delta) * params.k_grid_gpu.view(1, -1, i_size).expand(data["grid"].size(0), -1, -1)
     idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(next_k, params.k_grid_1d_gpu)
     idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_next_non_adj, params.k_grid_1d_gpu)
@@ -226,7 +228,7 @@ def next_value_price(data, nn, params, max_cols, price):#batch, max_cols, i_size
     
     ishock_2d = params.ishock_gpu.unsqueeze(0).expand(data["grid"].size(0), -1)
     ashock_2d = data["ashock"].unsqueeze(1).expand(-1, i_size)
-    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
+    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"],price, nn)#batch, i_size, 1
     next_k_expa = next_k.squeeze(-1).unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')  # indexing='ij' を明示的に指定
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
@@ -250,6 +252,7 @@ def next_value_price(data, nn, params, max_cols, price):#batch, max_cols, i_size
     expected_v0 = (value0 *  prob).sum(dim=(3,4))#batch, max_cols, i_size,
     expected_v1 = (value1 *  prob).sum(dim=(3,4))#batch, max_cols, i_size
     
+    price = price.view(-1, 1, i_size).expand(-1, max_cols, i_size)
     e0 = -next_k_expa * price + params.beta * expected_v0
     e1 = -(1-params.delta)*data["grid"] * price + params.beta * expected_v1
     
@@ -320,7 +323,7 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     ashock_exp = params.pi_a_gpu[ashock_idx].to(device)#batch, 5
     prob = torch.einsum('ik,nj->nijk', params.pi_i_gpu, ashock_exp).unsqueeze(1).expand(G, max_cols, i_size, i_size, i_size)#batch, max_cols, i_size, a, i
     
-    next_k = vi.policy_fn_sim(data["ashock"], data["ishock"], data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
+    next_k = vi.policy_fn_sim(data["ashock"], data["ishock"], data["grid_k"], data["dist_k"], price, nn)#batch, i_size, 1
     next_k_expa = next_k.squeeze(-1).unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')  # indexing='ij' を明示的に指定
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
