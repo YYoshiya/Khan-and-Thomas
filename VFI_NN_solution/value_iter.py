@@ -110,8 +110,8 @@ class Valueinit(Dataset):
         if price is not None:
             if not isinstance(price, torch.Tensor):
                 price = torch.tensor(price, dtype=TORCH_DTYPE)
-            
-            self.price = price.view(-1, 1).expand(self.K_cross.size(0), 1).squeeze(-1)
+            price_norm = (price - params.price_min) / (params.price_max - params.price_min)
+            self.price = price_norm.view(-1, 1).expand(self.K_cross.size(0), 1).squeeze(-1)
 
         # Validate target_attr and set it
         if target_attr not in ['k_cross', 'ashock', 'ishock', 'K_cross', 'price']:
@@ -174,7 +174,8 @@ def policy_fn(ashock, ishock,  grid, dist, price, nn):
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm, price], dim=1)#エラー出ると思う。
+    price_norm = (price - params.price_min) / (params.price_max - params.price_min)
+    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm, price_norm], dim=1)#エラー出ると思う。
     output = nn.policy(state)
     next_k = 0.1 + 7.9 * output
     return next_k
@@ -185,7 +186,8 @@ def policy_fn_sim(ashock, ishock, grid_k, dist_k, price, nn):
     grid_norm = (grid_k - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)#batch, i, 1
-    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm, price.unsqueeze(-1)], dim=-1)
+    price_norm = (price - params.price_min) / (params.price_max - params.price_min)
+    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm, price_norm.unsqueeze(-1)], dim=-1)
     output = nn.policy(state)
     next_k = 0.1 + 7.9 * output
     return next_k
