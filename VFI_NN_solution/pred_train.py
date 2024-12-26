@@ -189,7 +189,7 @@ def bisectp(nn, params, data, init=None):
 
         # ここで 20 回試してもまだ diff > 0.1 のところがある場合、探索範囲を広げる
         outer_iter += 1
-        still_large_mask = (diff > 0.001)
+        still_large_mask = (diff > 0.0001)
         if still_large_mask.any():
             pL[still_large_mask] = p_init[still_large_mask] - 0.1 * (outer_iter+1)
             pH[still_large_mask] = p_init[still_large_mask] + 0.1 * (outer_iter+1)

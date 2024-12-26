@@ -310,6 +310,8 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     with torch.no_grad():
         test_count = 0
         total_loss = 0.0
+        min_loss = float('inf')  # 初期化: 最小値を非常に大きな値に設定
+        max_loss = float('-inf') # 初期化: 最大値を非常に小さな値に設定
         for test_data in test_dataloader:
             test_count += 1
             test_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in test_data.items()}
@@ -326,9 +328,15 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             log_v = torch.log(v)
             log_vnew = torch.log(vnew)
             loss_test = torch.abs(log_v - log_vnew).max()
-            total_loss += loss_test.item()
+            loss_value = loss_test.item()
+            total_loss += loss_value
+            if loss_value < min_loss:
+                min_loss = loss_value
+            if loss_value > max_loss:
+                max_loss = loss_value
         average_loss = total_loss / test_count if test_count > 0 else float('nan')
-        print(f'Average Test Loss: {average_loss}')
+
+        print(f'Average Test Loss: {average_loss}, Min Loss: {min_loss}, Max Loss: {max_loss}')
     return average_loss
 
 def value_init(nn, params, optimizer, T, num_sample):   
@@ -375,7 +383,7 @@ def dist_gm(grid, dist, ashock, nn):
 
 def generate_price(params, nn, price):
     price_mean = torch.mean(price).item()
-    price_grid = torch.linspace(price_mean-0.25, price_mean+0.25, 150).to(device)
+    price_grid = torch.linspace(price_mean-0.3, price_mean+0.3, 150).to(device)
     random_indices = torch.randperm(len(price_grid))[:price.size(0)]
     price = price_grid[random_indices]
     return price.unsqueeze(-1)
@@ -581,12 +589,12 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         nn.init_dist_k = dist_now_k
 
     return {
-        "grid": k_history[100:],         # 100番目から最後まで
-        "dist": dist_history[100:],      # 100番目から最後まで
-        "dist_k": dist_k_history[100:],  # 100番目から最後まで
-        "grid_k": grid_k_history[100:],  # 100番目から最後まで
-        "ashock": ashock_history[100:],  # 100番目から最後まで
-        "mean_k": mean_k_history[100:],  # 100番目から最後まで
+        "grid": k_history,         # 100番目から最後まで
+        "dist": dist_history,      # 100番目から最後まで
+        "dist_k": dist_k_history,  # 100番目から最後まで
+        "grid_k": grid_k_history,  # 100番目から最後まで
+        "ashock": ashock_history,  # 100番目から最後まで
+        "mean_k": mean_k_history,  # 100番目から最後まで
     }
 
 
