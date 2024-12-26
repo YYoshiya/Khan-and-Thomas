@@ -257,7 +257,7 @@ class nn_class:
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00005)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
 
@@ -283,7 +283,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.6
+init_price = 2.5
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -304,7 +304,7 @@ vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, 
 #train_ds_gm.update_data(new_data)
 #train_ds.data = new_data
 with torch.no_grad():
-    true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data, 2)
+    true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data, init=init_price)
 pred.price_train(train_ds.data, true_price, n_model, 200)
 pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
 
@@ -318,6 +318,7 @@ for _ in range(50):
     count += 1
     loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     #if loss_v < 0.01:
         #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)
         #n_model.optimizer_pol = optim.Adam(n_model.params_policy, lr=0.00001)

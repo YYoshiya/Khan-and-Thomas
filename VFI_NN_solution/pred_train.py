@@ -148,37 +148,53 @@ def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight,
 
 def bisectp(nn, params, data, init=None):
     diff = torch.full((data["grid"].size(0),), 1, dtype=TORCH_DTYPE).to(device)
-    iter_count = 0
     if init is not None:
         p_init = torch.full((data["grid"].size(0),), init, dtype=TORCH_DTYPE).to(device)
-        pL = p_init * 0.1
-        pH = p_init * 2
+        # -0.1から0.1のランダムな値を生成
+        random_values = (torch.rand(data["grid"].size(0), dtype=TORCH_DTYPE) * 0.2 - 0.1).to(device)
+        
+        # p_initにランダムな値を加算
+        p_init = p_init + random_values
+        pL = p_init - 0.1
+        pH = p_init + 0.1
     else:
         p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
-        pL = p_init * 0.1
-        pH = p_init * 4
+        pL = p_init - 0.1
+        pH = p_init + 0.1
 
-    while diff.max() > params.critbp:
-        p0 = (pL + pH) / 2
-        pnew, dist_new = eq_price(nn, data, params, p0)
-        B0 = p0 - pnew
+    # 「大きく外れているところのために範囲を再設定する」工程を何度か繰り返す
+    # （ここでは最大2回やる例）
+    max_outer_loop = 5
+    outer_iter = 0
 
-        # pnew < 0 の箇所は pL を p0 に更新 (pH は変更なし)
-        negative_mask = (pnew < 0)
-        pL = torch.where(negative_mask, p0, pL)
-        # ここで pH はそのまま (negative_mask 部分は変更せず)
+    while diff.max() > params.critbp and outer_iter < max_outer_loop:
+        iter_count = 0  # 内側のバイセクション反復回数をカウント
+        while diff.max() > params.critbp and iter_count < 20:
+            p0 = (pL + pH) / 2
+            pnew, dist_new = eq_price(nn, data, params, p0)
+            B0 = p0 - pnew
 
-        # pnew >= 0 の箇所のみ B0 に基づいて更新を行う
-        nonnegative_mask = (pnew >= 0)
-        # B0 < 0 の場合、pL = p0
-        pL = torch.where(nonnegative_mask & (B0 < 0), p0, pL)
-        # B0 >= 0 の場合、pH = p0
-        pH = torch.where(nonnegative_mask & (B0 >= 0), p0, pH)
+            # ① pnew < 0 の箇所は pL = p0
+            negative_mask = (pnew < 0)
+            pL = torch.where(negative_mask, p0, pL)
+            # pH は変えず
 
-        diff = torch.abs(B0)
-        iter_count += 1
-        if iter_count == 50:
-            break
+            # ② pnew >= 0 の箇所だけ B0 に基づいて更新
+            nonnegative_mask = (pnew >= 0)
+            pL = torch.where(nonnegative_mask & (B0 < 0), p0, pL)
+            pH = torch.where(nonnegative_mask & (B0 >= 0), p0, pH)
+
+            diff = torch.abs(B0)
+            iter_count += 1
+
+        # ここで 20 回試してもまだ diff > 0.1 のところがある場合、探索範囲を広げる
+        outer_iter += 1
+        still_large_mask = (diff > 0.001)
+        if still_large_mask.any():
+            pL[still_large_mask] = p_init[still_large_mask] - 0.1 * (outer_iter+1)
+            pH[still_large_mask] = p_init[still_large_mask] + 0.1 * (outer_iter+1)
+
+          # 外側ループを回す
 
     return pnew.to("cpu"), dist_new.to("cpu")
 

@@ -240,15 +240,15 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
-    for epoch in range(10):
+    for epoch in range(5):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean, policy_train=True)
-            loss_1 = torch.mean(F.relu((0.1 - next_k)*100))
-            loss_2 = torch.mean(F.relu((next_k - 6)*100))
+            #loss_1 = torch.mean(F.relu((0.1 - next_k)*100))
+            #loss_2 = torch.mean(F.relu((next_k - 8)*100))
             loss_p = torch.mean(-next_v)
-            loss = loss_p + loss_1 + loss_2
+            loss = loss_p# + loss_1 + loss_2
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -375,7 +375,7 @@ def dist_gm(grid, dist, ashock, nn):
 
 def generate_price(params, nn, price):
     price_mean = torch.mean(price).item()
-    price_grid = torch.linspace(price_mean-0.5, price_mean+0.5, 150).to(device)
+    price_grid = torch.linspace(price_mean-0.25, price_mean+0.25, 150).to(device)
     random_indices = torch.randperm(len(price_grid))[:price.size(0)]
     price = price_grid[random_indices]
     return price.unsqueeze(-1)
