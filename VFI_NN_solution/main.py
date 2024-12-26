@@ -290,7 +290,7 @@ vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, init_price)
 with torch.no_grad():
-    dataset_grid = vi.get_dataset(params, 1000, n_model, init_price, mean)
+    dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
 vi.plot_mean_k(dataset_grid, 500, 600)
 train_ds_gm = BasicDatasetGM(dataset_grid)
 train_ds = basic_dataset(dataset_grid)
@@ -331,7 +331,7 @@ for _ in range(50):
     pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
     if count % 3 == 0:
         with torch.no_grad():
-                new_data = vi.get_dataset(params, 1000, n_model, mean=mean, last_dist=False)
+                new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True, last_dist=False)
                 vi.plot_mean_k(dataset_grid, 500, 600)
         
     

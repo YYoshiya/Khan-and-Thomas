@@ -236,11 +236,11 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countp = 0
-    for epoch in range(5):
+    for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
@@ -267,7 +267,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
@@ -344,7 +344,7 @@ def value_init(nn, params, optimizer, T, num_sample):
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
     dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross", input_attrs=["k_cross", "ashock", "ishock", "K_cross"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
@@ -382,11 +382,12 @@ def dist_gm(grid, dist, ashock, nn):
     return next_gm
 
 def generate_price(params, nn, price):
-    price_mean = torch.mean(price).item()
-    price_grid = torch.linspace(price_mean-0.3, price_mean+0.3, 150).to(device)
-    random_indices = torch.randperm(len(price_grid))[:price.size(0)]
-    price = price_grid[random_indices]
-    return price.unsqueeze(-1)
+    # priceと同じ形状・デバイス上で[-0.2, 0.2]の一様乱数を生成
+    noise = torch.empty_like(price, device=price.device).uniform_(-0.2, 0.2)
+
+    # 元のpriceに加算して返す (最後にunsqueeze(-1)で次元を増やす)
+    return (price + noise)
+
     
     
     
@@ -589,12 +590,12 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         nn.init_dist_k = dist_now_k
 
     return {
-        "grid": k_history,         # 100番目から最後まで
-        "dist": dist_history,      # 100番目から最後まで
-        "dist_k": dist_k_history,  # 100番目から最後まで
-        "grid_k": grid_k_history,  # 100番目から最後まで
-        "ashock": ashock_history,  # 100番目から最後まで
-        "mean_k": mean_k_history,  # 100番目から最後まで
+        "grid": k_history[100:],         # 100番目から最後まで
+        "dist": dist_history[100:],      # 100番目から最後まで
+        "dist_k": dist_k_history[100:],  # 100番目から最後まで
+        "grid_k": grid_k_history[100:],  # 100番目から最後まで
+        "ashock": ashock_history[100:],  # 100番目から最後まで
+        "mean_k": mean_k_history[100:],  # 100番目から最後まで
     }
 
 
