@@ -257,7 +257,7 @@ class nn_class:
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00004)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
 

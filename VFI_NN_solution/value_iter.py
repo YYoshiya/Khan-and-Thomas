@@ -238,9 +238,9 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countp = 0
-    for epoch in range(10):
+    for epoch in range(5):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
@@ -383,7 +383,7 @@ def dist_gm(grid, dist, ashock, nn):
 
 def generate_price(params, nn, price):
     # priceと同じ形状・デバイス上で[-0.2, 0.2]の一様乱数を生成
-    noise = torch.empty_like(price, device=price.device).uniform_(-0.2, 0.2)
+    noise = torch.empty_like(price, device=price.device).uniform_(-0.4, 0.4)
 
     # 元のpriceに加算して返す (最後にunsqueeze(-1)で次元を増やす)
     return (price + noise)
