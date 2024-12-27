@@ -385,7 +385,7 @@ def dist_gm(grid, dist, ashock, nn):
 
 def generate_price(params, nn, price):
     # priceと同じ形状・デバイス上で[-0.2, 0.2]の一様乱数を生成
-    noise = torch.empty_like(price, device=price.device).uniform_(-0.2, 0.2)
+    noise = torch.empty_like(price, device=price.device).uniform_(-0.4, 0.4)
 
     # 元のpriceに加算して返す (最後にunsqueeze(-1)で次元を増やす)
     return (price + noise)
