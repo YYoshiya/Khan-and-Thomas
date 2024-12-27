@@ -287,7 +287,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 #入力は分布とashockかな。
                 wage = params.eta / price
                 profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
-                e0, e1, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+                e0, e1, next_k = next_value_batch(train_data, nn, params, "cuda", k_grid=params.k_grid_policy)
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
                 xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
@@ -395,100 +395,271 @@ def generate_price(params, nn, price):
     
 
 
-def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None, policy_train=None):
-    if p_init is not None:
-        price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
-    else:
-        price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn, mean=mean)
+########################################
+# 1) e0,e1 をバッチ並列で計算する関数
+########################################
 
-    if policy_train is not None:
-        price = generate_price(params, nn, price)
-        
+def compute_e0_e1(next_k, train_data, nn, params, price):
+    """
+    next_k: (N,)  -- N = batch_size * top_n など
+    price:  (N,1)
+    各サンプル(もしくはサンプル×初期値候補)に対して、
+      e0 = - next_k * price + beta * E[value0]
+      e1 = -(1-delta)*k_cross * price + beta * E[value1]
+    を一括計算して返す。
+    """
+    device = next_k.device
+    N = next_k.shape[0]  # = batch_size * top_n 等
+
+    #---------------------------------------------------
+    # train_dataを同じ次元Nに複製（repeat_interleave）し、
+    # shockやk_crossなども (N,) にする
+    #---------------------------------------------------
+    #  例: 元の train_data["ashock"] は (batch_size,)。
+    #      top_n倍にリピートして (batch_size*top_n,) にする
+    #  ※ 既に "batched_for_topn" のように前処理済みなら省略OK
+    #---------------------------------------------------
+    ashock     = train_data["ashock"].repeat_interleave(train_data["top_n"], dim=0)
+    ishock     = train_data["ishock"].repeat_interleave(train_data["top_n"], dim=0)
+    grid_k     = train_data["grid_k"].repeat_interleave(train_data["top_n"], dim=0)
+    dist_k     = train_data["dist_k"].repeat_interleave(train_data["top_n"], dim=0)
+    k_cross    = train_data["k_cross"].repeat_interleave(train_data["top_n"], dim=0)
+    # ※ "top_n" は呼び出し元で仕込む
+
+    # shockの遷移確率
+    # shape (N,) -> indexing
+    ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
+    ishock_idx = [torch.where(params.ishock_gpu == val)[0].item() for val in ishock]
+    ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)  # (N, a_len)
+    ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)   # (N, i_len)
+    probabilities = ashock_exp * ishock_exp                 # (N, a_len, i_len)
+
+    # dist_gm は将来の gm を計算 (shape: (N,))
     with torch.no_grad():
-        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
-        ashock = train_data["ashock"]
-        ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
-        ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)
-        ishock = train_data["ishock"]
-        ishock_idx = [torch.where(params.ishock_gpu == val)[0].item() for val in ishock]
-        ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
-        probabilities = ashock_exp * ishock_exp
-    
-    next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], price, nn)#batch, 
+        next_gm = dist_gm(grid_k, dist_k, ashock, nn)  # => (N,)
+
+    # a,i の全組合せ
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
-    a_flat = a_mesh_norm.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
-    i_flat = i_mesh_norm.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
-    next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    k_cross_flat = train_data["k_cross"].unsqueeze(-1).repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    pre_k_flat = (1-params.delta)*k_cross_flat
-    
-    data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    value0 = nn.target_value(data_e0).squeeze(-1)
-    value1 = nn.target_value(data_e1).squeeze(-1)
-    value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
-    value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
-    checkv0 = value0[:, 0, 0]
-    checkv1 = value1[:, 0, 0]
+    a_flat = a_mesh_norm.flatten()  # (a_len * i_len,)
+    i_flat = i_mesh_norm.flatten()
 
-    # 確率と価値を掛けて期待値を計算
-    expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    
-    e0 = -next_k * price + params.beta * expected_value0
-    e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
-    
-    return e0, e1, next_k
+    a_len = len(params.ashock_gpu)
+    i_len = len(params.ishock_gpu)
 
+    # (N, a_len*i_len)
+    next_k_expanded  = next_k.unsqueeze(-1).repeat(1, a_len*i_len)
+    next_gm_expanded = next_gm.unsqueeze(-1).repeat(1, a_len*i_len)
+    pre_k = (1 - params.delta) * k_cross
+    pre_k_expanded = pre_k.unsqueeze(-1).repeat(1, a_len*i_len)
 
-def next_value_sim(train_data, nn, params, p_init=None, mean=None):
-    G = train_data["grid_k"].size(0)  # grid のサイズ
-    i_size = params.ishock.size(0)  # i のサイズ
-    price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"][:,0], nn, mean=mean)#G,1
-    if p_init is not None:
-        price = torch.full_like(price, p_init, dtype=TORCH_DTYPE)
-    next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"][:,0],nn)#G,1
-    ashock_idx = torch.where(params.ashock == train_data["ashock"][0, 0])[0].item()
-    ashock_exp = params.pi_a[ashock_idx]
-    prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).expand(train_data["k_cross"].size(0), -1, -1, -1)
-    
+    # shape (N, a_len*i_len, 4)
+    data_e0 = torch.stack([
+        next_k_expanded,
+        a_flat.unsqueeze(0).repeat(N, 1),
+        i_flat.unsqueeze(0).repeat(N, 1),
+        next_gm_expanded
+    ], dim=2)
+    data_e1 = torch.stack([
+        pre_k_expanded,
+        a_flat.unsqueeze(0).repeat(N, 1),
+        i_flat.unsqueeze(0).repeat(N, 1),
+        next_gm_expanded
+    ], dim=2)
 
-    next_k = policy_fn_sim(train_data["ashock"], train_data["ishock"], train_data["grid_k"], train_data["dist_k"], price.expand(-1, i_size), nn)#G, i_size, 1
-    a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
-    a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
-    i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
-    a_flat = a_mesh_norm.flatten()  # shape: [I*A]
-    i_flat = i_mesh_norm.flatten()  # shape: [I*A]
-    
-    # a_flat と i_flat を [G, 5, I*A, 1] の形状に拡張
-    a_4d = a_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
-    i_4d = i_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
-    
-    # next_k を [G, 5, I*A, 1] の形状に効率的に変換
-    # next_k の形状: [5, 1]
-    # 1. 次元を追加して [1, 5, 1, 1] に変換
-    # 2. expand で [G, 5, 25, 1] に拡張
-    next_k_flat = next_k.expand(-1, -1, a_flat.size(0)).unsqueeze(-1)  # [G, 5, I*A, 1]
-    next_gm_flat = next_gm.view(-1, 1, 1, 1).expand(G, i_size, a_flat.size(0), 1)  # [G, 5, I*A, 1]
-    k_cross_flat = train_data["k_cross"].view(G, 1, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
-    pre_k_flat = (1-params.delta) * k_cross_flat
-    
-    data_v0 = torch.cat([next_k_flat, a_4d, i_4d, next_gm_flat], dim=3)  # [G, 5, I*A, 4]
-    data_v1 = torch.cat([pre_k_flat, a_4d, i_4d, next_gm_flat], dim=3)  # [G, 5, I*A, 4]
-    value0 = nn.value0(data_v0).view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
-    value1 = nn.value0(data_v1).view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
-    
-    expected_value0 = (value0 * prob).sum(dim=(2, 3))  # [G, 5]
-    expected_value1 = (value1 * prob).sum(dim=(2, 3))  # [G, 5]
-    
-    
-    e0 = -next_k.squeeze() * price.expand(G, i_size) + params.beta * expected_value0#G, i_size
-    e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(1).expand(-1, i_size) * price.expand(G, i_size) + params.beta * expected_value1
-    
+    # ニューラルネットで value0, value1 を
+    value0 = nn.target_value(data_e0).squeeze(-1)  # (N, a_len*i_len)
+    value1 = nn.target_value(data_e1).squeeze(-1)  # (N, a_len*i_len)
+
+    # (N, a_len, i_len)
+    value0 = value0.view(N, a_len, i_len)
+    value1 = value1.view(N, a_len, i_len)
+
+    # 期待値計算
+    # probabilities想定は (N, a_len, i_len) が理想だが
+    # 実際には (N,1,1) だったら broadcast でもOK
+    expected_value0 = (value0 * probabilities).sum(dim=(1,2), keepdim=True)  # (N,1)
+    expected_value1 = (value1 * probabilities).sum(dim=(1,2), keepdim=True)  # (N,1)
+
+    # e0,e1
+    e0 = -next_k.unsqueeze(-1) * price + params.beta * expected_value0  # (N,1)
+    e1 = -(1 - params.delta)*k_cross.unsqueeze(-1)*price + params.beta * expected_value1
+
     return e0, e1
+
+
+########################################
+# 2) coarse-to-fine: ベクトル化実装
+########################################
+
+def next_value_batch(
+    train_data, nn, params, device,
+    k_grid,     # (K,) : coarse search用grid
+    p_init=None,
+    mean=None,
+    top_n=3,
+    lr=1e-2,
+    max_iter=50
+):
+    """
+    - バッチ次元に対してループを回さない実装
+    1) グリッドサーチで e0 を評価し、各サンプルについて上位 top_n を抽出
+    2) それらをまとめて (batch_size*top_n,) の Parameter として勾配上昇法
+    3) 各サンプルごとに最終的に最も e0 が高いものを選択
+    4) return e0, e1, next_k  (shape は (batch_size,1))
+    """
+    TORCH_DTYPE = torch.float32
+    batch_size  = train_data["ashock"].size(0)
+
+    #------------------------------
+    # 0) priceを計算
+    #------------------------------
+    if p_init is not None:
+        price = (torch.tensor(p_init, dtype=TORCH_DTYPE)
+                 .unsqueeze(0).unsqueeze(-1)
+                 .repeat(batch_size, 1)
+                 .to(device))
+    else:
+        with torch.no_grad():
+            price = price_fn(
+                train_data["grid"],
+                train_data["dist"],
+                train_data["ashock"],
+                nn,
+                mean=mean
+            )
+    # price => (batch_size,1)
+
+    #------------------------------
+    # 1) グリッドサーチ (coarse search)
+    #------------------------------
+    k_grid = k_grid.to(device, dtype=TORCH_DTYPE)  # (K,)
+    K = k_grid.shape[0]
+
+    # (batch_size,K)
+    k_grid_batched = k_grid.unsqueeze(0).expand(batch_size, K)
+
+    # next_kを一括評価するため flatten
+    # (batch_size*K,)
+    k_flat = k_grid_batched.reshape(-1)
+
+    # price も K回リピート => (batch_size*K,1)
+    price_flat = price.repeat_interleave(K, dim=0)
+
+    # top_nを1とするtrain_dataの準備
+    # これにより compute_e0_e1 内で各サンプルが1回だけ repeat_interleave される
+    # ここでは top_n を1に固定し、後で top_n=3を実現する
+    train_data_coarse = _make_train_data_for_coarse(train_data, top_n=1)
+
+    # e0を計算
+    with torch.no_grad():
+        e0_flat, _ = compute_e0_e1(
+            next_k    = k_flat,
+            train_data= train_data_coarse,
+            nn        = nn,
+            params    = params,
+            price     = price_flat
+        )
+        # e0_flat => (batch_size*K,1)
+
+        # (batch_size,K)
+        e0_coarse_2d = e0_flat.view(batch_size, K)
+
+        # 各サンプルで top_n を抽出
+        # top_values: (batch_size,top_n),  top_indices: (batch_size,top_n)
+        top_values, top_indices = e0_coarse_2d.topk(top_n, dim=1)
+
+    #------------------------------
+    # 2) 勾配上昇法 (fine search)
+    #    - (batch_size, top_n) 初期値をまとめて (batch_size*top_n,) にする
+    #------------------------------
+    # 初期値の次元 => (batch_size, top_n) -> flatten => (batch_size*top_n,)
+    batch_indices = torch.arange(batch_size, device=device).unsqueeze(1).expand(-1, top_n)  # (batch_size, top_n)
+    init_k_vals = k_grid_batched[batch_indices, top_indices]  # (batch_size, top_n)
+    # init_k_vals: (batch_size, top_n)
+    k_init_flat = init_k_vals.contiguous().view(-1).detach()  # (batch_size*top_n,)
+
+    # まとめて Parameter 化
+    k_var = torch.nn.Parameter(k_init_flat)  # (batch_size*top_n,)
+    optimizer = torch.optim.Adam([k_var], lr=lr)
+
+    # price も (batch_size*top_n,1) に複製
+    # train_data も (batch_size*top_n,) 分だけ repeat_interleave
+    train_data_fine = {
+        key: value.repeat_interleave(top_n, dim=0)
+        for key, value in train_data.items()
+    }
+
+    # 勾配ステップ (max_iter 回)
+    for _ in range(max_iter):
+        optimizer.zero_grad()
+
+        e0_big, _ = compute_e0_e1(
+            next_k    = k_var,
+            train_data= train_data_fine,
+            nn        = nn,
+            params    = params,
+            price     = price.repeat_interleave(top_n, dim=0)
+        )
+        # e0_big => (batch_size*top_n,1)
+
+        loss = - e0_big.mean()  # 最大化するので -e0
+        loss.backward()
+        optimizer.step()
+
+        # 必要なら k_var.data を clamp などしてもOK
+        # 例:
+        # k_var.data.clamp_(min=params.k_min, max=params.k_max)
+
+    #------------------------------
+    # 3) 各サンプルごとに最終bestを選ぶ
+    #------------------------------
+    with torch.no_grad():
+        e0_big_final, e1_big_final = compute_e0_e1(
+            next_k    = k_var,
+            train_data= train_data_fine,
+            nn        = nn,
+            params    = params,
+            price     = price.repeat_interleave(top_n, dim=0)
+        )
+    #  e0_big_final, e1_big_final => (batch_size*top_n,1)
+
+    # reshape => (batch_size, top_n, 1)
+    e0_3d = e0_big_final.view(batch_size, top_n, 1)
+    e1_3d = e1_big_final.view(batch_size, top_n, 1)
+    k_2d  = k_var.view(batch_size, top_n)
+
+    # argmax => (batch_size,)
+    best_idx = e0_3d.squeeze(-1).argmax(dim=1)  # 各サンプルで最もe0が高い列
+
+    # gather
+    # (batch_size,1)
+    best_e0 = e0_3d[torch.arange(batch_size, device=device), best_idx]
+    best_e1 = e1_3d[torch.arange(batch_size, device=device), best_idx]
+    best_k  = k_2d[torch.arange(batch_size, device=device), best_idx].unsqueeze(-1)
+
+    #------------------------------
+    # 4) return (e0,e1,next_k)
+    #------------------------------
+    return best_e0, best_e1, best_k
+
+
+########################################
+#  補助関数: train_dataを top_n倍に拡張
+########################################
+def _make_train_data_for_coarse(train_data, top_n=1):
+    """
+    compute_e0_e1内で (batch_size*top_n,) にリピートされることを想定。
+    ここで "train_data" に "top_n" を覚えさせるだけ。
+    """
+    train_data_big = {}
+    for key, value in train_data.items():
+        if key in ["ashock", "ishock", "grid_k", "dist_k", "k_cross"]:
+            train_data_big[key] = value.repeat_interleave(top_n, dim=0)
+        else:
+            train_data_big[key] = value
+    return train_data_big
 
 def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist=True):
     move_models_to_device(nn, "cpu")
@@ -531,7 +702,7 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         }
 
         # Compute expected values for adjustment decision
-        e0, e1 = next_value_sim(basic_s, nn, params, p_init, mean)  # Returns (G, I) tensors
+        e0, e1, next_k = next_value_batch(basic_s, nn, params, "cpu", k_grid=params.k_grid_policy, p_init=p_init, mean=mean)
         xi_tmp = ((e0 - e1) / params.eta)  # Adjustment condition
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B  # Probability of adjustment (G, I)

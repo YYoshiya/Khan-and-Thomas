@@ -46,6 +46,7 @@ class KTParam():
         end = torch.log10(torch.tensor(8))
         self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
         self.k_grid_tmp_lin = torch.linspace(0.1, 8, 150)
+        self.k_grid_policy = torch.linspace(0.1, 8, 10)
         self.k_grid_max = self.k_grid_tmp.max().item()
         self.k_grid_min = self.k_grid_tmp.min().item()
         
