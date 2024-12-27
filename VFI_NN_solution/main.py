@@ -123,7 +123,7 @@ class NextkNN(nn.Module):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
         x = self.leakyrelu(self.fc3(x))
-        x = self.sigmoid(self.fc4(x))
+        x = self.leakyrelu(self.fc4(x))
         return x
     
 class PriceNN(nn.Module):

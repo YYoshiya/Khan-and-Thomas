@@ -177,7 +177,7 @@ def policy_fn(ashock, ishock,  grid, dist, price, nn):
     price_norm = (price - params.price_min) / (params.price_max - params.price_min)
     state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm, price_norm], dim=1)#エラー出ると思う。
     output = nn.policy(state)
-    next_k = 0.1 + 7.9 * output
+    next_k = output
     return next_k
 
 def policy_fn_sim(ashock, ishock, grid_k, dist_k, price, nn):
@@ -189,7 +189,7 @@ def policy_fn_sim(ashock, ishock, grid_k, dist_k, price, nn):
     price_norm = (price - params.price_min) / (params.price_max - params.price_min)
     state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm, price_norm.unsqueeze(-1)], dim=-1)
     output = nn.policy(state)
-    next_k = 0.1 + 7.9 * output
+    next_k = output
     return next_k
 
 def price_fn(grid, dist, ashock, nn, mean=None):
@@ -219,7 +219,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
-            next_k = 0.1 + 7.9 * nn.policy(train_data['X']).squeeze(-1)
+            next_k = nn.policy(train_data['X']).squeeze(-1)
             target = torch.full_like(next_k, 2.5, dtype=TORCH_DTYPE).to(device)
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
@@ -247,10 +247,10 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
             next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean, policy_train=True)
-            #loss_1 = torch.mean(F.relu((0.1 - next_k)*100))
-            #loss_2 = torch.mean(F.relu((next_k - 8)*100))
+            loss_1 = torch.mean(F.relu((0.1 - next_k)*100))
+            loss_2 = torch.mean(F.relu((next_k - 8)*100))
             loss_p = torch.mean(-next_v)
-            loss = loss_p# + loss_1 + loss_2
+            loss = loss_p + loss_1 + loss_2
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
