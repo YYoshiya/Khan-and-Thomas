@@ -386,7 +386,7 @@ def generate_price(params, nn, price):
     noise = torch.empty_like(price, device=price.device).uniform_(-0.4, 0.4)
 
     # 元のpriceに加算して返す (最後にunsqueeze(-1)で次元を増やす)
-    return (price + noise)
+    return price + noise
 
     
     

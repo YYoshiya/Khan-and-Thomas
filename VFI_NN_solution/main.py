@@ -257,7 +257,7 @@ class nn_class:
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00004)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0004)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
 
@@ -318,7 +318,7 @@ for _ in range(50):
     count += 1
     loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+    #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     #if loss_v < 0.01:
         #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)
         #n_model.optimizer_pol = optim.Adam(n_model.params_policy, lr=0.00001)
