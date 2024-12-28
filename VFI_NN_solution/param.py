@@ -63,6 +63,7 @@ class KTParam():
         nSS = self.nu / self.eta * ycSS
         self.kSS = (ykSS * nSS ** (-self.nu)) ** (1 / (self.theta - 1))
         
+        self.price_size = 3
         
         
         self.critbp = 1e-4

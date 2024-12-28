@@ -283,7 +283,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.5
+init_price = 2.7
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -304,7 +304,7 @@ vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, 
 #train_ds_gm.update_data(new_data)
 #train_ds.data = new_data
 with torch.no_grad():
-    true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data, init=init_price)
+    true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds_gm.data, init=init_price)
 pred.price_train(train_ds.data, true_price, n_model, 200)
 pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
 
@@ -321,7 +321,7 @@ for _ in range(50):
     loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
 
     with torch.no_grad():
-            true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
+            true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds_gm.data)
     pred.price_train(train_ds.data, true_price, n_model, 100)
     pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
     #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)

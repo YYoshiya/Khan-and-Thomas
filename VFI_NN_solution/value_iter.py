@@ -275,7 +275,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
     countv = 0
-    tau = 0.05
+    tau = 0.01
     for epoch in range(20):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -384,12 +384,17 @@ def dist_gm(grid, dist, ashock, nn):
     return next_gm
 
 def generate_price(params, nn, price):
-    # priceと同じ形状・デバイス上で[-0.2, 0.2]の一様乱数を生成
-    noise = torch.empty_like(price, device=price.device).uniform_(-0.3, 0.3)
-
-    # 元のpriceに加算して返す (最後にunsqueeze(-1)で次元を増やす)
-    return (price + noise)
-
+    # Clamp params.price_size to a maximum of 3
+    clamped_price_size = min(params.price_size, 3)
+    
+    # Generate uniform random noise in the range [-clamped_price_size*0.1, clamped_price_size*0.1]
+    noise = torch.empty_like(price, device=price.device).uniform_(
+        -clamped_price_size * 0.1, 
+        clamped_price_size * 0.1
+    )
+    
+    # Add the noise to the original price and return
+    return price + noise
     
     
     

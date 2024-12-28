@@ -195,8 +195,8 @@ def bisectp(nn, params, data, init=None):
             pH[still_large_mask] = p_init[still_large_mask] + 0.1 * (outer_iter+1)
 
           # 外側ループを回す
-
-    return pnew.to("cpu"), dist_new.to("cpu")
+    print(f"Outer Iteration: {outer_iter}")
+    return pnew.to("cpu"), dist_new.to("cpu"), outer_iter
 
 
 def eq_price(nn, data, params, price):
