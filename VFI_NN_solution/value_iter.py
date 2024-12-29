@@ -11,6 +11,8 @@ from torch.nn.utils.rnn import pad_sequence
 import pred_train as pred
 from param import params
 import matplotlib.pyplot as plt
+from datetime import datetime
+import json
 
 DTYPE = "float32"
 if DTYPE == "float64":
@@ -83,7 +85,7 @@ class MyDataset(Dataset):
         # データが存在する場合のみ項目を返す
         return {key: value[idx] for key, value in self.data.items()}
 class Valueinit(Dataset):
-    def __init__(self, k_cross=None, ashock=None, ishock=None, K_cross=None, target_attr='k_cross', input_attrs=None):
+    def __init__(self, k_cross=None, ashock=None, ishock=None, K_cross=None, price=None, target_attr='k_cross', input_attrs=None):
         
         if k_cross is not None:
             if not isinstance(k_cross, torch.Tensor):
@@ -106,26 +108,32 @@ class Valueinit(Dataset):
             if not isinstance(K_cross, torch.Tensor):
                 K_cross = torch.tensor(K_cross, dtype=TORCH_DTYPE)
             self.K_cross = K_cross.view(-1, 1).squeeze(-1)
+        
+        if price is not None:
+            if not isinstance(price, torch.Tensor):
+                price = torch.tensor(price, dtype=TORCH_DTYPE)
+            price_norm = (price - params.price_min) / (params.price_max - params.price_min)
+            self.price = price_norm.view(-1, 1).expand(self.K_cross.size(0), 1).squeeze(-1)
 
         # Validate target_attr and set it
-        if target_attr not in ['k_cross', 'ashock', 'ishock', 'K_cross']:
-            raise ValueError(f"Invalid target_attr: {target_attr}. Must be one of 'k_cross', 'ashock', 'ishock', 'K_cross'.")
+        if target_attr not in ['k_cross', 'ashock', 'ishock', 'K_cross', 'price']:
+            raise ValueError(f"Invalid target_attr: {target_attr}. Must be one of 'k_cross', 'ashock', 'ishock', 'K_cross', 'price'.")
         self.target_attr = target_attr
 
         # Set input attributes
         if input_attrs is None:
             # Default to using all attributes if not specified
-            self.input_attrs = ['k_cross', 'ashock', 'ishock', 'K_cross']
+            self.input_attrs = ['k_cross', 'ashock', 'ishock', 'K_cross', 'price']
         else:
             # Validate input attributes
             for attr in input_attrs:
-                if attr not in ['k_cross', 'ashock', 'ishock', 'K_cross']:
-                    raise ValueError(f"Invalid input attribute: {attr}. Must be one of 'k_cross', 'ashock', 'ishock', 'K_cross'.")
+                if attr not in ['k_cross', 'ashock', 'ishock', 'K_cross', 'price']:
+                    raise ValueError(f"Invalid input attribute: {attr}. Must be one of 'k_cross', 'ashock', 'ishock', 'K_cross', 'price'.")
             self.input_attrs = input_attrs
 
     def __len__(self):
         # Find the first non-None attribute and return its length
-        for attr in ['k_cross', 'ashock', 'ishock', 'K_cross']:
+        for attr in ['k_cross', 'ashock', 'ishock', 'K_cross', 'price']:
             data = getattr(self, attr, None)
             if data is not None:
                 return len(data)
@@ -162,26 +170,28 @@ def value_fn(train_data, nn, params):
     value = nn.value0(state)
     return value
 
-def policy_fn(ashock, ishock,  grid, dist, nn):
+def policy_fn(ashock, ishock,  grid, dist, price, nn):
     ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
     ishock_norm = (ishock - params.ishock_min) / (params.ishock_max - params.ishock_min)
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
-    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=1)#エラー出ると思う。
+    price_norm = (price - params.price_min) / (params.price_max - params.price_min)
+    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm, price_norm], dim=1)#エラー出ると思う。
     output = nn.policy(state)
-    next_k = 0.1 + 7.9 * output
+    next_k = output
     return next_k
 
-def policy_fn_sim(ashock, ishock, grid_k, dist_k, nn):
+def policy_fn_sim(ashock, ishock, grid_k, dist_k, price, nn):
     ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
     ishock_norm = (ishock - params.ishock_min) / (params.ishock_max - params.ishock_min)
     grid_norm = (grid_k - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     gm_tmp = nn.gm_model_policy(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).expand(-1, ishock.size(1)).unsqueeze(-1)#batch, i, 1
-    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm], dim=-1)
+    price_norm = (price - params.price_min) / (params.price_max - params.price_min)
+    state = torch.cat([ashock_norm.unsqueeze(-1), ishock_norm.unsqueeze(-1), gm, price_norm.unsqueeze(-1)], dim=-1)
     output = nn.policy(state)
-    next_k = 0.1 + 7.9 * output
+    next_k = output
     return next_k
 
 def price_fn(grid, dist, ashock, nn, mean=None):
@@ -198,20 +208,20 @@ def price_fn(grid, dist, ashock, nn, mean=None):
     return price
 
 
-def policy_iter_init2(params, optimizer, nn, T, num_sample):
+def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
-    dataset = Valueinit(ashock=ashock,ishock=ishock, K_cross=K_cross, target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross'])
+    dataset = Valueinit(ashock=ashock,ishock=ishock, K_cross=K_cross, price=init_price ,target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross', 'price'])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     count = 0
     for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
-            next_k = 0.1 + 7.9 * nn.policy(train_data['X']).squeeze(-1)
+            next_k = nn.policy(train_data['X']).squeeze(-1)
             target = torch.full_like(next_k, 2.5, dtype=TORCH_DTYPE).to(device)
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
@@ -238,9 +248,9 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countp += 1
-            next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)
+            next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean, policy_train=True)
             loss_1 = torch.mean(F.relu((0.1 - next_k)*100))
-            loss_2 = torch.mean(F.relu((next_k - 6)*100))
+            loss_2 = torch.mean(F.relu((next_k - 8)*100))
             loss_p = torch.mean(-next_v)
             loss = loss_p + loss_1 + loss_2
             optimizer.zero_grad()
@@ -267,7 +277,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
     countv = 0
-    tau = 0.05
+    tau = 0.01
     for epoch in range(20):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -304,6 +314,8 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     with torch.no_grad():
         test_count = 0
         total_loss = 0.0
+        min_loss = float('inf')  # 初期化: 最小値を非常に大きな値に設定
+        max_loss = float('-inf') # 初期化: 最大値を非常に小さな値に設定
         for test_data in test_dataloader:
             test_count += 1
             test_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in test_data.items()}
@@ -320,9 +332,15 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             log_v = torch.log(v)
             log_vnew = torch.log(vnew)
             loss_test = torch.abs(log_v - log_vnew).max()
-            total_loss += loss_test.item()
+            loss_value = loss_test.item()
+            total_loss += loss_value
+            if loss_value < min_loss:
+                min_loss = loss_value
+            if loss_value > max_loss:
+                max_loss = loss_value
         average_loss = total_loss / test_count if test_count > 0 else float('nan')
-        print(f'Average Test Loss: {average_loss}')
+
+        print(f'Average Test Loss: {average_loss}, Min Loss: {min_loss}, Max Loss: {max_loss}')
     return average_loss
 
 def value_init(nn, params, optimizer, T, num_sample):   
@@ -332,7 +350,7 @@ def value_init(nn, params, optimizer, T, num_sample):
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     K_cross = np.random.choice(params.K_grid_np, num_sample* T)
-    dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross")
+    dataset = Valueinit(k_cross, ashock, ishock, K_cross, target_attr="k_cross", input_attrs=["k_cross", "ashock", "ishock", "K_cross"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     countv = 0
     for epoch in range(10):
@@ -367,16 +385,32 @@ def dist_gm(grid, dist, ashock, nn):
     next_gm = nn.next_gm_model(state)
     return next_gm
 
+def generate_price(params, nn, price):
+    # Clamp params.price_size to a maximum of 3
+    clamped_price_size = min(params.price_size, 3)
+    
+    # Generate uniform random noise in the range [-clamped_price_size*0.1, clamped_price_size*0.1]
+    noise = torch.empty_like(price, device=price.device).uniform_(
+        -clamped_price_size * 0.1, 
+        clamped_price_size * 0.1
+    )
+    
+    # Add the noise to the original price and return
+    return price + noise
+    
+    
+    
 
 
-def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None):
+def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None, policy_train=None):
     if p_init is not None:
         price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
     else:
-        # price計算をno_gradで囲む
-        with torch.no_grad():
-            price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn, mean=mean)
+        price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn, mean=mean)
 
+    if policy_train is not None:
+        price = generate_price(params, nn, price)
+        
     with torch.no_grad():
         next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
         ashock = train_data["ashock"]
@@ -387,7 +421,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
         ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
         probabilities = ashock_exp * ishock_exp
     
-    next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], nn)#batch, 
+    next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], price, nn)#batch, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
@@ -429,7 +463,7 @@ def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).expand(train_data["k_cross"].size(0), -1, -1, -1)
     
 
-    next_k = policy_fn_sim(train_data["ashock"], train_data["ishock"], train_data["grid_k"], train_data["dist_k"], nn)#G, i_size, 1
+    next_k = policy_fn_sim(train_data["ashock"], train_data["ishock"], train_data["grid_k"], train_data["dist_k"], price.expand(-1, i_size), nn)#G, i_size, 1
     a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
@@ -476,18 +510,28 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=params.pi_i.dtype)
         dist_now_k = torch.sum(dist_now, dim=1)  # Aggregate over idiosyncratic shocks
     k_now = params.k_grid  # (grid_size, nz)
-    k_now_k = k_now[:, 0]  # Assuming ashock is scalar for now
+    k_now_k = k_now[:, 0]  # Assuming aggregate shock is scalar for now
 
     # Initialize aggregate shock 'a'
     a_value = torch.randint(0, len(params.ashock), (1,))
     a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=params.pi_i.dtype)
 
+    # Initialize histories
     dist_history = []
     k_history = []
     dist_k_history = []
     grid_k_history = []
     ashock_history = []
     mean_k_history = []
+
+    # Initialize lists to store statistics each period
+    i_over_k_level_history = []
+    i_over_k_std_history = []
+    inaction_history = []
+    positive_spike_history = []
+    negative_spike_history = []
+    positive_inv_history = []
+    negative_inv_history = []
 
     for t in range(T):
         grid_size = dist_now.size(0)
@@ -509,8 +553,18 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B  # Probability of adjustment (G, I)
 
+        price = price_fn(basic_s["grid"], basic_s["dist"], basic_s["ashock"][:,0], nn, mean=mean)  # (G,1)
+        if p_init is not None:
+            price = torch.full_like(price, p_init, dtype=params.pi_i.dtype)
         # Policy function for adjusted capital
-        k_prime_adj = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], basic_s["grid_k"], basic_s["dist_k"], nn)  # (G, I, 1)
+        k_prime_adj = policy_fn_sim(
+            basic_s["ashock"], 
+            basic_s["ishock"], 
+            basic_s["grid_k"], 
+            basic_s["dist_k"], 
+            price.expand(-1, i_size), 
+            nn
+        )  # (G, I, 1)
         k_prime_adj = k_prime_adj.squeeze(-1)  # (G, I)
 
         # Capital for non-adjusting agents
@@ -523,12 +577,48 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         # Initialize new distribution
         dist_new = torch.zeros_like(dist_now)
 
+        update_distribution(
+            dist_new, 
+            dist_now, 
+            alpha, 
+            idx_adj_lower, 
+            idx_adj_upper, 
+            weight_adj, 
+            params.pi_i, 
+            adjusting=True
+        )
         
-        update_distribution(dist_new, dist_now, alpha, idx_adj_lower, idx_adj_upper, weight_adj, params.pi_i, adjusting=True)
+        update_distribution(
+            dist_new, 
+            dist_now, 
+            alpha, 
+            idx_non_adj_lower, 
+            idx_non_adj_upper, 
+            weight_non_adj, 
+            params.pi_i, 
+            adjusting=False
+        )
         
-        update_distribution(dist_new, dist_now, alpha, idx_non_adj_lower, idx_non_adj_upper, weight_non_adj, params.pi_i, adjusting=False)
+        ##### Obtain statistics #####
+        i_over_k = (k_prime_adj - k_prime_non_adj) / basic_s["k_cross"].unsqueeze(1).expand(-1, i_size)
+        i_over_k_alpha = i_over_k * dist_now * alpha
+        i_over_k_level = torch.sum(i_over_k_alpha, dim=(0, 1)).item()
+        i_over_k_std = torch.sqrt(torch.sum(i_over_k**2 * dist_now * alpha, dim=(0, 1))).item()
+        inaction = torch.sum(dist_now * (1 - alpha)).item()
+        positive_spike = torch.where(i_over_k > 0.2, dist_now*alpha, torch.zeros_like(dist_now)).sum().item()
+        negative_spike = torch.where(i_over_k < -0.2, dist_now*alpha, torch.zeros_like(dist_now)).sum().item()
+        positive_inv = torch.where(i_over_k > 0, dist_now*alpha, torch.zeros_like(dist_now)).sum().item()
+        negative_inv = torch.where(i_over_k < 0, dist_now*alpha, torch.zeros_like(dist_now)).sum().item()
+        ##### Obtain statistics #####
 
-
+        # Append statistics to their respective lists
+        i_over_k_level_history.append(i_over_k_level)
+        i_over_k_std_history.append(i_over_k_std)
+        inaction_history.append(inaction)
+        positive_spike_history.append(positive_spike)
+        negative_spike_history.append(negative_spike)
+        positive_inv_history.append(positive_inv)
+        negative_inv_history.append(negative_inv)
 
         dist_sum = dist_new.sum()
         # Normalize distribution to prevent numerical errors
@@ -556,19 +646,70 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         dist_now_k = dist_new_k
         k_now_k = k_new_k
         a = a_new  # Update aggregate shock if necessary
+
     move_models_to_device(nn, device)
-    if last_dist is True:
+    if last_dist:
         nn.init_dist = dist_now
         nn.init_dist_k = dist_now_k
 
-    return {
-        "grid": k_history[100:],         # 100番目から最後まで
-        "dist": dist_history[100:],      # 100番目から最後まで
-        "dist_k": dist_k_history[100:],  # 100番目から最後まで
-        "grid_k": grid_k_history[100:],  # 100番目から最後まで
-        "ashock": ashock_history[100:],  # 100番目から最後まで
-        "mean_k": mean_k_history[100:],  # 100番目から最後まで
+    ##### Calculate average statistics after period 500 #####
+    start_period = 500
+    if T > start_period:
+        i_over_k_level_mean = sum(i_over_k_level_history[start_period:]) / (T - start_period)
+        i_over_k_std_mean = sum(i_over_k_std_history[start_period:]) / (T - start_period)
+        inaction_mean = sum(inaction_history[start_period:]) / (T - start_period)
+        positive_spike_mean = sum(positive_spike_history[start_period:]) / (T - start_period)
+        negative_spike_mean = sum(negative_spike_history[start_period:]) / (T - start_period)
+        positive_inv_mean = sum(positive_inv_history[start_period:]) / (T - start_period)
+        negative_inv_mean = sum(negative_inv_history[start_period:]) / (T - start_period)
+    else:
+        raise ValueError("T must be greater than 500.")
+
+    # Compile average statistics into a dictionary
+    mean_statistics = {
+        "i_over_k_level_mean": i_over_k_level_mean,
+        "i_over_k_std_mean": i_over_k_std_mean,
+        "inaction_mean": inaction_mean,
+        "positive_spike_mean": positive_spike_mean,
+        "negative_spike_mean": negative_spike_mean,
+        "positive_inv_mean": positive_inv_mean,
+        "negative_inv_mean": negative_inv_mean,
     }
+
+    # Directory structure setup
+    results_dir = "results/simstats"
+    current_datetime = datetime.now()
+    date_str = current_datetime.strftime("%Y-%m-%d")
+    time_str = current_datetime.strftime("%H_%M")
+
+    # Path for the date-specific folder
+    date_folder = os.path.join(results_dir, date_str)
+    # Create the date folder if it does not exist
+    os.makedirs(date_folder, exist_ok=True)
+
+    # Generate the filename with current time
+    filename = f"stats{time_str}.json"
+    file_path = os.path.join(date_folder, filename)
+
+    # Write the average statistics to the JSON file
+    try:
+        with open(file_path, "w") as f:
+            json.dump(mean_statistics, f, indent=4)
+        print(f"Average statistics have been saved to {file_path}.")
+    except Exception as e:
+        print(f"An error occurred while writing the file: {e}")
+
+    ##### Exclude average statistics from the return value #####
+    return {
+        "grid": k_history[100:],         # From the 100th period onwards
+        "dist": dist_history[100:],      # From the 100th period onwards
+        "dist_k": dist_k_history[100:],  # From the 100th period onwards
+        "grid_k": grid_k_history[100:],  # From the 100th period onwards
+        "ashock": ashock_history[100:],  # From the 100th period onwards
+        "mean_k": mean_k_history[100:],  # From the 100th period onwards
+        # Average statistics are excluded from the return value
+    }
+
 
 
 

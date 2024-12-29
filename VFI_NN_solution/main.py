@@ -123,7 +123,7 @@ class NextkNN(nn.Module):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
         x = self.leakyrelu(self.fc3(x))
-        x = self.sigmoid(self.fc4(x))
+        x = self.leakyrelu(self.fc4(x))
         return x
     
 class PriceNN(nn.Module):
@@ -243,7 +243,7 @@ class nn_class:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.value0 = ValueNN(4).to(self.device)
         self.target_value = TargetValueNN(4).to(self.device)
-        self.policy = NextkNN(3).to(self.device)
+        self.policy = NextkNN(4).to(self.device)
         self.gm_model = GeneralizedMomModel(1).to(self.device)
         self.target_gm_model = GeneralizedMomModel(1).to(self.device)
         self.gm_model_policy = GeneralizedMomModel(1).to(self.device)
@@ -283,28 +283,28 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.4
+init_price = 2.5
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
-vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10)
+vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, init_price)
 with torch.no_grad():
     dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
-vi.plot_mean_k(dataset_grid, 500, 600)
+    vi.plot_mean_k(dataset_grid, 500, 600)
 train_ds_gm = BasicDatasetGM(dataset_grid)
 train_ds = basic_dataset(dataset_grid)
 params.B = 0.0083
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-#vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
+vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
 #new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
 #train_ds_gm.update_data(new_data)
 #train_ds.data = new_data
 with torch.no_grad():
-    true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data, 2)
+    true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds_gm.data, init=init_price)
 pred.price_train(train_ds.data, true_price, n_model, 200)
 pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
 
@@ -316,30 +316,31 @@ previous_loss = 0
 for _ in range(50):
 
     count += 1
-    if count % 2 == 0:
-        loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+
+    if count % 3 == 0:
+        vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        with torch.no_grad():
+            true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds_gm.data)
+        pred.price_train(train_ds.data, true_price, n_model, 100)
+        pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
+        vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        with torch.no_grad():
+                new_data = vi.get_dataset(params, 2000, n_model, mean=mean, init_dist=True, last_dist=False)
+                vi.plot_mean_k(dataset_grid, 500, 600)    
+    #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     #if loss_v < 0.01:
         #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)
         #n_model.optimizer_pol = optim.Adam(n_model.params_policy, lr=0.00001)
     loss_value.append(loss_v)
     #loss_policy.append(loss_p)
     #loss_change = abs(loss_p - previous_loss)
-    with torch.no_grad():
-        true_price, dist_new = pred.bisectp(n_model, params, train_ds_gm.data)
-    pred.price_train(train_ds.data, true_price, n_model, 100)
-    pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
-    if count % 5 == 0:
-        with torch.no_grad():
-                new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True, last_dist=False)
-                vi.plot_mean_k(dataset_grid, 500, 600)
-        
     
     #previous_loss = loss_p
     #if count % 10 == 0:
-        #with torch.no_grad():
-            #new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True)
-            #vi.plot_mean_k(dataset_grid, 500, 600)
+        
         #vi.plot_mean_k(new_data, 500, 600)
         #train_ds_gm.update_data(new_data)
         #train_ds.data = new_data
@@ -348,4 +349,4 @@ for _ in range(50):
         #pred.price_train(train_ds.data, true_price, n_model, 200)
 
 loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-check_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True, last_dist=False)
+check_data = vi.get_dataset(params, 1000, n_model, mean=mean, init_dist=True, last_dist=False)

@@ -148,39 +148,55 @@ def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight,
 
 def bisectp(nn, params, data, init=None):
     diff = torch.full((data["grid"].size(0),), 1, dtype=TORCH_DTYPE).to(device)
-    iter_count = 0
     if init is not None:
         p_init = torch.full((data["grid"].size(0),), init, dtype=TORCH_DTYPE).to(device)
-        pL = p_init * 0.1
-        pH = p_init * 2
+        # -0.1から0.1のランダムな値を生成
+        random_values = (torch.rand(data["grid"].size(0), dtype=TORCH_DTYPE) * 0.2 - 0.1).to(device)
+        
+        # p_initにランダムな値を加算
+        p_init = p_init + random_values
+        pL = p_init - 0.1
+        pH = p_init + 0.1
     else:
         p_init = vi.price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
-        pL = p_init * 0.1
-        pH = p_init * 4
+        pL = p_init - 0.1
+        pH = p_init + 0.1
 
-    while diff.max() > params.critbp:
-        p0 = (pL + pH) / 2
-        pnew, dist_new = eq_price(nn, data, params, p0)
-        B0 = p0 - pnew
+    # 「大きく外れているところのために範囲を再設定する」工程を何度か繰り返す
+    # （ここでは最大2回やる例）
+    max_outer_loop = 5
+    outer_iter = 0
 
-        # pnew < 0 の箇所は pL を p0 に更新 (pH は変更なし)
-        negative_mask = (pnew < 0)
-        pL = torch.where(negative_mask, p0, pL)
-        # ここで pH はそのまま (negative_mask 部分は変更せず)
+    while diff.max() > params.critbp and outer_iter < max_outer_loop:
+        iter_count = 0  # 内側のバイセクション反復回数をカウント
+        while diff.max() > params.critbp and iter_count < 20:
+            p0 = (pL + pH) / 2
+            pnew, dist_new = eq_price(nn, data, params, p0)
+            B0 = p0 - pnew
 
-        # pnew >= 0 の箇所のみ B0 に基づいて更新を行う
-        nonnegative_mask = (pnew >= 0)
-        # B0 < 0 の場合、pL = p0
-        pL = torch.where(nonnegative_mask & (B0 < 0), p0, pL)
-        # B0 >= 0 の場合、pH = p0
-        pH = torch.where(nonnegative_mask & (B0 >= 0), p0, pH)
+            # ① pnew < 0 の箇所は pL = p0
+            negative_mask = (pnew < 0)
+            pL = torch.where(negative_mask, p0, pL)
+            # pH は変えず
 
-        diff = torch.abs(B0)
-        iter_count += 1
-        if iter_count == 50:
-            break
+            # ② pnew >= 0 の箇所だけ B0 に基づいて更新
+            nonnegative_mask = (pnew >= 0)
+            pL = torch.where(nonnegative_mask & (B0 < 0), p0, pL)
+            pH = torch.where(nonnegative_mask & (B0 >= 0), p0, pH)
 
-    return pnew.to("cpu"), dist_new.to("cpu")
+            diff = torch.abs(B0)
+            iter_count += 1
+
+        # ここで 20 回試してもまだ diff > 0.1 のところがある場合、探索範囲を広げる
+        outer_iter += 1
+        still_large_mask = (diff > 0.0001)
+        if still_large_mask.any():
+            pL[still_large_mask] = p_init[still_large_mask] - 0.1 * (outer_iter+1)
+            pH[still_large_mask] = p_init[still_large_mask] + 0.1 * (outer_iter+1)
+
+          # 外側ループを回す
+    print(f"Outer Iteration: {outer_iter}")
+    return pnew.to("cpu"), dist_new.to("cpu"), outer_iter
 
 
 def eq_price(nn, data, params, price):
@@ -188,15 +204,17 @@ def eq_price(nn, data, params, price):
     max_cols = data["grid"].size(1)
     ashock_3d = params.ishock_gpu.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
     ishock_3d = params.ishock_gpu.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
+    price_policy = price.view(-1, 1).expand(-1, i_size)
     price = price.view(-1, 1, 1).expand(-1, max_cols, i_size)
+    
     wage = params.eta/price
-    e0, e1 = next_value_price(data, nn, params, max_cols,price)#作らなきゃいけない。
+    e0, e1 = next_value_price(data, nn, params, max_cols, price_policy)#作らなきゃいけない。
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
     alpha = (xi / params.B).squeeze(-1)
     ishock_2d = params.ishock_gpu.unsqueeze(0).expand(data["grid"].size(0), -1)
     ashock_2d = data["ashock"].unsqueeze(1).expand(-1, i_size)
-    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], nn).view(-1,1, i_size).expand(-1, max_cols, i_size)
+    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], price_policy, nn).view(-1,1, i_size).expand(-1, max_cols, i_size)
     k_next_non_adj = (1-params.delta) * params.k_grid_gpu.view(1, -1, i_size).expand(data["grid"].size(0), -1, -1)
     idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(next_k, params.k_grid_1d_gpu)
     idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_next_non_adj, params.k_grid_1d_gpu)
@@ -226,7 +244,7 @@ def next_value_price(data, nn, params, max_cols, price):#batch, max_cols, i_size
     
     ishock_2d = params.ishock_gpu.unsqueeze(0).expand(data["grid"].size(0), -1)
     ashock_2d = data["ashock"].unsqueeze(1).expand(-1, i_size)
-    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
+    next_k = vi.policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"],price, nn)#batch, i_size, 1
     next_k_expa = next_k.squeeze(-1).unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')  # indexing='ij' を明示的に指定
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
@@ -250,6 +268,7 @@ def next_value_price(data, nn, params, max_cols, price):#batch, max_cols, i_size
     expected_v0 = (value0 *  prob).sum(dim=(3,4))#batch, max_cols, i_size,
     expected_v1 = (value1 *  prob).sum(dim=(3,4))#batch, max_cols, i_size
     
+    price = price.view(-1, 1, i_size).expand(-1, max_cols, i_size)
     e0 = -next_k_expa * price + params.beta * expected_v0
     e1 = -(1-params.delta)*data["grid"] * price + params.beta * expected_v1
     
@@ -320,7 +339,7 @@ def next_value_gm(data, nn, params, max_cols):#batch, max_cols, i_size, i*a, 4
     ashock_exp = params.pi_a_gpu[ashock_idx].to(device)#batch, 5
     prob = torch.einsum('ik,nj->nijk', params.pi_i_gpu, ashock_exp).unsqueeze(1).expand(G, max_cols, i_size, i_size, i_size)#batch, max_cols, i_size, a, i
     
-    next_k = vi.policy_fn_sim(data["ashock"], data["ishock"], data["grid_k"], data["dist_k"], nn)#batch, i_size, 1
+    next_k = vi.policy_fn_sim(data["ashock"], data["ishock"], data["grid_k"], data["dist_k"], price, nn)#batch, i_size, 1
     next_k_expa = next_k.squeeze(-1).unsqueeze(1).expand(-1, max_cols, -1)#batch, max_cols, i_size, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')  # indexing='ij' を明示的に指定
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)

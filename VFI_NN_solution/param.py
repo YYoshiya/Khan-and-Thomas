@@ -45,7 +45,7 @@ class KTParam():
         start = torch.log10(torch.tensor(0.1))
         end = torch.log10(torch.tensor(8))
         self.k_grid_tmp = torch.logspace(start, end, steps=self.grid_size)
-        #self.k_grid_tmp = torch.linspace(0.1, 5, self.grid_size)
+        self.k_grid_tmp_lin = torch.linspace(0.1, 8, 150)
         self.k_grid_max = self.k_grid_tmp.max().item()
         self.k_grid_min = self.k_grid_tmp.min().item()
         
@@ -54,6 +54,8 @@ class KTParam():
         self.k_grid_gpu = self.k_grid.to(self.device)
         self.K_grid_np = np.linspace(0.1, 3, 10)
 
+        self.price_min = 1.5
+        self.price_max = 3
         
         ykSS = (self.gamma - self.beta * (1 - self.delta)) / self.beta / self.theta
         ckSS = ykSS + (1 - self.gamma - self.delta)
@@ -61,6 +63,7 @@ class KTParam():
         nSS = self.nu / self.eta * ycSS
         self.kSS = (ykSS * nSS ** (-self.nu)) ** (1 / (self.theta - 1))
         
+        self.price_size = 3
         
         
         self.critbp = 1e-4
