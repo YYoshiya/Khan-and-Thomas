@@ -257,7 +257,7 @@ class nn_class:
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
         self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0001)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00005)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
 
@@ -291,7 +291,7 @@ pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, init_price)
 with torch.no_grad():
     dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
-vi.plot_mean_k(dataset_grid, 500, 600)
+    vi.plot_mean_k(dataset_grid, 500, 600)
 train_ds_gm = BasicDatasetGM(dataset_grid)
 train_ds = basic_dataset(dataset_grid)
 params.B = 0.0083
@@ -333,7 +333,7 @@ for _ in range(50):
     #loss_change = abs(loss_p - previous_loss)
     if count % 3 == 0:
         with torch.no_grad():
-                new_data = vi.get_dataset(params, 1100, n_model, mean=mean, init_dist=True, last_dist=False)
+                new_data = vi.get_dataset(params, 2000, n_model, mean=mean, init_dist=True, last_dist=False)
                 vi.plot_mean_k(dataset_grid, 500, 600)
     
     #previous_loss = loss_p

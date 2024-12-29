@@ -11,6 +11,8 @@ from torch.nn.utils.rnn import pad_sequence
 import pred_train as pred
 from param import params
 import matplotlib.pyplot as plt
+from datetime import datetime
+import json
 
 DTYPE = "float32"
 if DTYPE == "float64":
@@ -240,7 +242,7 @@ def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=No
     ishock = params.ishock[ishock_idx]
     k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
     countp = 0
     for epoch in range(10):
         for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
@@ -508,18 +510,28 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         dist_now = torch.full((grid_size, i_size), 1.0 / (i_size * grid_size), dtype=params.pi_i.dtype)
         dist_now_k = torch.sum(dist_now, dim=1)  # Aggregate over idiosyncratic shocks
     k_now = params.k_grid  # (grid_size, nz)
-    k_now_k = k_now[:, 0]  # Assuming ashock is scalar for now
+    k_now_k = k_now[:, 0]  # Assuming aggregate shock is scalar for now
 
     # Initialize aggregate shock 'a'
     a_value = torch.randint(0, len(params.ashock), (1,))
     a = torch.full((grid_size, i_size), params.ashock[a_value].item(), dtype=params.pi_i.dtype)
 
+    # Initialize histories
     dist_history = []
     k_history = []
     dist_k_history = []
     grid_k_history = []
     ashock_history = []
     mean_k_history = []
+
+    # Initialize lists to store statistics each period
+    i_over_k_level_history = []
+    i_over_k_std_history = []
+    inaction_history = []
+    positive_spike_history = []
+    negative_spike_history = []
+    positive_inv_history = []
+    negative_inv_history = []
 
     for t in range(T):
         grid_size = dist_now.size(0)
@@ -541,11 +553,18 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B  # Probability of adjustment (G, I)
 
-        price = price_fn(basic_s["grid"], basic_s["dist"], basic_s["ashock"][:,0], nn, mean=mean)#G,1
+        price = price_fn(basic_s["grid"], basic_s["dist"], basic_s["ashock"][:,0], nn, mean=mean)  # (G,1)
         if p_init is not None:
-            price = torch.full_like(price, p_init, dtype=TORCH_DTYPE)
+            price = torch.full_like(price, p_init, dtype=params.pi_i.dtype)
         # Policy function for adjusted capital
-        k_prime_adj = policy_fn_sim(basic_s["ashock"], basic_s["ishock"], basic_s["grid_k"], basic_s["dist_k"], price.expand(-1, i_size), nn)  # (G, I, 1)
+        k_prime_adj = policy_fn_sim(
+            basic_s["ashock"], 
+            basic_s["ishock"], 
+            basic_s["grid_k"], 
+            basic_s["dist_k"], 
+            price.expand(-1, i_size), 
+            nn
+        )  # (G, I, 1)
         k_prime_adj = k_prime_adj.squeeze(-1)  # (G, I)
 
         # Capital for non-adjusting agents
@@ -558,12 +577,48 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         # Initialize new distribution
         dist_new = torch.zeros_like(dist_now)
 
+        update_distribution(
+            dist_new, 
+            dist_now, 
+            alpha, 
+            idx_adj_lower, 
+            idx_adj_upper, 
+            weight_adj, 
+            params.pi_i, 
+            adjusting=True
+        )
         
-        update_distribution(dist_new, dist_now, alpha, idx_adj_lower, idx_adj_upper, weight_adj, params.pi_i, adjusting=True)
+        update_distribution(
+            dist_new, 
+            dist_now, 
+            alpha, 
+            idx_non_adj_lower, 
+            idx_non_adj_upper, 
+            weight_non_adj, 
+            params.pi_i, 
+            adjusting=False
+        )
         
-        update_distribution(dist_new, dist_now, alpha, idx_non_adj_lower, idx_non_adj_upper, weight_non_adj, params.pi_i, adjusting=False)
+        ##### Obtain statistics #####
+        i_over_k = (k_prime_adj - k_prime_non_adj) / basic_s["k_cross"].unsqueeze(1).expand(-1, i_size)
+        i_over_k_alpha = i_over_k * dist_now * alpha
+        i_over_k_level = torch.sum(i_over_k_alpha, dim=(0, 1)).item()
+        i_over_k_std = torch.sqrt(torch.sum(i_over_k**2 * dist_now * alpha, dim=(0, 1))).item()
+        inaction = torch.sum(dist_now * (1 - alpha)).item()
+        positive_spike = torch.where(i_over_k > 0.2, dist_now*alpha, torch.zeros_like(dist_now)).sum().item()
+        negative_spike = torch.where(i_over_k < -0.2, dist_now*alpha, torch.zeros_like(dist_now)).sum().item()
+        positive_inv = torch.where(i_over_k > 0, dist_now*alpha, torch.zeros_like(dist_now)).sum().item()
+        negative_inv = torch.where(i_over_k < 0, dist_now*alpha, torch.zeros_like(dist_now)).sum().item()
+        ##### Obtain statistics #####
 
-
+        # Append statistics to their respective lists
+        i_over_k_level_history.append(i_over_k_level)
+        i_over_k_std_history.append(i_over_k_std)
+        inaction_history.append(inaction)
+        positive_spike_history.append(positive_spike)
+        negative_spike_history.append(negative_spike)
+        positive_inv_history.append(positive_inv)
+        negative_inv_history.append(negative_inv)
 
         dist_sum = dist_new.sum()
         # Normalize distribution to prevent numerical errors
@@ -591,19 +646,70 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         dist_now_k = dist_new_k
         k_now_k = k_new_k
         a = a_new  # Update aggregate shock if necessary
+
     move_models_to_device(nn, device)
-    if last_dist is True:
+    if last_dist:
         nn.init_dist = dist_now
         nn.init_dist_k = dist_now_k
 
-    return {
-        "grid": k_history[100:],         # 100番目から最後まで
-        "dist": dist_history[100:],      # 100番目から最後まで
-        "dist_k": dist_k_history[100:],  # 100番目から最後まで
-        "grid_k": grid_k_history[100:],  # 100番目から最後まで
-        "ashock": ashock_history[100:],  # 100番目から最後まで
-        "mean_k": mean_k_history[100:],  # 100番目から最後まで
+    ##### Calculate average statistics after period 500 #####
+    start_period = 500
+    if T > start_period:
+        i_over_k_level_mean = sum(i_over_k_level_history[start_period:]) / (T - start_period)
+        i_over_k_std_mean = sum(i_over_k_std_history[start_period:]) / (T - start_period)
+        inaction_mean = sum(inaction_history[start_period:]) / (T - start_period)
+        positive_spike_mean = sum(positive_spike_history[start_period:]) / (T - start_period)
+        negative_spike_mean = sum(negative_spike_history[start_period:]) / (T - start_period)
+        positive_inv_mean = sum(positive_inv_history[start_period:]) / (T - start_period)
+        negative_inv_mean = sum(negative_inv_history[start_period:]) / (T - start_period)
+    else:
+        raise ValueError("T must be greater than 500.")
+
+    # Compile average statistics into a dictionary
+    mean_statistics = {
+        "i_over_k_level_mean": i_over_k_level_mean,
+        "i_over_k_std_mean": i_over_k_std_mean,
+        "inaction_mean": inaction_mean,
+        "positive_spike_mean": positive_spike_mean,
+        "negative_spike_mean": negative_spike_mean,
+        "positive_inv_mean": positive_inv_mean,
+        "negative_inv_mean": negative_inv_mean,
     }
+
+    # Directory structure setup
+    results_dir = "results/simstats"
+    current_datetime = datetime.now()
+    date_str = current_datetime.strftime("%Y-%m-%d")
+    time_str = current_datetime.strftime("%H_%M")
+
+    # Path for the date-specific folder
+    date_folder = os.path.join(results_dir, date_str)
+    # Create the date folder if it does not exist
+    os.makedirs(date_folder, exist_ok=True)
+
+    # Generate the filename with current time
+    filename = f"stats{time_str}.json"
+    file_path = os.path.join(date_folder, filename)
+
+    # Write the average statistics to the JSON file
+    try:
+        with open(file_path, "w") as f:
+            json.dump(mean_statistics, f, indent=4)
+        print(f"Average statistics have been saved to {file_path}.")
+    except Exception as e:
+        print(f"An error occurred while writing the file: {e}")
+
+    ##### Exclude average statistics from the return value #####
+    return {
+        "grid": k_history[100:],         # From the 100th period onwards
+        "dist": dist_history[100:],      # From the 100th period onwards
+        "dist_k": dist_k_history[100:],  # From the 100th period onwards
+        "grid_k": grid_k_history[100:],  # From the 100th period onwards
+        "ashock": ashock_history[100:],  # From the 100th period onwards
+        "mean_k": mean_k_history[100:],  # From the 100th period onwards
+        # Average statistics are excluded from the return value
+    }
+
 
 
 
