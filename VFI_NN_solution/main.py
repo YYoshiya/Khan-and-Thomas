@@ -39,8 +39,8 @@ else:
 class ValueNN(nn.Module):
     def __init__(self, d_in):
         super(ValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32, 32)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -56,8 +56,8 @@ class ValueNN(nn.Module):
 class TargetValueNN(nn.Module):
     def __init__(self, d_in):
         super(TargetValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32, 32)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -109,8 +109,8 @@ class Price_GM(nn.Module):
 class NextkNN(nn.Module):
     def __init__(self, d_in):
         super(NextkNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 32)
-        self.fc2 = nn.Linear(32, 32)
+        self.fc1 = nn.Linear(d_in, 64)
+        self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 32)
         self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -283,7 +283,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.7
+init_price = 2.5
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -318,12 +318,18 @@ for _ in range(50):
     count += 1
     loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+    #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
 
-    with torch.no_grad():
+    if count % 3 == 0:
+        vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        with torch.no_grad():
             true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds_gm.data)
-    pred.price_train(train_ds.data, true_price, n_model, 100)
-    pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
+        pred.price_train(train_ds.data, true_price, n_model, 100)
+        pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
+        vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        with torch.no_grad():
+                new_data = vi.get_dataset(params, 2000, n_model, mean=mean, init_dist=True, last_dist=False)
+                vi.plot_mean_k(dataset_grid, 500, 600)    
     #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     #if loss_v < 0.01:
         #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)
@@ -331,10 +337,6 @@ for _ in range(50):
     loss_value.append(loss_v)
     #loss_policy.append(loss_p)
     #loss_change = abs(loss_p - previous_loss)
-    if count % 3 == 0:
-        with torch.no_grad():
-                new_data = vi.get_dataset(params, 2000, n_model, mean=mean, init_dist=True, last_dist=False)
-                vi.plot_mean_k(dataset_grid, 500, 600)
     
     #previous_loss = loss_p
     #if count % 10 == 0:
