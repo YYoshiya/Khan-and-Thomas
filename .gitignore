@@ -6,4 +6,4 @@ __pycache__/
 *.pth
 *.png
 *.vscode
-results\simstats\2024-12-29
+results/
