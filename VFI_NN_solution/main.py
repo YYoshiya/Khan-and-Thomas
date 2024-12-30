@@ -165,41 +165,76 @@ class Next_gmNN(nn.Module):
         x = self.output(x)
         return x
 
-class basic_dataset:
-    def __init__(self, data):
-        self.data = data
+def append_and_trim_data(
+    old_data: dict, 
+    new_data: dict,
+    start_append: int,
+    end_append: int,
+    remove_count: int
+) -> dict:
+    """
+    Both old_data and new_data are expected to have the following structure:
+        {
+            'grid': [Tensor, Tensor, ...],
+            'dist': [Tensor, Tensor, ...],
+            'dist_k': [...],
+            ...
+        }
+    where each key is associated with a list of Tensors in chronological order.
 
-class BasicDatasetGM:
-    def __init__(self, data, device=None):
-        """
-        初期化メソッド。データをGPUまたは指定されたデバイスに送ります。
+    This function removes the first 'remove_count' items from old_data
+    and appends the slice [start_append : end_append] from new_data.
 
-        Args:
-            data (dict): GPUに送信したいデータの辞書。
-            device (torch.device, optional): データを送るデバイス。指定がない場合はCUDAが利用可能ならCUDAを使用し、それ以外はCPUを使用。
-        """
+    Returns:
+        A dict containing the updated data.
+    """
+    updated_data = {}
+    for key in old_data.keys():
+        # old_data[key] should be a list of Tensors
+        # new_data[key] should be a list of Tensors
+        old_list = old_data[key]  
+        trimmed_old_list = old_list[remove_count:]  # discard the first 'remove_count' items
+        slice_from_new = new_data[key][start_append:end_append]
+
+        # If both are lists of Tensors, we can concatenate them with '+'
+        merged_list = trimmed_old_list + slice_from_new
+        updated_data[key] = merged_list
+
+    return updated_data
+
+class BasicDataset:
+    """
+    This class unifies the functionality of basic_dataset and BasicDatasetGM.
+    It stores two attributes:
+      - data_cpu: raw CPU data (a dict of lists of Tensors)
+      - data_gm: the GPU/GM version of that data (same shape, but on device)
+
+    The method 'update_cpu_data' automatically rebuilds data_gm
+    by calling _convert_to_gm_shape (similar to BasicDatasetGM logic).
+    """
+    def __init__(self, data_cpu: dict, device=None):
+        # If no device is specified, default to CUDA if available, else CPU
         if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = device
-        self.data = self.send_to_device(data)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device
 
-    def send_to_device(self, data):
+        # Store CPU data
+        self.data_cpu = data_cpu
+
+        # Build GM (GPU) data from the CPU data
+        self.data_gm = self._convert_to_gm_shape(data_cpu)
+
+    def _convert_to_gm_shape(self, data_cpu: dict) -> dict:
         """
-        データを指定されたデバイスに送るメソッド。
-
-        Args:
-            data (dict): GPUに送信したいデータの辞書。
-
-        Returns:
-            dict: デバイスに送られたデータの辞書。
+        Converts the CPU data to GM (GPU) data. 
+        Essentially mimics BasicDatasetGM's send_to_device logic.
         """
         data_gpu = {}
-        for key, value in data.items():
+        for key, value in data_cpu.items():
             if isinstance(value, list):
                 if key == "ashock":
                     # スカラー値のリストをテンソルに変換
-                    data_gpu[key] = torch.tensor(value, dtype=torch.float32).to(self.device)
+                    data_gpu[key] = torch.tensor(value, dtype=TORCH_DTYPE).to(self.device)
                 elif all(isinstance(v, torch.Tensor) for v in value):
                     try:
                         # テンソルのリストをスタックして1つのテンソルに
@@ -218,25 +253,61 @@ class BasicDatasetGM:
                 raise TypeError(f"Unsupported data type for key '{key}': {type(value)}")
         return data_gpu
 
-    def get_data(self):
+    def get_data_cpu(self) -> dict:
+        """ Returns the CPU data dictionary. """
+        return self.data_cpu
+
+    def get_data_gm(self) -> dict:
+        """ Returns the GM (GPU) data dictionary. """
+        return self.data_gm
+
+    def update_cpu_data(self, new_data_cpu: dict):
         """
-        データを取得するメソッド。
-
-        Returns:
-            dict: デバイスに送られたデータの辞書。
+        Updates the CPU data and rebuilds the GM data accordingly.
+        This replaces the role of 'update_data' in BasicDatasetGM.
         """
-        return self.data
+        self.data_cpu = new_data_cpu
+        self.data_gm = self._convert_to_gm_shape(new_data_cpu)
 
-    def update_data(self, new_data):
-        """
-        データを更新するメソッド。新しいデータをデバイスに送ってself.dataを更新します。
+def conditionally_update_dataset(
+    dataset: BasicDataset,
+    condition_value: float,
+    threshold: float,
+    new_data_cpu: dict,
+    start_append: int = 1001,
+    end_append: int = 1500,
+    remove_count: int = 500
+):
+    """
+    If condition_value >= threshold, this function updates dataset.data_cpu
+    by removing the first 'remove_count' items and appending items 
+    from [start_append : end_append] of new_data_cpu.
 
-        Args:
-            new_data (dict): 新しいデータの辞書。
-        """
-        self.data = self.send_to_device(new_data)
+    After updating data_cpu, we also regenerate data_gm automatically
+    (due to dataset.update_cpu_data).
 
-
+    Args:
+        dataset (BasicDataset): an instance of the unified dataset class
+        condition_value (float): the current value being monitored
+        threshold (float): the threshold for triggering the data update
+        new_data_cpu (dict): new data from something like get_dataset(...)
+        start_append (int): first index for appending
+        end_append (int): last index (non-inclusive) for appending
+        remove_count (int): number of items to discard from the start
+    """
+    if condition_value <= threshold:
+        old_cpu_data = dataset.get_data_cpu()
+        updated_cpu_data = append_and_trim_data(
+            old_cpu_data,
+            new_data_cpu,
+            start_append,
+            end_append,
+            remove_count
+        )
+        dataset.update_cpu_data(updated_cpu_data)
+        print(f"Dataset updated: removed first {remove_count} steps and appended steps [{start_append}:{end_append}].")
+    else:
+        print("Condition not met. No update performed.")
 
 class nn_class:
     def __init__(self):
@@ -292,21 +363,20 @@ vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, ini
 with torch.no_grad():
     dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
     vi.plot_mean_k(dataset_grid, 500, 600)
-train_ds_gm = BasicDatasetGM(dataset_grid)
-train_ds = basic_dataset(dataset_grid)
+train_ds = BasicDataset(dataset_grid)
 params.B = 0.0083
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
+vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
 #new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
 #train_ds_gm.update_data(new_data)
 #train_ds.data = new_data
 with torch.no_grad():
-    true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds_gm.data, init=init_price)
-pred.price_train(train_ds.data, true_price, n_model, 200)
-pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
+    true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds.data_gm, init=init_price)
+pred.price_train(train_ds.data_cpu, true_price, n_model, 200)
+pred.next_gm_train(train_ds.data_cpu, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
 
 
 count = 0
@@ -316,20 +386,28 @@ previous_loss = 0
 for _ in range(50):
 
     count += 1
-    loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-    loss_v = vi.value_iter(train_ds.data, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+    loss_v = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
     #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-
     if count % 3 == 0:
-        vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
         with torch.no_grad():
-            true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds_gm.data)
-        pred.price_train(train_ds.data, true_price, n_model, 100)
-        pred.next_gm_train(train_ds.data, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
-        vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+            true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds.data_gm)
+        pred.price_train(train_ds.data_cpu, true_price, n_model, 100)
+        pred.next_gm_train(train_ds.data_cpu, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
+        vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
         with torch.no_grad():
-                new_data = vi.get_dataset(params, 2000, n_model, mean=mean, init_dist=True, last_dist=False)
-                vi.plot_mean_k(dataset_grid, 500, 600)    
+                new_data = vi.get_dataset(params, 2500, n_model, mean=mean, init_dist=True, last_dist=False)
+                vi.plot_mean_k(dataset_grid, 500, 600)
+                conditionally_update_dataset(
+                    dataset=train_ds,
+                    condition_value=loss_v,
+                    threshold=0.015,
+                    new_data_cpu=new_data,
+                    start_append=1500,
+                    end_append=2000,
+                    remove_count=500
+                )    
     #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     #if loss_v < 0.01:
         #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)
