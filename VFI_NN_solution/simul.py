@@ -30,7 +30,7 @@ else:
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def simulation(params, nn, T, init=None):
+def simulation(params, nn, T, init=None, init_dist=None):
     start_time = time.time()  # シミュレーション開始時刻を記録
 
     vi.move_models_to_device(nn, "cpu")
@@ -38,6 +38,8 @@ def simulation(params, nn, T, init=None):
     G = params.grid_size
 
     dist_now = torch.full((G, i_size), 1.0 / (i_size * G), dtype=params.pi_i.dtype)
+    if init_dist is not None:
+        dist_now = nn.init_dist
     dist_now_k = torch.sum(dist_now, dim=1)
 
     k_now = params.k_grid  # (grid_size, nz)
@@ -242,8 +244,8 @@ def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect
     p_init = price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
     if init is not None:
         p_init = torch.full_like(p_init, init)
-    pL = p_init * 1.5  # Lower bound of the price interval
-    pH = p_init * 0.5  # Upper bound of the price interval
+    pL = p_init * 0.5  # Lower bound of the price interval
+    pH = p_init * 1.5  # Upper bound of the price interval
     critbp = params.critbp  # Convergence criterion
     expansion_count = 0  # Counter for the number of expansions
 
@@ -271,10 +273,11 @@ def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect
         if diff <= critbp:
             return p0, alpha  # Return the converged price and distance
         else:
+            expansion_count += 1
             # Expand the initial interval if convergence was not achieved
-            pL = p_init * 0.5  /expansion_factor  # Increase the lower bound
-            pH = p_init * 1.5 * expansion_factor  # Decrease the upper bound
-            expansion_count += 1  # Increment expansion counter
+            pL = p_init * 0.5 - (expansion_count * 0.1)  # Increase the lower bound
+            pH = p_init * 1.5 + (expansion_count * 0.1)  # Decrease the upper bound
+              # Increment expansion counter
 
     # Raise an error if the maximum number of expansions is exceeded without convergence
     raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")

@@ -290,6 +290,48 @@ class Pred_Dataset(Dataset):
     def __getitem__(self, idx):
         return self.grid[idx].to(device), self.dist[idx].to(device), self.ashock[idx].to(device), self.target[idx].to(device)
     
+    
+class Pred_Dataset1(Dataset):
+    def __init__(self, grid, dist, ashock, price):
+        grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
+        self.grid = torch.stack(grid, dim=0)
+        dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
+        self.dist = torch.stack(dist, dim=0)
+        self.ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
+        self.target = price
+    
+    def __len__(self):
+        return self.grid.size(0)
+    
+    def __getitem__(self, idx):
+        return self.grid[idx].to(device), self.dist[idx].to(device), self.ashock[idx].to(device), self.target[idx].to(device)
+
+def price_train1(data, price, nn, num_epochs):
+    with torch.no_grad():
+        train_dataset = Pred_Dataset1(data["grid"], data["dist"], data["ashock"], price)
+        valid_size = 64
+        train_size = len(train_dataset) - valid_size
+        train_data, valid_data = random_split(train_dataset, [train_size, valid_size])
+        train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+        valid_loader = DataLoader(valid_data, batch_size=32, shuffle=True)
+        optimizer = optim.Adam(nn.params_price, lr=0.01)
+        valid_loss = 1
+        epoch = 0
+    while epoch < num_epochs and valid_loss > 1e-6:
+        epoch += 1
+        for grid, dist, ashock, target in train_loader:
+            optimizer.zero_grad()
+            pred = vi.price_fn(grid, dist, ashock, nn).squeeze(-1)
+            loss = F.mse_loss(pred, target)
+            loss.backward()
+            optimizer.step()
+        with torch.no_grad():
+            for grid, dist, ashock, target in valid_loader:
+                pred = vi.price_fn(grid, dist, ashock, nn).squeeze(-1)
+                valid_loss = F.mse_loss(pred, target)
+            if epoch % 10 == 0:
+                print(f"Epoch: {epoch}, Train Loss: {loss.item()}, Validation Loss: {valid_loss.item()}")
+
 
 def price_train(data, nn, num_epochs):
     with torch.no_grad():
@@ -330,7 +372,128 @@ def next_gm_fn(gm, ashock, nn):
     state = torch.cat([ashock_norm, gm], dim=1)
     next_gm = nn.next_gm_model(state)
     return next_gm
+
+class NextGMDataset1(Dataset):
+    def __init__(self, gm, ashock, next_gm):
+        # 入力: gm[:, :-1], ターゲット: gm[:, 1:]
+        self.gm = gm
+        self.ashock = ashock
+        self.next_gm = next_gm
     
+    def __len__(self):
+        return self.gm.size(0)
+    
+    def __getitem__(self, idx):
+        return self.gm[idx].to(device), self.ashock[idx].to(device), self.next_gm[idx].to(device)
+    
+
+def next_gm_train1(data, new_dist, nn, params, optimizer, T, num_sample, epochs, save_plot_dir='results/next_gm'):
+    # プロット用ディレクトリの作成
+    os.makedirs(save_plot_dir, exist_ok=True)
+    
+    with torch.no_grad():
+        ashock = torch.tensor(data["ashock"], dtype=TORCH_DTYPE)
+        dist = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["dist_k"]]
+        dist = torch.stack(dist, dim=0)
+        grid = [torch.tensor(value, dtype=TORCH_DTYPE) for value in data["grid_k"]]
+        grid = torch.stack(grid, dim=0)
+        nn.gm_model.to("cpu")
+        gm = gm_fn(grid, dist, nn)
+        new_dist = torch.sum(new_dist, dim=-1)
+        next_gm = gm_fn(grid, new_dist, nn)
+        dataset = NextGMDataset1(gm, ashock, next_gm)
+        valid_size = 64
+        train_size = len(dataset) - valid_size
+        train_data, valid_data = random_split(dataset, [train_size, valid_size])
+        train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+        valid_loader = DataLoader(valid_data, batch_size=32, shuffle=True)
+        loss_list = []
+    
+    nn.gm_model.to(device)
+    train_losses = []
+    val_losses = []
+    
+    for epoch in range(epochs):
+        # トレーニングループ
+        nn.gm_model.train()
+        epoch_train_loss = 0
+        for input, ashock_val, target in train_loader:
+            optimizer.zero_grad()
+            loss = next_gm_loss(nn, input, ashock_val, target)
+            loss.backward()
+            optimizer.step()
+            epoch_train_loss += loss.item()
+        avg_train_loss = epoch_train_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
+    
+        # 検証ループ
+        nn.gm_model.eval()
+        with torch.no_grad():
+            epoch_val_loss = 0
+            val_inputs = []
+            val_targets = []
+            val_predictions = []
+            for input, ashock_val, target in valid_loader:
+                loss = next_gm_loss(nn, input, ashock_val, target)
+                epoch_val_loss += loss.item()
+    
+                # データを収集
+                val_inputs.append(input.cpu())
+                val_targets.append(target.cpu())
+                next_gm = next_gm_fn(input.unsqueeze(-1), ashock_val.unsqueeze(-1), nn)
+                val_predictions.append(next_gm.cpu())
+
+            avg_val_loss = epoch_val_loss / len(valid_loader)
+            val_losses.append(avg_val_loss)
+            if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
+                print(f"Epoch: {epoch+1}, Train Loss: {avg_train_loss:.10f}, Validation Loss: {avg_val_loss:.10f}")
+    
+    # 最後のエポックのプロットを保存
+    nn.gm_model.eval()
+    with torch.no_grad():
+        val_inputs = []
+        val_targets = []
+        val_predictions = []
+        for input, ashock_val, target in valid_loader:
+            val_inputs.append(input.cpu())
+            val_targets.append(target.cpu())
+            next_gm = next_gm_fn(input.unsqueeze(-1), ashock_val.unsqueeze(-1), nn)
+            val_predictions.append(next_gm.cpu())
+    
+    val_inputs_tensor = torch.cat(val_inputs, dim=0).view(-1)
+    val_targets_tensor = torch.cat(val_targets, dim=0).view(-1)
+    val_predictions_tensor = torch.cat(val_predictions, dim=0).view(-1)
+
+    plt.figure(figsize=(8, 6))
+
+    # 真の値と予測値のプロット
+    sns.scatterplot(x=val_inputs_tensor.numpy(), y=val_targets_tensor.numpy(), label='True', alpha=0.5, s=40)
+    sns.scatterplot(x=val_inputs_tensor.numpy(), y=val_predictions_tensor.numpy(), label='Predicted', alpha=0.5, s=40)
+    plt.xlabel('Input')
+    plt.ylabel('Output')
+    plt.title(f'Final Epoch Predictions (Epoch {epochs})')
+    plt.legend()
+
+    plt.tight_layout()
+    plot_filename = os.path.join(save_plot_dir, f'epoch_{epochs}.png')
+    plt.savefig(plot_filename)
+    plt.close()  # メモリを節約するためにプロットを閉じる
+
+    print(f"Final epoch plot saved to {plot_filename}")
+
+    # 最終的な損失曲線をプロット（オプション）
+    plt.figure(figsize=(8, 6))
+    sns.lineplot(x=range(1, epochs+1), y=train_losses, label='Train Loss')
+    sns.lineplot(x=range(1, epochs+1), y=val_losses, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Final Loss over Epochs')
+    plt.legend()
+    final_loss_plot = os.path.join(save_plot_dir, 'final_loss.png')
+    plt.savefig(final_loss_plot)
+    plt.close()
+    print(f"Final loss plot saved to {final_loss_plot}")
+
     
 class NextGMDataset(Dataset):
     def __init__(self, gm, ashock, next_gm):

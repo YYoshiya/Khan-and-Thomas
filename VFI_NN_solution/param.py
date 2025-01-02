@@ -66,7 +66,7 @@ class KTParam():
         self.price_size = 3
         
         
-        self.critbp = 1e-4
+        self.critbp = 1e-3
 
 params = KTParam()
 
