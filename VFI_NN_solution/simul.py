@@ -157,7 +157,7 @@ def simulation(params, nn, T, init=None):
             pbar.update(1)  # 進捗バーを更新
 
     ##### Calculate average statistics after period 500 #####
-    start_period = 0#############Need to change to 500
+    start_period = 500#############Need to change to 500
     if T > start_period:
         i_over_k_level_mean = sum(i_over_k_level_history[start_period:]) / (T - start_period)
         i_over_k_std_mean = sum(i_over_k_std_history[start_period:]) / (T - start_period)
@@ -166,42 +166,40 @@ def simulation(params, nn, T, init=None):
         negative_spike_mean = sum(negative_spike_history[start_period:]) / (T - start_period)
         positive_inv_mean = sum(positive_inv_history[start_period:]) / (T - start_period)
         negative_inv_mean = sum(negative_inv_history[start_period:]) / (T - start_period)
-    else:
-        raise ValueError("T must be greater than 500.")
 
-    # Compile average statistics into a dictionary
-    mean_statistics = {
-        "i_over_k_level_mean": i_over_k_level_mean,
-        "i_over_k_std_mean": i_over_k_std_mean,
-        "inaction_mean": inaction_mean,
-        "positive_spike_mean": positive_spike_mean,
-        "negative_spike_mean": negative_spike_mean,
-        "positive_inv_mean": positive_inv_mean,
-        "negative_inv_mean": negative_inv_mean,
-    }
+        # Compile average statistics into a dictionary
+        mean_statistics = {
+            "i_over_k_level_mean": i_over_k_level_mean,
+            "i_over_k_std_mean": i_over_k_std_mean,
+            "inaction_mean": inaction_mean,
+            "positive_spike_mean": positive_spike_mean,
+            "negative_spike_mean": negative_spike_mean,
+            "positive_inv_mean": positive_inv_mean,
+            "negative_inv_mean": negative_inv_mean,
+        }
 
-    # Directory structure setup
-    results_dir = "results/simstats"
-    current_datetime = datetime.now()
-    date_str = current_datetime.strftime("%Y-%m-%d")
-    time_str = current_datetime.strftime("%H_%M")
+        # Directory structure setup
+        results_dir = "results/simstats"
+        current_datetime = datetime.now()
+        date_str = current_datetime.strftime("%Y-%m-%d")
+        time_str = current_datetime.strftime("%H_%M")
 
-    # Path for the date-specific folder
-    date_folder = os.path.join(results_dir, date_str)
-    # Create the date folder if it does not exist
-    os.makedirs(date_folder, exist_ok=True)
+        # Path for the date-specific folder
+        date_folder = os.path.join(results_dir, date_str)
+        # Create the date folder if it does not exist
+        os.makedirs(date_folder, exist_ok=True)
 
-    # Generate the filename with current time
-    filename = f"stats{time_str}.json"
-    file_path = os.path.join(date_folder, filename)
+        # Generate the filename with current time
+        filename = f"stats{time_str}.json"
+        file_path = os.path.join(date_folder, filename)
 
-    # Write the average statistics to the JSON file
-    try:
-        with open(file_path, "w") as f:
-            json.dump(mean_statistics, f, indent=4)
-        print(f"Average statistics have been saved to {file_path}.")
-    except Exception as e:
-        print(f"An error occurred while writing the file: {e}")
+        # Write the average statistics to the JSON file
+        try:
+            with open(file_path, "w") as f:
+                json.dump(mean_statistics, f, indent=4)
+            print(f"Average statistics have been saved to {file_path}.")
+        except Exception as e:
+            print(f"An error occurred while writing the file: {e}")
 
     vi.move_models_to_device(nn, "cuda")
 

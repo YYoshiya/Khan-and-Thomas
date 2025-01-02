@@ -282,7 +282,7 @@ class Pred_Dataset(Dataset):
         self.dist = torch.stack(dist, dim=0)
         self.ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
         price = [torch.tensor(data, dtype=TORCH_DTYPE) for data in price]
-        self.target = torch.stack(price, dim=0)
+        self.target = torch.stack(price, dim=0).squeeze(-1)
     
     def __len__(self):
         return self.grid.size(0)

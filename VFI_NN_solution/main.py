@@ -353,32 +353,22 @@ n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
 init_price = 2.6
 mean=None
+simul_T = 500
 
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, init_price)
-with torch.no_grad():
-    dataset = sim.simulation(params, n_model, 200, init=init_price)
-train_ds = BasicDataset(dataset)
-
-pred.price_train(train_ds.data_cpu, n_model, 100)
-pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 100)
-
-
-params.B = 0.0083
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
-
 with torch.no_grad():
-    sim.simulation(params, n_model, 2500, init=2.2)
-vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
-#new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
+    new_data=sim.simulation(params, n_model, 500, init=init_price)
+train_ds = BasicDataset(new_data)
+pred.price_train(train_ds.data_cpu, n_model, 50)
+pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 50)
 
-#train_ds_gm.update_data(new_data)
-#train_ds.data = new_data
-with torch.no_grad():
-    true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds.data_gm, init=init_price)
+params.B = 0.0083
+
 
 outer_count = 0
 count = 0
@@ -389,28 +379,21 @@ for _ in range(50):
 
     outer_count += 1
     count += 1
-    loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T-100, 10, mean=mean)
+    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean)
+    
+    
     if loss_v < 0.015:
-        loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T-100, 10, mean=mean)
         with torch.no_grad():
-            sim.simulation(params, n_model, 2500)
+            new_data=sim.simulation(params, n_model, 2500)
+        train_ds = BasicDataset(new_data)
+        pred.price_train(train_ds.data_cpu, n_model, 50)
+        pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 50)
+        simul_T = 2500
+        
         count = 0
-        vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
         #vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-        with torch.no_grad():
-            new_data = vi.get_dataset(params, 2500, n_model, mean=mean, init_dist=True, last_dist=False)
-            vi.plot_mean_k(dataset_grid, 500, 600)
-            if params.price_size <= 2:
-                conditionally_update_dataset(
-                    dataset=train_ds,
-                    condition_value=max_loss,
-                    threshold=0.0025,########################
-                    new_data_cpu=new_data,
-                    start_append=1500,
-                    end_append=2000,
-                    remove_count=500
-                ) 
     #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     #if loss_v < 0.01:
         #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)

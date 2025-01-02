@@ -278,7 +278,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
     countv = 0
     tau = 0.05
-    for epoch in range(20):
+    for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
