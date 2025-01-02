@@ -277,7 +277,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
     countv = 0
-    tau = 0.01
+    tau = 0.05
     for epoch in range(20):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -341,7 +341,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
         average_loss = total_loss / test_count if test_count > 0 else float('nan')
 
         print(f'Average Test Loss: {average_loss}, Min Loss: {min_loss}, Max Loss: {max_loss}')
-    return average_loss
+    return average_loss, min_loss, max_loss
 
 def value_init(nn, params, optimizer, T, num_sample):   
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
@@ -523,6 +523,7 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
     grid_k_history = []
     ashock_history = []
     mean_k_history = []
+    price_diff_history = []
 
     # Initialize lists to store statistics each period
     i_over_k_level_history = []
@@ -570,6 +571,8 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         # Capital for non-adjusting agents
         k_prime_non_adj = (1 - params.delta) * basic_s["k_cross"].unsqueeze(1).expand(-1, i_size)  # (G, I)
 
+        new_price, diff = price_diff(basic_s, params, price, alpha, k_prime_adj)
+        price_diff_history.append(diff)
         # Map k_prime to the capital grid using the refactored function
         idx_adj_lower, idx_adj_upper, weight_adj = map_to_grid(k_prime_adj, params.k_grid)
         idx_non_adj_lower, idx_non_adj_upper, weight_non_adj = map_to_grid(k_prime_non_adj, params.k_grid)
@@ -797,8 +800,28 @@ def update_distribution(dist_new, dist_now, alpha, idx_lower, idx_upper, weight,
     
 
 
+def price_diff(data, params, price, alpha, next_k):
+    wage = params.eta / price
+    yterm = data["ashock"]* data["ishock"] * data["grid"][0,:,:]**params.theta
+    n = (params.nu * yterm / wage)**(1 / (1 - params.nu))
+    ynow = yterm * n**params.nu
+    inow = alpha * (next_k - (1 - params.delta) * data["grid"][0,:,:])
+    Iagg = torch.sum(inow * data["dist"][0,:,:])
+    Yagg = torch.sum(ynow * data["dist"][0,:,:])
+    Cagg = Yagg - Iagg
+    price_new = 1/Cagg
+    diff = torch.abs(price_new - price)
+    return price_new, diff
 
-
+def gm_diff(new_dist, new_a, data, params, nn):
+    gm_pred = dist_gm(data["grid_k"], data["dist_k"], data["ashock"][:,0],nn)[0,0]
+    grid_norm = (params.k_grid_tmp - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
+    ashock_norm = (new_a - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    gm_tmp = nn.target_gm_model(grid_norm.unsqueeze(-1))
+    diff = torch.abs(gm_tmp - gm_pred)
+    return diff
+    
+    
 
 
 def generate_ishock(num_sample, T, shock, Pi):

@@ -40,34 +40,32 @@ class ValueNN(nn.Module):
     def __init__(self, d_in):
         super(ValueNN, self).__init__()
         self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 32)
-        self.fc4 = nn.Linear(32, 1)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, 1)
+        #self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.leakyrelu = nn.LeakyReLU()
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
-        x = self.fc4(x)
+        x = self.fc3(x)
         return x
     
 class TargetValueNN(nn.Module):
     def __init__(self, d_in):
         super(TargetValueNN, self).__init__()
         self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 32)
-        self.fc4 = nn.Linear(32, 1)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, 1)
+        #self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.leakyrelu = nn.LeakyReLU()
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
-        x = self.fc4(x)
+        x = self.fc3(x)
         return x
 
 class GeneralizedMomModel(nn.Module):
@@ -75,8 +73,8 @@ class GeneralizedMomModel(nn.Module):
         super(GeneralizedMomModel, self).__init__()
         self.fc1 = nn.Linear(d_in, 12)
         self.fc2 = nn.Linear(12, 12)
-        self.fc3 = nn.Linear(12, 12)
-        self.fc4 = nn.Linear(12, 1)
+        self.fc3 = nn.Linear(12, 1)
+        #self.fc4 = nn.Linear(12, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.leakyrelu = nn.LeakyReLU()
@@ -84,8 +82,7 @@ class GeneralizedMomModel(nn.Module):
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
-        x = self.softplus(self.fc4(x))
+        x = self.softplus(self.fc3(x))
         return x #このあとこれと分布の内積をとる。
     
 class Price_GM(nn.Module):
@@ -93,8 +90,8 @@ class Price_GM(nn.Module):
         super(Price_GM, self).__init__()
         self.fc1 = nn.Linear(d_in, 12)
         self.fc2 = nn.Linear(12, 12)
-        self.fc3 = nn.Linear(12, 12)
-        self.fc4 = nn.Linear(12, 5)
+        self.fc3 = nn.Linear(12, 5)
+        #self.fc4 = nn.Linear(12, 5)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.softplus = nn.Softplus()
@@ -102,17 +99,17 @@ class Price_GM(nn.Module):
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
-        x = self.softplus(self.fc4(x))
+        x = self.softplus(self.fc3(x))
+        
         return x #このあとこれと分布の内積をとる。
 
 class NextkNN(nn.Module):
     def __init__(self, d_in):
         super(NextkNN, self).__init__()
         self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 32)
-        self.fc4 = nn.Linear(32, 1)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, 1)
+        #self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
         self.leakyrelu = nn.LeakyReLU()
@@ -123,7 +120,6 @@ class NextkNN(nn.Module):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
         x = self.leakyrelu(self.fc3(x))
-        x = self.leakyrelu(self.fc4(x))
         return x
     
 class PriceNN(nn.Module):
@@ -141,7 +137,7 @@ class PriceNN(nn.Module):
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
+        #x = self.leakyrelu(self.fc3(x))
         #x = self.tanh(self.fc4(x))
         x = self.output(x)
         return x
@@ -161,7 +157,7 @@ class Next_gmNN(nn.Module):
     def forward(self, x):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
-        x = self.leakyrelu(self.fc3(x))
+        #x = self.leakyrelu(self.fc3(x))
         x = self.output(x)
         return x
 
@@ -327,8 +323,8 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
-        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.00005)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.001)
+        self.optimizer_pol = optim.Adam(self.params_policy, lr=0.0001)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
 
@@ -354,7 +350,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.5
+init_price = 2.6
 mean=None
 
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
@@ -378,37 +374,40 @@ with torch.no_grad():
 pred.price_train(train_ds.data_cpu, true_price, n_model, 200)
 pred.next_gm_train(train_ds.data_cpu, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
 
-
+outer_count = 0
 count = 0
 loss_value = []
 loss_policy = []
 previous_loss = 0
 for _ in range(50):
 
+    outer_count += 1
     count += 1
     loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-    loss_v = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
+    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, 1000, 10, mean=mean)
     #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
-    if loss_v < 0.016 or count == 5:
+    if loss_v < 0.015 or count == 3:
+        
         count = 0
         vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
         with torch.no_grad():
             true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds.data_gm)
-        pred.price_train(train_ds.data_cpu, true_price, n_model, 100)
-        pred.next_gm_train(train_ds.data_cpu, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
-        vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
+        pred.price_train(train_ds.data_cpu, true_price, n_model, 30)
+        pred.next_gm_train(train_ds.data_cpu, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 30)
+        #vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
         with torch.no_grad():
-                new_data = vi.get_dataset(params, 2500, n_model, mean=mean, init_dist=True, last_dist=False)
-                vi.plot_mean_k(dataset_grid, 500, 600)
+            new_data = vi.get_dataset(params, 2500, n_model, mean=mean, init_dist=True, last_dist=False)
+            vi.plot_mean_k(dataset_grid, 500, 600)
+            if params.price_size <= 2:
                 conditionally_update_dataset(
                     dataset=train_ds,
-                    condition_value=loss_v,
-                    threshold=0.0001,
+                    condition_value=max_loss,
+                    threshold=0.0025,########################
                     new_data_cpu=new_data,
                     start_append=1500,
                     end_append=2000,
                     remove_count=500
-                )    
+                ) 
     #loss_p = vi.policy_iter(train_ds.data, params, n_model.optimizer_pol, n_model, 1000, 10, mean=mean)
     #if loss_v < 0.01:
         #n_model.optimizer_val = optim.Adam(n_model.params_value, lr=0.00001)
