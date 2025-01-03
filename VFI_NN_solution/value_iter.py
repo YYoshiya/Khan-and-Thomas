@@ -54,27 +54,37 @@ class MyDataset(Dataset):
         if ashock is not None:
             if isinstance(ashock, np.ndarray):
                 ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
-            #ashock = ashock.view(-1, 1)
             self.data['ashock'] = ashock
         if ishock is not None:
             if isinstance(ishock, np.ndarray):
                 ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
-            #ishock = ishock.view(-1, 1)
             self.data['ishock'] = ishock
         if grid is not None:
-            grid = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid]
+            grid = [
+                torch.tensor(data, dtype=TORCH_DTYPE) if isinstance(data, np.ndarray) else data.clone().detach()
+                for data in grid
+            ]
             self.data['grid'] = torch.stack(grid, dim=0).repeat(num_sample, 1, 1)
             
         if dist is not None:
-            dist = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist]
+            dist = [
+                torch.tensor(data, dtype=TORCH_DTYPE) if isinstance(data, np.ndarray) else data.clone().detach()
+                for data in dist
+            ]
             self.data['dist'] = torch.stack(dist, dim=0).repeat(num_sample, 1, 1)
         
         if grid_k is not None:
-            grid_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in grid_k]
+            grid_k = [
+                torch.tensor(data, dtype=TORCH_DTYPE) if isinstance(data, np.ndarray) else data.clone().detach()
+                for data in grid_k
+            ]
             self.data['grid_k'] = torch.stack(grid_k, dim=0).repeat(num_sample, 1)
         
         if dist_k is not None:
-            dist_k = [torch.tensor(data, dtype=TORCH_DTYPE) for data in dist_k]
+            dist_k = [
+                torch.tensor(data, dtype=TORCH_DTYPE) if isinstance(data, np.ndarray) else data.clone().detach()
+                for data in dist_k
+            ]
             self.data['dist_k'] = torch.stack(dist_k, dim=0).repeat(num_sample, 1)
 
     def __len__(self):

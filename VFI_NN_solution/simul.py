@@ -30,7 +30,7 @@ else:
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def simulation(params, nn, T, init=None, init_dist=None):
+def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
     start_time = time.time()  # シミュレーション開始時刻を記録
 
     vi.move_models_to_device(nn, "cpu")
@@ -79,7 +79,7 @@ def simulation(params, nn, T, init=None, init_dist=None):
                 "dist_k": dist_now_k,      
             }
 
-            pnew, alpha = bisectp(nn, params, basic_s, max_expansions=5, expansion_factor=1.5, max_bisect_iters=50, init=init)
+            pnew, alpha, threshold = bisectp(nn, params, basic_s, max_expansions=5, expansion_factor=1.5, max_bisect_iters=20, init=init)
             k_prime_adj = policy_fn_sim(
                 basic_s["ashock"].view(1,1).expand(G, i_size), 
                 basic_s["ishock"], 
@@ -205,6 +205,9 @@ def simulation(params, nn, T, init=None, init_dist=None):
 
     vi.move_models_to_device(nn, "cuda")
 
+    if last_dist:
+        nn.init_dist = dist_now.clone()
+        nn.init_dist_k = dist_now_k.clone()
     ##### Exclude average statistics from the return value #####
     end_time = time.time()  # シミュレーション終了時刻を記録
     elapsed_time = end_time - start_time  # 実行時間を計算
@@ -220,7 +223,7 @@ def simulation(params, nn, T, init=None, init_dist=None):
         # Average statistics are excluded from the return value
     }
         
-def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect_iters=50, init=None):
+def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect_iters=20, init=None):
     """
     Uses the bisection method to find the equilibrium price. If convergence is not achieved,
     the initial interval is expanded iteratively.
@@ -244,8 +247,8 @@ def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect
     p_init = price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
     if init is not None:
         p_init = torch.full_like(p_init, init)
-    pL = p_init * 0.5  # Lower bound of the price interval
-    pH = p_init * 1.5  # Upper bound of the price interval
+    pL = p_init - 0.3  # Lower bound of the price interval
+    pH = p_init + 0.3  # Upper bound of the price interval
     critbp = params.critbp  # Convergence criterion
     expansion_count = 0  # Counter for the number of expansions
 
@@ -256,7 +259,7 @@ def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect
         # Bisection loop
         while diff > critbp and iter_count < max_bisect_iters:
             p0 = (pL + pH) / 2  # Midpoint of the current interval
-            pnew, alpha = eq_price(nn, data, params, p0)  # Compute new price and distance
+            pnew, alpha, threshold = eq_price(nn, data, params, p0)  # Compute new price and distance
             B0 = p0 - pnew  # Difference between current price and new price
 
             if pnew < 0:
@@ -271,18 +274,18 @@ def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect
             iter_count += 1  # Increment iteration counter
 
         if diff <= critbp:
-            return p0, alpha  # Return the converged price and distance
+            return p0, alpha, threshold  # Return the converged price and distance
         else:
             expansion_count += 1
             # Expand the initial interval if convergence was not achieved
-            pL = p_init * 0.5 - (expansion_count * 0.1)  # Increase the lower bound
-            pH = p_init * 1.5 + (expansion_count * 0.1)  # Decrease the upper bound
+            pL = p_init - 0.3 - (expansion_count * 0.1)  # Increase the lower bound
+            pH = p_init + 0.3 + (expansion_count * 0.1)  # Decrease the upper bound
               # Increment expansion counter
 
     # Raise an error if the maximum number of expansions is exceeded without convergence
     raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
 
-    return p0, alpha
+    return p0, alpha, threshold
 
 def eq_price(nn, data, params, price):
     i_size = params.ishock.size(0)
@@ -306,7 +309,7 @@ def eq_price(nn, data, params, price):
     Yagg = torch.sum(data["dist"] * ynow)
     Cagg = Yagg - Iagg
     target = 1 / Cagg
-    return target, alpha
+    return target, alpha, threshold
                 
 def next_value_price(data, nn, params, price):
     G = data["grid"].size(0)
