@@ -79,7 +79,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
                 "dist_k": dist_now_k,      
             }
 
-            pnew, alpha, threshold = bisectp(nn, params, basic_s, max_expansions=5, expansion_factor=1.5, max_bisect_iters=20, init=init)
+            pnew, alpha, threshold = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=50, init=init)
             k_prime_adj = policy_fn_sim(
                 basic_s["ashock"].view(1,1).expand(G, i_size), 
                 basic_s["ishock"], 
@@ -223,22 +223,25 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
         # Average statistics are excluded from the return value
     }
         
-def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect_iters=20, init=None):
+        
+def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
     """
     Uses the bisection method to find the equilibrium price. If convergence is not achieved,
-    the initial interval is expanded iteratively.
+    the initial interval is expanded iteratively. Additionally, if the change in `diff` between
+    consecutive iterations is less than or equal to 0.01, the interval is expanded.
 
     Args:
         nn: Object of the neural network class.
         params: Parameter object. Must include `critbp` for convergence criteria.
         data: Data dictionary. Must include 'grid', 'dist', 'ashock'.
         max_expansions (int): Maximum number of times to expand the initial interval.
-        expansion_factor (float): Factor by which to expand the initial interval.
         max_bisect_iters (int): Maximum number of iterations for the bisection method.
+        init: Initial price guess. If None, computed from `price_fn`.
 
     Returns:
         p0: Converged price.
-        dist_new: Value of `dist_new` at convergence.
+        alpha: Alpha value at convergence.
+        threshold: Threshold value at convergence.
 
     Raises:
         ValueError: If the bisection method does not converge within the allowed expansions.
@@ -255,6 +258,7 @@ def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect
     while expansion_count <= max_expansions:
         diff = float('inf')  # Initialize difference to infinity
         iter_count = 0  # Iteration counter for the bisection method
+        prev_diff = None  # To store the previous difference
 
         # Bisection loop
         while diff > critbp and iter_count < max_bisect_iters:
@@ -270,7 +274,16 @@ def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect
                 else:
                     pH = p0  # Adjust the upper bound otherwise
 
-            diff = abs(B0)  # Update the difference
+            new_diff = abs(B0)  # Calculate the new difference
+
+            # Check if the change in diff is small enough to trigger expansion
+            if prev_diff is not None:
+                if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
+                    #print(f"Change in diff ({abs(new_diff - prev_diff):.4f}) <= 0.01, triggering expansion.")
+                    break  # Exit the bisection loop to expand the interval
+
+            prev_diff = new_diff  # Update previous difference
+            diff = new_diff  # Update the current difference
             iter_count += 1  # Increment iteration counter
 
         if diff <= critbp:
@@ -278,14 +291,13 @@ def bisectp(nn, params, data, max_expansions=5, expansion_factor=1.5, max_bisect
         else:
             expansion_count += 1
             # Expand the initial interval if convergence was not achieved
-            pL = p_init - 0.3 - (expansion_count * 0.1)  # Increase the lower bound
-            pH = p_init + 0.3 + (expansion_count * 0.1)  # Decrease the upper bound
-              # Increment expansion counter
+            expansion_amount = expansion_count * 0.1
+            pL = p_init - 0.3 - expansion_amount  # Expand lower bound
+            pH = p_init + 0.3 + expansion_amount  # Expand upper bound
+            #print(f"Expansion {expansion_count}: New interval [{pL.item():.4f}, {pH.item():.4f}]")
 
     # Raise an error if the maximum number of expansions is exceeded without convergence
     raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
-
-    return p0, alpha, threshold
 
 def eq_price(nn, data, params, price):
     i_size = params.ishock.size(0)
@@ -357,7 +369,7 @@ def policy_fn_sim(ashock, ishock, grid_k, dist_k, price, nn):
     gm = torch.sum(gm_tmp * dist_k.unsqueeze(-1), dim=-2).unsqueeze(1).expand(grid_k.size(0), ishock.size(1))#G, I
     price_norm = (price - params.price_min) / (params.price_max - params.price_min)
     state = torch.stack([ashock_norm, ishock_norm, gm, price_norm], dim=-1)
-    output = nn.policy(state)
+    output = nn.policy(state) * 8
     next_k = output
     return next_k#G,I,1
 
