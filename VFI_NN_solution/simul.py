@@ -302,8 +302,8 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
 def eq_price(nn, data, params, price):
     i_size = params.ishock.size(0)
     max_cols = params.k_grid.size(0)
-    ashock_2d = params.ishock.view(1, i_size).expand(max_cols, -1)
-    ishock_2d = params.ishock.view(1, i_size).expand(max_cols, -1)
+    ashock_2d = data["ashock"].view(1, 1).expand(max_cols, i_size)###What is this? This should come from data.
+    ishock_2d = data["ishock"]
     price = price.view(-1, 1).expand(max_cols, i_size)
     wage = params.eta/price
     e0, e1 = next_value_price(data, nn, params, price)#G,I

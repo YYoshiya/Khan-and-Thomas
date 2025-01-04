@@ -363,7 +363,7 @@ n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 with torch.no_grad():
         new_data=sim.simulation(params, n_model, 1500, init=2.2)
 train_ds = BasicDataset(new_data)
-pred.price_train(train_ds.data_cpu, n_model, 200)
+pred.price_train(train_ds.data_cpu, n_model, 100)
 pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 100)
 
 params.B = 0.0083
