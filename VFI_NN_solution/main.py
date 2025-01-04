@@ -357,15 +357,11 @@ simul_T = 1100
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, init_price)
-with torch.no_grad():
-    dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
-    vi.plot_mean_k(dataset_grid, 500, 600)
-train_ds = BasicDataset(dataset_grid)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 #vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
 with torch.no_grad():
-        new_data=sim.simulation(params, n_model, 1500, init=2.2, init_dist=True)
+        new_data=sim.simulation(params, n_model, 1500, init=2.2)
 train_ds = BasicDataset(new_data)
 pred.price_train(train_ds.data_cpu, n_model, 200)
 pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 100)
