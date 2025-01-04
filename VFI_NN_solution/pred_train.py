@@ -202,7 +202,7 @@ def bisectp(nn, params, data, init=None):
 def eq_price(nn, data, params, price):
     i_size = params.ishock_gpu.size(0)
     max_cols = data["grid"].size(1)
-    ashock_3d = params.ishock_gpu.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
+    ashock_3d = data["ashock"].view(-1, 1, 1).expand(-1, max_cols, i_size)
     ishock_3d = params.ishock_gpu.view(1, 1, i_size).expand(data["grid"].size(0), max_cols, -1)
     price_policy = price.view(-1, 1).expand(-1, i_size)
     price = price.view(-1, 1, 1).expand(-1, max_cols, i_size)
