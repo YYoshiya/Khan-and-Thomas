@@ -370,7 +370,7 @@ def value_init(nn, params, optimizer, T, num_sample):
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             v = nn.value0(train_data['X']).squeeze(-1)
-            loss = F.mse_loss(v, 4*(train_data['y']**0.8))
+            loss = F.mse_loss(v, 4*(train_data['y']**0.7))
             loss.backward()
             optimizer.step()
             if countv % 100 == 0:
