@@ -381,12 +381,13 @@ for _ in range(50):
 
     outer_count += 1
     count += 1
-    loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T-100, 10, mean=mean)
-    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean)
+    loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T, 10, mean=mean)
+    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T, 10, mean=mean)
     
     
     if loss_v < 0.015:
-        loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T-100, 10, mean=mean)
+        loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T, 10, mean=mean)
+        
         with torch.no_grad():
             new_data=sim.simulation(params, n_model, 1500, init_dist=True, last_dist=False)
         train_ds = BasicDataset(new_data)
