@@ -217,6 +217,51 @@ def price_fn(grid, dist, ashock, nn, mean=None):
     price = nn.price_model(state)#batch, 1
     return price
 
+def golden_section_search_batch(
+    f, 
+    left_bound: torch.Tensor, 
+    right_bound: torch.Tensor, 
+    max_iter: int = 30, 
+    tol: float = 1e-6
+):
+
+    device = left_bound.device
+    phi = 0.618033988749895  # (sqrt(5) - 1) / 2 でもOK
+
+    # a, b は更新されるのでコピーしておく
+    a = left_bound.clone()  # shape [batch]
+    b = right_bound.clone() # shape [batch]
+
+    # (b - a).max() が tol 以下なら収束とみなすため
+    for _ in range(max_iter):
+        # 区間幅
+        dist = b - a
+        # もし dist が既に十分小さければ break
+        if (dist < tol).all():
+            break
+
+        # c, d はバッチごとに計算 (shape [batch])
+        c = b - phi * dist
+        d = a + phi * dist
+
+        
+        fc = f(c) # shape [batch]
+        fd = f(d)  # shape [batch]
+
+        # ゴールデン・セクション「最大化」の場合:
+        #    if fc > fd: 区間を [a, d] に縮める
+        #    else:       区間を [c, b] に縮める
+        mask = (fc > fd)
+        # mask が True のバッチは右端を d に
+        b[mask] = d[mask]
+        # mask が False のバッチは左端を c に
+        a[~mask] = c[~mask]
+
+    # ループ終了後、(a + b)/2 を最適解近傍とみなす
+    x_star = 0.5 * (a + b)
+    f_star = f(x_star)
+    return x_star, f_star
+
 
 def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
@@ -240,40 +285,6 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
             if count % 100 == 0:
                 print(f"count: {count}, loss: {loss.item()}")
 
-
-def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=None):
-    for param in nn.target_value.parameters():
-        param.requires_grad = False
-    for param in nn.target_gm_model.parameters():
-        param.requires_grad = False
-    ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
-    ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
-    ashock = params.ashock[ashock_idx]
-    ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
-    dataset = MyDataset(num_sample, k_cross=k_cross, ashock=ashock, ishock=ishock, grid=data["grid"], dist=data["dist"],grid_k=data["grid_k"], dist_k=data["dist_k"])
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-    countp = 0
-    for epoch in range(5):
-        for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
-            train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
-            countp += 1
-            next_v, _, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean, policy_train=True)
-            #loss_1 = torch.mean(F.relu((0.1 - next_k)*100))
-            #loss_2 = torch.mean(F.relu((next_k - 8)*100))
-            loss_p = torch.mean(-next_v)
-            loss = loss_p
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            if countp % 100 == 0:
-                print(f"count: {countp}, loss: {-loss.item()}, next_k_max: {next_k.max().item()}, next_k_min: {next_k.min().item()}")
-    
-    for param in nn.target_value.parameters():
-        param.requires_grad = True
-    for param in nn.target_gm_model.parameters():
-        param.requires_grad = True
-    return loss.item()
 
 # By implementing hard targetting, we might be able to accelerate the training process. But, not yet.
 def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=None):
@@ -299,7 +310,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 #入力は分布とashockかな。
                 wage = params.eta / price
                 profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
-                e0, e1, next_k = next_value(train_data, nn, params, device, p_init=p_init, mean=mean)#ここ書いてgrid, gm, ashock, ishockの後ろ二つに関する期待値 v0_expなんかおかしい
+                _, e0 = golden_section_search_batch(lambda x: next_value(train_data, x, nn, params, device, p_init=p_init, mean=mean)[0], torch.tensor(0.1, dtype=TORCH_DTYPE).to(device), torch.tensor(8, dtype=TORCH_DTYPE).to(device))[0]
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
                 xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
@@ -412,7 +423,7 @@ def generate_price(params, nn, price):
     
 
 
-def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None, policy_train=None):
+def next_value(train_data, k, nn, params, device, grid=None, p_init=None, mean=None, policy_train=None):
     if p_init is not None:
         price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
     else:
@@ -431,7 +442,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
         ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
         probabilities = ashock_exp * ishock_exp
     
-    next_k = policy_fn(ashock, ishock, train_data["grid_k"], train_data["dist_k"], price, nn)#batch, 
+    next_k = k#batch, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
@@ -458,7 +469,7 @@ def next_value(train_data, nn, params, device, grid=None, p_init=None, mean=None
     e0 = -next_k * price + params.beta * expected_value0
     e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
     
-    return e0, e1, next_k
+    return e0, e1
 
 
 def next_value_sim(train_data, nn, params, p_init=None, mean=None):
