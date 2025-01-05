@@ -401,7 +401,7 @@ def generate_price(params, nn, price):
     
     # Generate uniform random noise in the range [-clamped_price_size*0.1, clamped_price_size*0.1]
     noise = torch.empty_like(price, device=price.device).uniform_(
-        -clamped_price_size * 0.1, 
+        -0.5, 
         clamped_price_size * 0.1
     )
     

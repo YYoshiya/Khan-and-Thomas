@@ -385,11 +385,11 @@ for _ in range(50):
     loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T, 10, mean=mean)
     
     
-    if loss_v < 0.015:
+    if loss_v < 0.015 or count == 7:
         loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T, 10, mean=mean)
         
         with torch.no_grad():
-            new_data=sim.simulation(params, n_model, 1500, init_dist=True, last_dist=False)
+            new_data=sim.simulation(params, n_model, 1500, init=2.1, init_dist=True, last_dist=False)
         train_ds = BasicDataset(new_data)
         pred.price_train(train_ds.data_cpu, n_model, 50)
         pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 50)
