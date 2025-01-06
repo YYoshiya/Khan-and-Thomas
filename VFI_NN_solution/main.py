@@ -362,12 +362,7 @@ n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
 with torch.no_grad():
     new_data=sim.simulation(params, n_model, 1500, init=2.2)
-########################
-with torch.no_grad():
-    dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
-    vi.plot_mean_k(dataset_grid, 500, 600)
-train_ds = BasicDataset(dataset_grid)
-
+#########################
 params.B = 0.0083
 #########################
 loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T, 10, mean=mean)
@@ -391,15 +386,15 @@ count = 0
 loss_value = []
 loss_policy = []
 previous_loss = 0
+params.critbp = 1e-4
 for _ in range(50):
 
     outer_count += 1
     count += 1
-    loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T, 10, mean=mean)
-    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T, 10, mean=mean)
+    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean)
     
     
-    if loss_v < 0.015 or count == 7:
+    if loss_v < 0.015 or count == 5:
         loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T, 10, mean=mean)
         
         with torch.no_grad():
