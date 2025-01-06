@@ -79,15 +79,8 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
                 "dist_k": dist_now_k,      
             }
 
-            pnew, alpha, threshold = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=50, init=init)
-            k_prime_adj = policy_fn_sim(
-                basic_s["ashock"].view(1,1).expand(G, i_size), 
-                basic_s["ishock"], 
-                basic_s["grid_k"], 
-                basic_s["dist_k"], 
-                pnew.view(1,1).expand(G, i_size), 
-                nn
-            ).squeeze(-1)
+            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=50, init=init)
+
             k_prime_non_adj = (1 - params.delta) * params.k_grid
 
             idx_adj_lower, idx_adj_upper, weight_adj = vi.map_to_grid(k_prime_adj, params.k_grid)
@@ -263,7 +256,7 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
         # Bisection loop
         while diff > critbp and iter_count < max_bisect_iters:
             p0 = (pL + pH) / 2  # Midpoint of the current interval
-            pnew, alpha, threshold = eq_price(nn, data, params, p0)  # Compute new price and distance
+            pnew, alpha, threshold, next_k = eq_price(nn, data, params, p0, device="cpu")  # Compute new price and distance
             B0 = p0 - pnew  # Difference between current price and new price
 
             if pnew < 0:
@@ -287,7 +280,7 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
             iter_count += 1  # Increment iteration counter
 
         if diff <= critbp:
-            return p0, alpha, threshold  # Return the converged price and distance
+            return p0, alpha, threshold, next_k  # Return the converged price and distance
         else:
             expansion_count += 1
             # Expand the initial interval if convergence was not achieved
@@ -299,19 +292,23 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
     # Raise an error if the maximum number of expansions is exceeded without convergence
     raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
 
-def eq_price(nn, data, params, price):
+def eq_price(nn, data, params, price, device="cpu"):
     i_size = params.ishock.size(0)
     max_cols = params.k_grid.size(0)
     ashock_2d = data["ashock"].view(1, 1).expand(max_cols, i_size)###What is this? This should come from data.
     ishock_2d = data["ishock"]
     price = price.view(-1, 1).expand(max_cols, i_size)
     wage = params.eta/price
-    next_k, e0 = vi.golden_section_search_batch(lambda x: next_e0(data, x, price, nn, params, device), torch.tensor(0.1, dtype=TORCH_DTYPE).to(device), torch.tensor(8, dtype=TORCH_DTYPE).to(device))
+    next_k, e0 = vi.golden_section_search_batch(lambda x: next_e0(data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=params.grid_size * params.nz, device=device)
     e1 = vi.next_e1(data, price, nn, params, device)
+    
+    e0 = e0.view(params.grid_size, -1)
+    e1 = e1.view(params.grid_size, -1)
+    next_k = next_k.view(params.grid_size, -1)
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
     alpha = (xi / params.B).squeeze(-1)#G,I
-    next_k = next_k
+    
     yterm = ashock_2d * ishock_2d  * data["grid"]**params.theta
     numerator = params.nu * yterm / (wage + 1e-6)
     numerator = torch.clamp(numerator, min=1e-6, max=1e8)  # 数値の範囲を制限
@@ -322,45 +319,8 @@ def eq_price(nn, data, params, price):
     Yagg = torch.sum(data["dist"] * ynow)
     Cagg = Yagg - Iagg
     target = 1 / Cagg
-    return target, alpha, threshold
+    return target, alpha, threshold, next_k
                 
-def next_value_price(data, nn, params, price):
-    G = data["grid"].size(0)
-    i_size = params.ishock.size(0)
-    next_gm = dist_gm(data["grid_k"], data["dist_k"], data["ashock"], nn)
-    ashock_idx = torch.where(params.ashock == data["ashock"])[0].item()
-    ashock_exp = params.pi_a[ashock_idx]
-    prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).expand(G, -1, -1, -1)
-    
-    next_k = policy_fn_sim(data["ashock"].view(1,1).expand(G,i_size), data["ishock"], data["grid_k"], data["dist_k"], price, nn)
-    a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
-    a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
-    i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
-    a_flat = a_mesh_norm.flatten()  # shape: [I*A]
-    i_flat = i_mesh_norm.flatten()  # shape: [I*A]
-    
-    # a_flat と i_flat を [G, 5, I*A, 1] の形状に拡張
-    a_4d = a_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
-    i_4d = i_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
-    
-    next_k_flat = next_k.expand(-1, -1, a_flat.size(0)).unsqueeze(-1)  # [G, 5, I*A, 1]
-    next_gm_flat = next_gm.view(-1, 1, 1, 1).expand(G, i_size, a_flat.size(0), 1)  # [G, 5, I*A, 1]
-    k_cross_flat = params.k_grid_tmp.view(G, 1, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
-    pre_k_flat = (1-params.delta) * k_cross_flat
-    
-    data_v0 = torch.cat([next_k_flat, a_4d, i_4d, next_gm_flat], dim=-1)  # [G, 5, I*A, 4]
-    data_v1 = torch.cat([pre_k_flat, a_4d, i_4d, next_gm_flat], dim=-1)  # [G, 5, I*A, 4]
-    value0 = nn.value0(data_v0).view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
-    value1 = nn.value0(data_v1).view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
-    
-    expected_value0 = (value0 * prob).sum(dim=(2, 3))  # [G, 5]
-    expected_value1 = (value1 * prob).sum(dim=(2, 3))  # [G, 5]
-    
-    
-    e0 = -next_k.squeeze() * price.expand(G, i_size) + params.beta * expected_value0#G, i_size
-    e1 = -(1-params.delta) * params.k_grid * price.expand(G, i_size) + params.beta * expected_value1
-    
-    return e0, e1
 
 def policy_fn_sim(ashock, ishock, grid_k, dist_k, price, nn):
     ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
