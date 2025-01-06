@@ -15,6 +15,7 @@ class KTParam():
         self.ashock_max = self.ashock.max().item()
         self.ashock_min = self.ashock.min().item()
         self.nz = 5
+        
         pi_a = data = torch.tensor([
     [0.66487382950848084, 0.32644680509665858, 8.6719853447329021E-3, 7.3798866820906639E-6, 1.6344559039538353E-10],
     [0.10528259034646785, 0.65313000929388065, 0.23761520120544521, 3.9701628500560249E-3, 2.0363041502990953E-6],
@@ -53,6 +54,8 @@ class KTParam():
         self.k_grid_1d_gpu = self.k_grid_tmp.to(self.device)
         self.k_grid_gpu = self.k_grid.to(self.device)
         self.K_grid_np = np.linspace(0.1, 3, 10)
+        
+        self.dist_size = self.nz * self.grid_size
 
         self.price_min = 1.5
         self.price_max = 3
