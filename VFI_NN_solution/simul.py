@@ -300,7 +300,7 @@ def eq_price(nn, data, params, price, device="cpu"):
     price = price.view(-1, 1).expand(max_cols, i_size)
     wage = params.eta/price
     next_k, e0 = vi.golden_section_search_batch(lambda x: next_e0(data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=params.grid_size * params.nz, device=device)
-    e1 = vi.next_e1(data, price, nn, params, device)
+    e1 = next_e1(data, price, nn, params, device)
     
     e0 = e0.view(params.grid_size, -1)
     e1 = e1.view(params.grid_size, -1)
@@ -325,11 +325,11 @@ def next_e0(data, k, price, nn, params, device):
     G = data["grid"].size(0)
     i_size = params.ishock.size(0)
     next_gm = dist_gm(data["grid_k"], data["dist_k"], data["ashock"], nn)#G,I
-    price = price.flat()
+    price = price.flatten()#dist_size
     
     ashock_idx = torch.where(params.ashock == data["ashock"])[0].item()
-    ashock_exp = params.pi_a[ashock_idx].repeat(self.dist_size, -1).unsqueeze(-1)#dist_size, 5,1
-    ishock_exp = params.pi_i.repeat(self.grid_size, -1).unsqueeze(1)#dist_size, 1, 5
+    ashock_exp = params.pi_a[ashock_idx].repeat(params.dist_size, 1).unsqueeze(-1)#dist_size, 5,1
+    ishock_exp = params.pi_i.repeat(params.grid_size, 1).unsqueeze(1)#dist_size, 1, 5
     probabilities = ashock_exp * ishock_exp
     
     next_k = k.clone()#dist_size
@@ -339,7 +339,7 @@ def next_e0(data, k, price, nn, params, device):
     a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(params.dist_size, -1, -1) # shape: dist_size, i*a, 1
     i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(params.dist_size, -1, -1) # shape: dist_size, i*a, 1
     next_k_flat = next_k.view(-1,1,1).expand(-1, a_flat.size(1), -1)
-    next_gm_flat = next_gm.flat().expand(-1, a_flat.size(1)).unsqueeze(-1)#dist_size, i*a, 1
+    next_gm_flat = next_gm.view(-1, 1, 1).expand(params.dist_size, a_flat.size(1), -1)#dist_size, i*a, 1
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
     value0 = nn.target_value(data_e0).squeeze(-1)
@@ -356,10 +356,10 @@ def next_e1(data, price, nn, params, device):
     G = data["grid"].size(0)
     i_size = params.ishock.size(0)
     next_gm = dist_gm(data["grid_k"], data["dist_k"], data["ashock"], nn)#G,I
-    price = price.flat()#dist_size
+    price = price.flatten()#dist_size
     ashock_idx = torch.where(params.ashock == data["ashock"])[0].item()
-    ashock_exp = params.pi_a[ashock_idx].repeat(self.dist_size, -1).unsqueeze(-1)#dist_size, 5,1
-    ishock_exp = params.pi_i.repeat(self.grid_size, -1).unsqueeze(1)#dist_size, 1, 5
+    ashock_exp = params.pi_a[ashock_idx].repeat(params.dist_size, 1).unsqueeze(-1)#dist_size, 5,1
+    ishock_exp = params.pi_i.repeat(params.grid_size, 1).unsqueeze(1)#dist_size, 1, 5
     probabilities = ashock_exp * ishock_exp
     
     a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')
@@ -367,14 +367,15 @@ def next_e1(data, price, nn, params, device):
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
     a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(params.dist_size, -1, -1) # shape: dist_size, i*a, 1
     i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(params.dist_size, -1, -1) # shape: dist_size, i*a, 1
-    k_cross_flat = params.k_grid.flat().view(-1, 1, 1).expand(-1, a_flat.size(1), -1)
+    k_cross_flat = params.k_grid.flatten().view(-1, 1, 1).expand(-1, a_flat.size(1), -1)
     pre_k_flat = k_cross_flat * (1 - params.delta)
+    next_gm_flat = next_gm.view(-1, 1, 1).expand(params.dist_size, a_flat.size(1), -1)#dist_size, i*a, 1
     
     data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
     value1 = nn.target_value(data_e1).squeeze(-1)
     value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     expected_value1 = (value1 * probabilities).sum(dim=(1, 2))  # (batch_size)
-    e1 = -(1-params.delta) * params.k_grid.flat() * price + params.beta * expected_value1
+    e1 = -(1-params.delta) * params.k_grid.flatten() * price + params.beta * expected_value1
     return e1
     
     
