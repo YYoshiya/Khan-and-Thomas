@@ -219,18 +219,17 @@ def price_fn(grid, dist, ashock, nn, mean=None):
 
 def golden_section_search_batch(
     f, 
-    left_bound: torch.Tensor, 
-    right_bound: torch.Tensor, 
+    left_bound: float, 
+    right_bound: float, 
+    batch_size:int,
+    device: torch.device,
     max_iter: int = 30, 
     tol: float = 1e-6
 ):
 
-    device = left_bound.device
+    a = torch.full((batch_size,), left_bound, device=device, dtype=TORCH_DTYPE)
+    b = torch.full((batch_size,), right_bound, device=device, dtype=TORCH_DTYPE)
     phi = 0.618033988749895  # (sqrt(5) - 1) / 2 でもOK
-
-    # a, b は更新されるのでコピーしておく
-    a = left_bound.clone()  # shape [batch]
-    b = right_bound.clone() # shape [batch]
 
     # (b - a).max() が tol 以下なら収束とみなすため
     for _ in range(max_iter):
@@ -309,13 +308,14 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                     price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
                 #入力は分布とashockかな。
                 wage = params.eta / price
-                profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params).unsqueeze(-1)
-                _, e0 = golden_section_search_batch(lambda x: next_value(train_data, x, nn, params, device, p_init=p_init, mean=mean)[0], torch.tensor(0.1, dtype=TORCH_DTYPE).to(device), torch.tensor(8, dtype=TORCH_DTYPE).to(device))[0]
+                profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
+                _, e0 = golden_section_search_batch(lambda x: next_e0(train_data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=128, device="cuda")
+                e1 = next_e1(train_data, price, nn, params, device)
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
                 xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
                 vnew = profit - (params.eta*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
-            v = value_fn(train_data, nn, params)
+            v = value_fn(train_data, nn, params).squeeze(-1)
             loss = F.mse_loss(v, vnew)
             optimizer.zero_grad()
             loss.backward()
@@ -344,12 +344,13 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             if p_init is not None:
                 price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
             wage = params.eta / price
-            profit = get_profit(test_data["k_cross"], test_data["ashock"], test_data["ishock"], price, params).unsqueeze(-1)
-            e0, e1, next_k = next_value(test_data, nn, params, device, p_init=p_init, mean=mean)
+            profit = get_profit(test_data["k_cross"], test_data["ashock"], test_data["ishock"], price, params)
+            _, e0 = golden_section_search_batch(lambda x: next_e0(test_data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=128, device="cuda")
+            e1 = next_e1(test_data, price, nn, params, device)
             threshold = (e0 - e1) / params.eta
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
             vnew = profit - (params.eta*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
-            v = value_fn(test_data, nn, params)
+            v = value_fn(test_data, nn, params).squeeze(-1)
             log_v = torch.log(v)
             log_vnew = torch.log(vnew)
             loss_test = torch.abs(log_v - log_vnew).max()
@@ -419,19 +420,8 @@ def generate_price(params, nn, price):
     # Add the noise to the original price and return
     return price + noise
     
-    
-    
 
-
-def next_value(train_data, k, nn, params, device, grid=None, p_init=None, mean=None, policy_train=None):
-    if p_init is not None:
-        price = torch.tensor(p_init, dtype=TORCH_DTYPE).unsqueeze(0).unsqueeze(-1).repeat(train_data["ashock"].size(0), 1).to(device)
-    else:
-        price = price_fn(train_data["grid"], train_data["dist"], train_data["ashock"], nn, mean=mean)
-
-    if policy_train is not None:
-        price = generate_price(params, nn, price)
-        
+def next_e0(train_data, k, price, nn, params, device):
     with torch.no_grad():
         next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
         ashock = train_data["ashock"]
@@ -442,36 +432,54 @@ def next_value(train_data, k, nn, params, device, grid=None, p_init=None, mean=N
         ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
         probabilities = ashock_exp * ishock_exp
     
-    next_k = k#batch, 
+    next_k = k.clone()#batch, 
     a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
-    a_flat = a_mesh_norm.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
-    i_flat = i_mesh_norm.flatten().unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)
-    next_k_flat = next_k.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    next_gm_flat = next_gm.repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    k_cross_flat = train_data["k_cross"].unsqueeze(-1).repeat_interleave(a_flat.size(1), dim=1).unsqueeze(-1)#batch, i*a, 1
-    pre_k_flat = (1-params.delta)*k_cross_flat
+    a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(next_k.size(0), -1, -1)###.unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
+    i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(next_k.size(0), -1, -1)
+    next_k_flat = next_k.view(-1,1,1).expand(-1, a_flat.size(1), -1)#batch, i*a, 1
+    next_gm_flat = next_gm.expand(-1, a_flat.size(1)).unsqueeze(-1)#batch, i*a, 1
+    
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
     value0 = nn.target_value(data_e0).squeeze(-1)
-    value1 = nn.target_value(data_e1).squeeze(-1)
     value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
-    value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     checkv0 = value0[:, 0, 0]
-    checkv1 = value1[:, 0, 0]
 
-    # 確率と価値を掛けて期待値を計算
     expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
+    
+    e0 = -k.unsqueeze(-1) * price + params.beta * expected_value0#price is needed to be adjusted to the same shape as next_k
+    
+    return e0.squeeze(-1)
+
+def next_e1(train_data, price, nn, params, device):
+    with torch.no_grad():
+        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
+        ashock = train_data["ashock"]
+        ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
+        ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)
+        ishock = train_data["ishock"]
+        ishock_idx = [torch.where(params.ishock_gpu == val)[0].item() for val in ishock]
+        ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
+        probabilities = ashock_exp * ishock_exp
+
+    a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
+    a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
+    i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
+    a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(train_data["k_cross"].size(0), -1, -1)# batch, i*a, 1
+    i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(train_data["k_cross"].size(0), -1, -1)
+    next_gm_flat = next_gm.expand(-1, a_flat.size(1)).unsqueeze(-1)#batch, i*a, 1
+    k_cross_flat = train_data["k_cross"].view(-1,1,1).expand(-1, a_flat.size(1), -1)#batch, i*a, 1
+    pre_k_flat = (1-params.delta)*k_cross_flat
+
+    data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
+    value1 = nn.target_value(data_e1).squeeze(-1)
+    value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
-    
-    e0 = -next_k * price + params.beta * expected_value0
     e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
+    return e1.squeeze(-1)
     
-    return e0, e1
-
-
 def next_value_sim(train_data, nn, params, p_init=None, mean=None):
     G = train_data["grid_k"].size(0)  # grid のサイズ
     i_size = params.ishock.size(0)  # i のサイズ

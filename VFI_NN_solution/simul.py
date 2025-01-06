@@ -306,11 +306,12 @@ def eq_price(nn, data, params, price):
     ishock_2d = data["ishock"]
     price = price.view(-1, 1).expand(max_cols, i_size)
     wage = params.eta/price
-    e0, e1 = next_value_price(data, nn, params, price)#G,I
+    next_k, e0 = vi.golden_section_search_batch(lambda x: next_e0(data, x, price, nn, params, device), torch.tensor(0.1, dtype=TORCH_DTYPE).to(device), torch.tensor(8, dtype=TORCH_DTYPE).to(device))
+    e1 = vi.next_e1(data, price, nn, params, device)
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
     alpha = (xi / params.B).squeeze(-1)#G,I
-    next_k = policy_fn_sim(ashock_2d, ishock_2d, data["grid_k"], data["dist_k"], price, nn).squeeze(-1)
+    next_k = next_k
     yterm = ashock_2d * ishock_2d  * data["grid"]**params.theta
     numerator = params.nu * yterm / (wage + 1e-6)
     numerator = torch.clamp(numerator, min=1e-6, max=1e8)  # 数値の範囲を制限
