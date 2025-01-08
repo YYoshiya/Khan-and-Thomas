@@ -224,7 +224,8 @@ def golden_section_search_batch(
     batch_size:int,
     device: torch.device,
     max_iter: int = 30, 
-    tol: float = 1e-6
+    tol: float = 1e-6,
+    simul=False
 ):
 
     a = torch.full((batch_size,), left_bound, device=device, dtype=TORCH_DTYPE)
@@ -259,7 +260,10 @@ def golden_section_search_batch(
     # ループ終了後、(a + b)/2 を最適解近傍とみなす
     x_star = 0.5 * (a + b)
     f_star = f(x_star)
-    return x_star, f_star
+    if simul is True:
+        return x_star.expand(params.grid_size, -1), f_star.expand(params.grid_size, -1)
+    else:
+        return x_star, f_star
 
 
 def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
@@ -382,7 +386,7 @@ def value_init(nn, params, optimizer, T, num_sample):
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             v = nn.value0(train_data['X']).squeeze(-1)
-            loss = F.mse_loss(v, 4*(train_data['y']**0.8))
+            loss = F.mse_loss(v, 4*(train_data['y']**0.7))
             loss.backward()
             optimizer.step()
             if countv % 100 == 0:
@@ -764,7 +768,7 @@ def map_to_grid(k_prime, k_grid):
     k_max = k_grid[-1, 0]
 
     # Flatten k_prime for searchsorted and then reshape back
-    k_prime_flat = k_prime.view(-1)
+    k_prime_flat = k_prime.reshape(-1)
     idx = torch.searchsorted(k_grid[:, 0], k_prime_flat).view(k_prime.shape)
 
     # Clamp indices to valid range

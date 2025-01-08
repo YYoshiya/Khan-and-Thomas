@@ -353,24 +353,14 @@ n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
 init_price = 2.2
 mean=None
-simul_T = 300
+simul_T = 600
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
-vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, init_price)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
 with torch.no_grad():
-    new_data=sim.simulation(params, n_model, 1500, init=2.2)
-#########################
-params.B = 0.0083
-#########################
-loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T, 10, mean=mean)
-
-
-#vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, 1000, 10, p_init=init_price, mean=mean)
-with torch.no_grad():
-    new_data=sim.simulation(params, n_model, 1500, init=2.2)
+    new_data=sim.simulation(params, n_model, simul_T, init=init_price)
 train_ds = BasicDataset(new_data)
 pred.price_train(train_ds.data_cpu, n_model, 100)
 pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 100)
@@ -395,8 +385,6 @@ for _ in range(50):
     
     
     if loss_v < 0.015 or count == 5:
-        loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T, 10, mean=mean)
-        
         with torch.no_grad():
             new_data=sim.simulation(params, n_model, 1500, init=2.1, init_dist=True, last_dist=False)
         train_ds = BasicDataset(new_data)

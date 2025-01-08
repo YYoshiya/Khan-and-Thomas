@@ -270,10 +270,10 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
             new_diff = abs(B0)  # Calculate the new difference
 
             # Check if the change in diff is small enough to trigger expansion
-            if prev_diff is not None:
-                if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
+            #if prev_diff is not None:
+                #if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
                     #print(f"Change in diff ({abs(new_diff - prev_diff):.4f}) <= 0.01, triggering expansion.")
-                    break  # Exit the bisection loop to expand the interval
+                    #break  # Exit the bisection loop to expand the interval
 
             prev_diff = new_diff  # Update previous difference
             diff = new_diff  # Update the current difference
@@ -299,7 +299,7 @@ def eq_price(nn, data, params, price, device="cpu"):
     ishock_2d = data["ishock"]
     price = price.view(-1, 1).expand(max_cols, i_size)
     wage = params.eta/price
-    next_k, e0 = vi.golden_section_search_batch(lambda x: next_e0(data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=params.grid_size * params.nz, device=device)
+    next_k, e0 = vi.golden_section_search_batch(lambda x: next_e0(data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=params.nz, device=device, simul=True)
     e1 = next_e1(data, price, nn, params, device)
     
     e0 = e0.view(params.grid_size, -1)
@@ -325,21 +325,21 @@ def next_e0(data, k, price, nn, params, device):
     G = data["grid"].size(0)
     i_size = params.ishock.size(0)
     next_gm = dist_gm(data["grid_k"], data["dist_k"], data["ashock"], nn)#G,I
-    price = price.flatten()#dist_size
+    price = price[0, :]#i_size
     
     ashock_idx = torch.where(params.ashock == data["ashock"])[0].item()
-    ashock_exp = params.pi_a[ashock_idx].repeat(params.dist_size, 1).unsqueeze(-1)#dist_size, 5,1
-    ishock_exp = params.pi_i.repeat(params.grid_size, 1).unsqueeze(1)#dist_size, 1, 5
-    probabilities = ashock_exp * ishock_exp
+    ashock_exp = params.pi_a[ashock_idx].repeat(i_size, 1).unsqueeze(-1)#i__size, 5,1
+    ishock_exp = params.pi_i.unsqueeze(1)#i_size, 1, 5
+    probabilities = ashock_exp * ishock_exp#i_size, 5, 5
     
     next_k = k.clone()#dist_size
     a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
-    a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(params.dist_size, -1, -1) # shape: dist_size, i*a, 1
-    i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(params.dist_size, -1, -1) # shape: dist_size, i*a, 1
+    a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(i_size, -1, -1) # shape: dist_size, i*a, 1
+    i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(i_size, -1, -1) # shape: dist_size, i*a, 1
     next_k_flat = next_k.view(-1,1,1).expand(-1, a_flat.size(1), -1)
-    next_gm_flat = next_gm.view(-1, 1, 1).expand(params.dist_size, a_flat.size(1), -1)#dist_size, i*a, 1
+    next_gm_flat = next_gm.view(-1, 1, 1).expand(i_size, a_flat.size(1), -1)#dist_size, i*a, 1
     
     data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
     value0 = nn.target_value(data_e0).squeeze(-1)
