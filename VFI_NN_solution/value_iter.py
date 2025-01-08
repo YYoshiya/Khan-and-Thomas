@@ -221,46 +221,31 @@ def golden_section_search_batch(
     f, 
     left_bound: float, 
     right_bound: float, 
-    batch_size:int,
+    batch_size: int,
     device: torch.device,
-    max_iter: int = 30, 
-    tol: float = 1e-6,
+    max_iter: int = 20, 
+    tol: float = 1e-5,
     simul=False
 ):
-
     a = torch.full((batch_size,), left_bound, device=device, dtype=TORCH_DTYPE)
     b = torch.full((batch_size,), right_bound, device=device, dtype=TORCH_DTYPE)
-    phi = 0.618033988749895  # (sqrt(5) - 1) / 2 でもOK
+    phi = 0.618033988749895  # 黄金比
 
-    # (b - a).max() が tol 以下なら収束とみなすため
-    for _ in range(max_iter):
-        # 区間幅
+    for _ in range(max_iter):  # 同期チェックを省略し固定回数だけ反復
         dist = b - a
-        # もし dist が既に十分小さければ break
-        if (dist < tol).all():
-            break
-
-        # c, d はバッチごとに計算 (shape [batch])
         c = b - phi * dist
         d = a + phi * dist
 
-        
-        fc = f(c) # shape [batch]
-        fd = f(d)  # shape [batch]
+        fc = f(c)
+        fd = f(d)
 
-        # ゴールデン・セクション「最大化」の場合:
-        #    if fc > fd: 区間を [a, d] に縮める
-        #    else:       区間を [c, b] に縮める
         mask = (fc > fd)
-        # mask が True のバッチは右端を d に
         b[mask] = d[mask]
-        # mask が False のバッチは左端を c に
         a[~mask] = c[~mask]
 
-    # ループ終了後、(a + b)/2 を最適解近傍とみなす
     x_star = 0.5 * (a + b)
     f_star = f(x_star)
-    if simul is True:
+    if simul:
         return x_star.expand(params.grid_size, -1), f_star.expand(params.grid_size, -1)
     else:
         return x_star, f_star
@@ -302,7 +287,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
     countv = 0
     tau = 0.05
-    for epoch in range(20):
+    for epoch in range(3):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
@@ -313,7 +298,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 #入力は分布とashockかな。
                 wage = params.eta / price
                 profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
-                _, e0 = golden_section_search_batch(lambda x: next_e0(train_data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=128, device="cuda")
+                _, e0 = golden_section_search_batch(lambda x: next_e0(train_data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=price.size(0), device="cuda")
                 e1 = next_e1(train_data, price, nn, params, device)
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
@@ -349,7 +334,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
             wage = params.eta / price
             profit = get_profit(test_data["k_cross"], test_data["ashock"], test_data["ishock"], price, params)
-            _, e0 = golden_section_search_batch(lambda x: next_e0(test_data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=128, device="cuda")
+            _, e0 = golden_section_search_batch(lambda x: next_e0(test_data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=price.size(0), device="cuda")
             e1 = next_e1(test_data, price, nn, params, device)
             threshold = (e0 - e1) / params.eta
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
