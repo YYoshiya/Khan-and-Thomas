@@ -324,7 +324,7 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.001)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
         self.optimizer_pol = optim.Adam(self.params_policy, lr=0.001)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
@@ -396,7 +396,7 @@ for _ in range(50):
     loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean)
     
     
-    if max_loss < 0.015 or count == 5:
+    if loss_v < 0.015 or count == 10:
         with torch.no_grad():
             new_data=sim.simulation(params, n_model, 1500, init=2.1, init_dist=True, last_dist=False)
         train_ds = BasicDataset(new_data)
