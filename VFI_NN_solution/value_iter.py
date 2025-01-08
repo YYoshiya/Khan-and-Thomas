@@ -218,37 +218,49 @@ def price_fn(grid, dist, ashock, nn, mean=None):
     return price
 
 def golden_section_search_batch(
-    f, 
-    left_bound: float, 
-    right_bound: float, 
+    train_data,
+    price,
+    nn,
+    params,
+    device,
+    left_bound: float,
+    right_bound: float,
     batch_size: int,
-    device: torch.device,
     max_iter: int = 20, 
     tol: float = 1e-5,
-    simul=False
 ):
+    """
+    golden_section_search_batchの高速化版。
+    next_e0のうち、k以外は一度だけ計算し、
+    ループ内では next_k 依存の部分だけ計算するようにする。
+    """
+
+    # next_e0 のうち k 以外をキャッシュし、k だけ差し替える関数を作る
+    next_e0_partial = init_next_e0(train_data, price, nn, params, device)
+
+    # 黄金比
+    phi = 0.618033988749895
+    
+    # 初期区間 [a, b]
     a = torch.full((batch_size,), left_bound, device=device, dtype=TORCH_DTYPE)
     b = torch.full((batch_size,), right_bound, device=device, dtype=TORCH_DTYPE)
-    phi = 0.618033988749895  # 黄金比
+    
+    for _ in range(max_iter):
+        dist_ = b - a
+        c = b - phi * dist_
+        d = a + phi * dist_
 
-    for _ in range(max_iter):  # 同期チェックを省略し固定回数だけ反復
-        dist = b - a
-        c = b - phi * dist
-        d = a + phi * dist
-
-        fc = f(c)
-        fd = f(d)
+        fc = next_e0_partial(c)
+        fd = next_e0_partial(d)
 
         mask = (fc > fd)
         b[mask] = d[mask]
         a[~mask] = c[~mask]
 
     x_star = 0.5 * (a + b)
-    f_star = f(x_star)
-    if simul:
-        return x_star.expand(params.grid_size, -1), f_star.expand(params.grid_size, -1)
-    else:
-        return x_star, f_star
+    f_star = next_e0_partial(x_star)
+
+    return x_star, f_star
 
 
 def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
@@ -287,7 +299,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
     countv = 0
     tau = 0.05
-    for epoch in range(3):
+    for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
             countv += 1
@@ -298,7 +310,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 #入力は分布とashockかな。
                 wage = params.eta / price
                 profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
-                _, e0 = golden_section_search_batch(lambda x: next_e0(train_data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=price.size(0), device="cuda")
+                _, e0 = golden_section_search_batch(train_data, price, nn, params, "cuda", params.k_grid_min, params.k_grid_max, batch_size=price.size(0))
                 e1 = next_e1(train_data, price, nn, params, device)
                 threshold = (e0 - e1) / params.eta
                 #ここ見にくすぎる。
@@ -334,7 +346,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
                 price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
             wage = params.eta / price
             profit = get_profit(test_data["k_cross"], test_data["ashock"], test_data["ishock"], price, params)
-            _, e0 = golden_section_search_batch(lambda x: next_e0(test_data, x, price, nn, params, device), params.k_grid_min, params.k_grid_max, batch_size=price.size(0), device="cuda")
+            _, e0 = golden_section_search_batch(test_data, price, nn, params, "cuda", params.k_grid_min, params.k_grid_max, batch_size=price.size(0))
             e1 = next_e1(test_data, price, nn, params, device)
             threshold = (e0 - e1) / params.eta
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
@@ -410,37 +422,82 @@ def generate_price(params, nn, price):
     return price + noise
     
 
-def next_e0(train_data, k, price, nn, params, device):
-    with torch.no_grad():
-        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
-        ashock = train_data["ashock"]
-        ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
-        ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)
-        ishock = train_data["ishock"]
-        ishock_idx = [torch.where(params.ishock_gpu == val)[0].item() for val in ishock]
-        ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)
-        probabilities = ashock_exp * ishock_exp
-    
-    next_k = k.clone()#batch, 
-    a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
-    a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
-    i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
-    a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(next_k.size(0), -1, -1)###.unsqueeze(0).repeat_interleave(next_k.size(0), dim=0).unsqueeze(-1)# batch, i*a, 1
-    i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(next_k.size(0), -1, -1)
-    next_k_flat = next_k.view(-1,1,1).expand(-1, a_flat.size(1), -1)#batch, i*a, 1
-    next_gm_flat = next_gm.expand(-1, a_flat.size(1)).unsqueeze(-1)#batch, i*a, 1
-    
-    
-    data_e0 = torch.cat([next_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    value0 = nn.target_value(data_e0).squeeze(-1)
-    value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
-    checkv0 = value0[:, 0, 0]
+def init_next_e0(train_data, price, nn, params, device):
+    """
+    Precompute invariant parts of next_e0 that do not change on each call,
+    and return a partial function that computes only the k-dependent part.
 
-    expected_value0 = (value0 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
+    Parameters
+    ----------
+    train_data : dict
+        A dictionary of data (e.g., k_cross, ashock, ishock, dist_k, etc.)
+    price : torch.Tensor
+        Price tensor (shape: (batch_size,) or (batch_size, 1))
+    nn : network object
+    params : parameters object
+    device : torch.device
+
+    Returns
+    -------
+    next_e0_partial : function
+        A function that takes only k as input and returns the value of next_e0
+    """
+
+    with torch.no_grad():
+        # First, compute parts that do not depend on k only once, such as dist_gm.
+        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
+        
+        # Compute necessary indices and probability distributions beforehand.
+        ashock = train_data["ashock"]
+        ishock = train_data["ishock"]
+
+        # Obtain indices for each ashock and ishock (add .to(device) if needed for GPU).
+        ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
+        ishock_idx = [torch.where(params.ishock_gpu == val)[0].item() for val in ishock]
+        ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)  # For expectation calculation
+        ishock_exp = params.pi_i_gpu[ishock_idx].unsqueeze(1)   # For expectation calculation
+        probabilities = ashock_exp * ishock_exp  # (batch_size, a, i)
+
+        # Create meshgrid covering all possible future (a, i) pairs and flatten them.
+        a_mesh, i_mesh = torch.meshgrid(params.ashock_gpu, params.ishock_gpu, indexing='ij')
+        a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
+        i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
+        a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(price.size(0), -1, -1)
+        i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(price.size(0), -1, -1)
+
+        # Expand next_gm to match the shape needed for computation.
+        next_gm_flat = next_gm.expand(-1, a_flat.size(1)).unsqueeze(-1)  # (batch, a*i, 1)
+
+        # Up to here, computations are independent of k.
+        # Therefore, cache these computed values and define a partial function
+        # that only substitutes k to compute e0.
+
+    def next_e0_partial(k):
+        """
+        Function to be called each time k changes.
+        It uses cached values computed in init_next_e0 and computes the k-dependent part of E0.
+        """
+        # Reshape k and then concatenate.
+        k_expanded = k.view(-1, 1, 1).expand(-1, a_flat.size(1), -1)  # (batch, a*i, 1)
+        
+        # Create input for target_value.
+        data_e0 = torch.cat([k_expanded, a_flat, i_flat, next_gm_flat], dim=2)  # (batch, a*i, 4)
+        
+        # Call the precomputed target_value (e.g., nn.target_value).
+        value0 = nn.target_value(data_e0).squeeze(-1)
+        # Reshape to (batch, nA, nI) to compute expectation.
+        value0 = value0.view(price.size(0), len(params.ashock), len(params.ishock))
+        
+        # Compute expected value.
+        expected_value0 = (value0 * probabilities).sum(dim=(1, 2))
+        
+        # Compute e0 = -k * price + β * E[V0]
+        # (reshape price if necessary to match dimensions)
+        e0 = -k * price.squeeze(-1) + params.beta * expected_value0
+        return e0 # (batch,)
     
-    e0 = -k.unsqueeze(-1) * price + params.beta * expected_value0#price is needed to be adjusted to the same shape as next_k
-    
-    return e0.squeeze(-1)
+    return next_e0_partial
+
 
 def next_e1(train_data, price, nn, params, device):
     with torch.no_grad():

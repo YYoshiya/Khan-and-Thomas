@@ -366,7 +366,7 @@ with torch.no_grad():
 train_ds = BasicDataset(dataset_grid)
 with torch.no_grad():
     true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds.data_gm, init=init_price)
-pred.price_train1(train_ds.data_cpu, true_price, n_model, 200)
+pred.price_train1(train_ds.data_cpu, true_price, n_model, 100)
 pred.next_gm_train1(train_ds.data_cpu, dist_new, n_model, params, n_model.optimizer_next_gm, 1000, 10, 100)
 
 
@@ -396,7 +396,7 @@ for _ in range(50):
     loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean)
     
     
-    if loss_v < 0.015 or count == 5:
+    if max_loss < 0.015 or count == 5:
         with torch.no_grad():
             new_data=sim.simulation(params, n_model, 1500, init=2.1, init_dist=True, last_dist=False)
         train_ds = BasicDataset(new_data)
