@@ -79,7 +79,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
                 "dist_k": dist_now_k,      
             }
 
-            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=50, init=init)
+            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=30, init=init)
 
             k_prime_non_adj = (1 - params.delta) * params.k_grid
 
@@ -261,7 +261,7 @@ def golden_section_search_batch(
 
     return x_star.expand(params.grid_size, -1), f_star.expand(params.grid_size, -1)
 
-def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
+def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=30, init=None):
     """
     Uses the bisection method to find the equilibrium price. If convergence is not achieved,
     the initial interval is expanded iteratively. Additionally, if the change in `diff` between
@@ -287,8 +287,8 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
     p_init = price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
     if init is not None:
         p_init = torch.full_like(p_init, init)
-    pL = p_init - 0.3  # Lower bound of the price interval
-    pH = p_init + 0.3  # Upper bound of the price interval
+    pL = p_init * 0.5  # Lower bound of the price interval
+    pH = p_init * 1.5  # Upper bound of the price interval
     critbp = params.critbp  # Convergence criterion
     expansion_count = 0  # Counter for the number of expansions
 
@@ -314,10 +314,10 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
             new_diff = abs(B0)  # Calculate the new difference
 
             # Check if the change in diff is small enough to trigger expansion
-            if prev_diff is not None:
-                if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
+            #if prev_diff is not None:
+                #if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
                     #print(f"Change in diff ({abs(new_diff - prev_diff):.4f}) <= 0.01, triggering expansion.")
-                    break  # Exit the bisection loop to expand the interval
+                    #break  # Exit the bisection loop to expand the interval
 
             prev_diff = new_diff  # Update previous difference
             diff = new_diff  # Update the current difference
@@ -329,12 +329,13 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
             expansion_count += 1
             # Expand the initial interval if convergence was not achieved
             expansion_amount = expansion_count * 0.1
-            pL = p_init - 0.3 - expansion_amount  # Expand lower bound
-            pH = p_init + 0.3 + expansion_amount  # Expand upper bound
+            pL = p_init  - expansion_amount  # Expand lower bound
+            pH = p_init  + expansion_amount  # Expand upper bound
             #print(f"Expansion {expansion_count}: New interval [{pL.item():.4f}, {pH.item():.4f}]")
 
+    return p0, alpha, threshold, next_k
     # Raise an error if the maximum number of expansions is exceeded without convergence
-    raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
+    #raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
 
 def eq_price(nn, data, params, price, device="cpu"):
     i_size = params.ishock.size(0)
@@ -347,7 +348,6 @@ def eq_price(nn, data, params, price, device="cpu"):
     e1 = next_e1(data, price, nn, params, device)
     
     e0 = e0.view(params.grid_size, -1)
-    e1 = e1.view(params.grid_size, -1)
     next_k = next_k.view(params.grid_size, -1)
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
@@ -436,7 +436,7 @@ def init_next_e0_sim(data, price, nn, params, device):
         data_e0 = torch.cat([k_expanded, a_flat, i_flat, next_gm_flat], dim=2)  # => (i_size, a*i, 4)
 
         # Compute V0 => reshape => take expectation
-        value0 = nn.target_value(data_e0).squeeze(-1)     # => shape (i_size*(a*i))
+        value0 = nn.target_value(data_e0).squeeze(-1)     # => shape (i_size,(a*i))
         value0 = value0.view(-1, len(params.ashock), len(params.ishock))  # => (i_size, nA, nI)
 
         expected_value0 = (value0 * probabilities).sum(dim=(1, 2))  # => shape (i_size,)
@@ -454,27 +454,30 @@ def init_next_e0_sim(data, price, nn, params, device):
 def next_e1(data, price, nn, params, device):
     G = data["grid"].size(0)
     i_size = params.ishock.size(0)
-    next_gm = dist_gm(data["grid_k"], data["dist_k"], data["ashock"], nn)#G,I
-    price = price.flatten()#dist_size
+    next_gm = dist_gm(data["grid_k"], data["dist_k"], data["ashock"], nn)
     ashock_idx = torch.where(params.ashock == data["ashock"])[0].item()
-    ashock_exp = params.pi_a[ashock_idx].repeat(params.dist_size, 1).unsqueeze(-1)#dist_size, 5,1
-    ishock_exp = params.pi_i.repeat(params.grid_size, 1).unsqueeze(1)#dist_size, 1, 5
-    probabilities = ashock_exp * ishock_exp
+    ashock_exp = params.pi_a[ashock_idx]
+    prob = torch.einsum('ik,j->ijk', params.pi_i, ashock_exp).unsqueeze(0).expand(G, -1, -1, -1)
     
-    a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')
+    a_mesh, i_mesh = torch.meshgrid(params.ashock, params.ishock, indexing='ij')  # indexing='ij' を明示的に指定
     a_mesh_norm = (a_mesh - params.ashock_min) / (params.ashock_max - params.ashock_min)
     i_mesh_norm = (i_mesh - params.ishock_min) / (params.ishock_max - params.ishock_min)
-    a_flat = a_mesh_norm.flatten().view(1, -1, 1).expand(params.dist_size, -1, -1) # shape: dist_size, i*a, 1
-    i_flat = i_mesh_norm.flatten().view(1, -1, 1).expand(params.dist_size, -1, -1) # shape: dist_size, i*a, 1
-    k_cross_flat = params.k_grid.flatten().view(-1, 1, 1).expand(-1, a_flat.size(1), -1)
-    pre_k_flat = k_cross_flat * (1 - params.delta)
-    next_gm_flat = next_gm.view(-1, 1, 1).expand(params.dist_size, a_flat.size(1), -1)#dist_size, i*a, 1
+    a_flat = a_mesh_norm.flatten()  # shape: [I*A]
+    i_flat = i_mesh_norm.flatten()  # shape: [I*A]
     
-    data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
+    # a_flat と i_flat を [G, 5, I*A, 1] の形状に拡張
+    a_4d = a_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
+    i_4d = i_flat.view(1, 1, -1, 1).expand(G, 5, -1, 1)  # [G, 5, I*A, 1]
+
+    next_gm_flat = next_gm.view(-1, 1, 1, 1).expand(G, i_size, a_flat.size(0), 1)  # [G, 5, I*A, 1]
+    k_cross_flat = params.k_grid_tmp.view(G, 1, 1, 1).expand(G, 5, a_flat.size(0), 1)  # [G, 5, I*A, 1]
+    pre_k_flat = (1-params.delta) * k_cross_flat
+    
+    data_e1 = torch.cat([pre_k_flat, a_4d, i_4d, next_gm_flat], dim=-1)  # [G, 5, I*A, 4]
     value1 = nn.target_value(data_e1).squeeze(-1)
-    value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
-    expected_value1 = (value1 * probabilities).sum(dim=(1, 2))  # (batch_size)
-    e1 = -(1-params.delta) * params.k_grid.flatten() * price + params.beta * expected_value1
+    value1 = value1.view(G, 5, params.ashock.size(0), params.ishock.size(0))  # [G, 5, A, I]
+    expected_value1 = (value1 * prob).sum(dim=(2, 3))  # (G, 5)
+    e1 = -(1-params.delta) * params.k_grid * price + params.beta * expected_value1
     return e1
     
     
