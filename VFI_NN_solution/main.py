@@ -351,7 +351,7 @@ n_model.price_model.apply(initialize_weights)
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
-init_price = 2.2
+init_price = 2.1
 mean=None
 simul_T = 600
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
