@@ -377,7 +377,7 @@ pred.next_gm_train1(train_ds.data_cpu, dist_new, n_model, params, n_model.optimi
 #pred.price_train(train_ds.data_cpu, n_model, 100)
 #pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 100)
 
-params.B = 0.0083
+params.B = 0.007
 #new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
 #train_ds_gm.update_data(new_data)
@@ -388,7 +388,6 @@ count = 0
 loss_value = []
 loss_policy = []
 previous_loss = 0
-params.critbp = 1e-4
 for _ in range(50):
 
     outer_count += 1
@@ -398,7 +397,7 @@ for _ in range(50):
     
     if loss_v < 0.015:
         with torch.no_grad():
-            new_data=sim.simulation(params, n_model, 1500,  init_dist=True, last_dist=False)
+            new_data=sim.simulation(params, n_model, 1500, init_dist=True, last_dist=False)
         train_ds = BasicDataset(new_data)
         pred.price_train(train_ds.data_cpu, n_model, 50)
         pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 50)

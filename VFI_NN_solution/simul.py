@@ -79,7 +79,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
                 "dist_k": dist_now_k,      
             }
 
-            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=20, max_bisect_iters=30, init=init)
+            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=20, init=init)
 
             k_prime_non_adj = (1 - params.delta) * params.k_grid
 
@@ -300,23 +300,22 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=30, init=None):
         # Bisection loop
         while diff > critbp and iter_count < max_bisect_iters:
             p0 = (pL + pH) / 2  # Midpoint of the current interval
-            pnew, alpha, threshold, next_k = eq_price(nn, data, params, p0, device="cpu")  # Compute new price and distance
-            B0 = p0 - pnew  # Difference between current price and new price
+            Cagg, alpha, threshold, next_k = eq_price(nn, data, params, p0, device="cpu")  # Compute new price and distance
+            B0 = 1/p0 - Cagg  # Difference between current price and new price
 
             if B0 < 0:
-                pL = p0  # Adjust the lower bound if B0 is negative
+                pH = p0  
             else:
-                pH = p0  # Adjust the upper bound otherwise
+                pL = p0  
 
             new_diff = abs(B0)  # Calculate the new difference
 
             # Check if the change in diff is small enough to trigger expansion
-            if prev_diff is not None:
-                if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
+            #if prev_diff is not None:
+                #if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
                     #print(f"Change in diff ({abs(new_diff - prev_diff):.4f}) <= 0.01, triggering expansion.")
-                    break  # Exit the bisection loop to expand the interval
+                    #break  # Exit the bisection loop to expand the interval
 
-            prev_diff = new_diff  # Update previous difference
             diff = new_diff  # Update the current difference
             iter_count += 1  # Increment iteration counter
 
@@ -330,8 +329,9 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=30, init=None):
             pH = p_init  + expansion_amount  # Expand upper bound
             #print(f"Expansion {expansion_count}: New interval [{pL.item():.4f}, {pH.item():.4f}]")
 
+    return p0, alpha, threshold, next_k
     # Raise an error if the maximum number of expansions is exceeded without convergence
-    raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
+    #raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
 
 def eq_price(nn, data, params, price, device="cpu"):
     i_size = params.ishock.size(0)
@@ -341,25 +341,23 @@ def eq_price(nn, data, params, price, device="cpu"):
     price = price.view(-1, 1).expand(max_cols, i_size)
     wage = params.eta/price
     next_k, e0 = golden_section_search_batch(data, price, nn, params, "cpu", params.k_grid_min, params.k_grid_max, batch_size=params.nz)
-    e1 = next_e1(data, price, nn, params, device)
-    
     e0 = e0.view(params.grid_size, -1)
+    e1 = next_e1(data, price, nn, params, device)
     next_k = next_k.view(params.grid_size, -1)
+    
     threshold = (e0 - e1) / params.eta
     xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE), torch.max(torch.tensor(0, dtype=TORCH_DTYPE), threshold))
     alpha = (xi / params.B).squeeze(-1)#G,I
     
     yterm = ashock_2d * ishock_2d  * data["grid"]**params.theta
-    numerator = params.nu * yterm / (wage + 1e-6)
-    numerator = torch.clamp(numerator, min=1e-6, max=1e8)  # 数値の範囲を制限
-    nnow = torch.pow(numerator, 1 / (1 - params.nu))
+    nnow = (params.nu * yterm / wage )**(1 / (1 - params.nu))
     inow = alpha * (next_k - (1-params.delta) * data["grid"])
     ynow = ashock_2d*ishock_2d * data["grid"]**params.theta * nnow**params.nu
     Iagg = torch.sum(data["dist"] * inow)
     Yagg = torch.sum(data["dist"] * ynow)
     Cagg = Yagg - Iagg
-    target = 1 / Cagg
-    return target, alpha, threshold, next_k
+    #target = 1 / Cagg
+    return Cagg, alpha, threshold, next_k
                 
 def init_next_e0_sim(data, price, nn, params, device):
     """
