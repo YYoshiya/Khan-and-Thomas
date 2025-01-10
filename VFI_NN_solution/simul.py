@@ -79,7 +79,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
                 "dist_k": dist_now_k,      
             }
 
-            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=30, init=init)
+            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=20, max_bisect_iters=30, init=init)
 
             k_prime_non_adj = (1 - params.delta) * params.k_grid
 
@@ -287,8 +287,8 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=30, init=None):
     p_init = price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
     if init is not None:
         p_init = torch.full_like(p_init, init)
-    pL = p_init * 0.5  # Lower bound of the price interval
-    pH = p_init * 1.5  # Upper bound of the price interval
+    pL = p_init - 0.01  # Lower bound of the price interval
+    pH = p_init + 0.01  # Upper bound of the price interval
     critbp = params.critbp  # Convergence criterion
     expansion_count = 0  # Counter for the number of expansions
 
@@ -303,13 +303,10 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=30, init=None):
             pnew, alpha, threshold, next_k = eq_price(nn, data, params, p0, device="cpu")  # Compute new price and distance
             B0 = p0 - pnew  # Difference between current price and new price
 
-            if pnew < 0:
-                pL = p0  # Adjust the lower bound if new price is negative
+            if B0 < 0:
+                pL = p0  # Adjust the lower bound if B0 is negative
             else:
-                if B0 < 0:
-                    pL = p0  # Adjust the lower bound if B0 is negative
-                else:
-                    pH = p0  # Adjust the upper bound otherwise
+                pH = p0  # Adjust the upper bound otherwise
 
             new_diff = abs(B0)  # Calculate the new difference
 
@@ -328,14 +325,13 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=30, init=None):
         else:
             expansion_count += 1
             # Expand the initial interval if convergence was not achieved
-            expansion_amount = expansion_count * 0.1
+            expansion_amount = expansion_count * 0.02
             pL = p_init  - expansion_amount  # Expand lower bound
             pH = p_init  + expansion_amount  # Expand upper bound
             #print(f"Expansion {expansion_count}: New interval [{pL.item():.4f}, {pH.item():.4f}]")
 
-    return p0, alpha, threshold, next_k
     # Raise an error if the maximum number of expansions is exceeded without convergence
-    #raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
+    raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
 
 def eq_price(nn, data, params, price, device="cpu"):
     i_size = params.ishock.size(0)
