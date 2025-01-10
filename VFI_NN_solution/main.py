@@ -360,6 +360,8 @@ vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, ini
 n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
+
+
 with torch.no_grad():
     dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
     vi.plot_mean_k(dataset_grid, 500, 600)

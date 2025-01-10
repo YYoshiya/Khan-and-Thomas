@@ -311,11 +311,12 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=30, init=None):
             new_diff = abs(B0)  # Calculate the new difference
 
             # Check if the change in diff is small enough to trigger expansion
-            #if prev_diff is not None:
-                #if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
+            if prev_diff is not None:
+                if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
                     #print(f"Change in diff ({abs(new_diff - prev_diff):.4f}) <= 0.01, triggering expansion.")
-                    #break  # Exit the bisection loop to expand the interval
+                    break  # Exit the bisection loop to expand the interval
 
+            prev_diff = new_diff  # Update previous difference
             diff = new_diff  # Update the current difference
             iter_count += 1  # Increment iteration counter
 
