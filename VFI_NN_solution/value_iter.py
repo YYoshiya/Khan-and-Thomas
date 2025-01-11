@@ -292,7 +292,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
