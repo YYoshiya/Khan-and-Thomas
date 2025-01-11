@@ -79,7 +79,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
                 "dist_k": dist_now_k,      
             }
 
-            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=20, init=init)
+            pnew, alpha, threshold, k_prime_adj = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=5000, init=init)
 
             k_prime_non_adj = (1 - params.delta) * params.k_grid
 
@@ -225,16 +225,17 @@ def golden_section_search_batch(
     left_bound: float,
     right_bound: float,
     batch_size: int,
-    max_iter: int = 20, 
-    tol: float = 1e-5
+    max_iter: int = 50, 
+    tol: float = 1e-6
 ):
     """
     golden_section_search_batchの高速化版。
     next_e0のうち、k以外は一度だけ計算し、
     ループ内では next_k 依存の部分だけ計算するようにする。
-    """
 
-    # next_e0 のうち k 以外をキャッシュし、k だけ差し替える関数を作る
+    さらに tol を用いた収束判定を追加。
+    """
+    # next_e0 のうち k 以外をキャッシュし、k だけ差し替える関数
     next_e0_partial = init_next_e0_sim(train_data, price, nn, params, device)
 
     # 黄金比
@@ -243,7 +244,7 @@ def golden_section_search_batch(
     # 初期区間 [a, b]
     a = torch.full((batch_size,), left_bound, device=device, dtype=TORCH_DTYPE)
     b = torch.full((batch_size,), right_bound, device=device, dtype=TORCH_DTYPE)
-    
+
     for _ in range(max_iter):
         dist_ = b - a
         c = b - phi * dist_
@@ -252,9 +253,14 @@ def golden_section_search_batch(
         fc = next_e0_partial(c)
         fd = next_e0_partial(d)
 
+        # fc > fd となるところをマスク
         mask = (fc > fd)
         b[mask] = d[mask]
         a[~mask] = c[~mask]
+
+        # 収束判定: 区間の最大長さが tol 未満なら終了
+        if torch.max(b - a) < tol:
+            break
 
     x_star = 0.5 * (a + b)
     f_star = next_e0_partial(x_star)
@@ -292,47 +298,46 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=30, init=None):
     critbp = params.critbp  # Convergence criterion
     expansion_count = 0  # Counter for the number of expansions
 
-    while expansion_count <= max_expansions:
-        diff = float('inf')  # Initialize difference to infinity
-        iter_count = 0  # Iteration counter for the bisection method
-        prev_diff = None  # To store the previous difference
+    iter_count = 0  # Iteration counter for the bisection method
+    p0 = p_init
+    Cagg, alpha, threshold, next_k = eq_price(nn, data, params, p0, device="cpu")
+    prev_B0 = 1/p0 - Cagg  # 最初のB0を計算
+    prev_p0 = p0.clone()   # 前回のp0を保持
 
-        # Bisection loop
-        while diff > critbp and iter_count < max_bisect_iters:
-            p0 = (pL + pH) / 2  # Midpoint of the current interval
-            Cagg, alpha, threshold, next_k = eq_price(nn, data, params, p0, device="cpu")  # Compute new price and distance
-            B0 = 1/p0 - Cagg  # Difference between current price and new price
+    # 必要に応じてリストを初期化（デバッグ等の目的で）
+    cCagg_list = [Cagg]
+    cp0_list = [p0.clone()]
+    cB0_list = [prev_B0.clone()]
 
-            if B0 < 0:
-                pH = p0  
-            else:
-                pL = p0  
+    # Bisection loop
+    while iter_count < max_bisect_iters:
+        iter_count += 1
+        
+        # p0を更新（ここでは仮に0.0001ずつ増加させている）
+        p0 = p0 + 0.0001  
+        
+        # 新しいp0に対して計算を実施
+        Cagg, alpha, threshold, next_k = eq_price(nn, data, params, p0, device="cpu")
+        current_B0 = 1/p0 - Cagg  # 現在のB0を計算
 
-            new_diff = abs(B0)  # Calculate the new difference
+        # リストへの追加（オプション）
+        cCagg_list.append(Cagg)
+        cp0_list.append(p0.clone())
+        cB0_list.append(current_B0.clone())
 
-            # Check if the change in diff is small enough to trigger expansion
-            if prev_diff is not None:
-                if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
-                    #print(f"Change in diff ({abs(new_diff - prev_diff):.4f}) <= 0.01, triggering expansion.")
-                    break  # Exit the bisection loop to expand the interval
+        # 符号が変わったかをチェック
+        if prev_B0 * current_B0 < 0:
+            # 符号が変わった場合、前回と今回のp0の中間値を新たなp0として返す
+            midpoint = (prev_p0 + p0) / 2
+            return midpoint, alpha, threshold, next_k
 
-            prev_diff = new_diff  # Update previous difference
-            diff = new_diff  # Update the current difference
-            iter_count += 1  # Increment iteration counter
+        # 符号が変わっていなければ、現在の値を次回の比較用として保存
+        prev_B0 = current_B0.clone()
+        prev_p0 = p0.clone()
 
-        if diff <= critbp:
-            return p0, alpha, threshold, next_k  # Return the converged price and distance
-        else:
-            expansion_count += 1
-            # Expand the initial interval if convergence was not achieved
-            expansion_amount = expansion_count * 0.02
-            pL = p_init  - expansion_amount  # Expand lower bound
-            pH = p_init  + expansion_amount  # Expand upper bound
-            #print(f"Expansion {expansion_count}: New interval [{pL.item():.4f}, {pH.item():.4f}]")
-
-    return p0, alpha, threshold, next_k
+    # 最大反復回数に達した場合、現在の値を返す（またはエラーを投げるなど適宜処理）
     # Raise an error if the maximum number of expansions is exceeded without convergence
-    #raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
+    raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
 
 def eq_price(nn, data, params, price, device="cpu"):
     i_size = params.ishock.size(0)

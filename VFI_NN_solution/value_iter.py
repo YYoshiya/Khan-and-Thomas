@@ -226,8 +226,8 @@ def golden_section_search_batch(
     left_bound: float,
     right_bound: float,
     batch_size: int,
-    max_iter: int = 20, 
-    tol: float = 1e-5,
+    max_iter: int = 50, 
+    tol: float = 1e-6,
 ):
     """
     golden_section_search_batchの高速化版。
@@ -256,6 +256,9 @@ def golden_section_search_batch(
         mask = (fc > fd)
         b[mask] = d[mask]
         a[~mask] = c[~mask]
+
+        if torch.max(torch.abs(b - a)) < tol:
+            break
 
     x_star = 0.5 * (a + b)
     f_star = next_e0_partial(x_star)
@@ -292,7 +295,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])

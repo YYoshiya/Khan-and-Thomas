@@ -324,7 +324,7 @@ class nn_class:
         self.params_next_gm = list(self.next_gm_model.parameters())
         self.optimizer_valueinit = optim.Adam(self.value0.parameters(), lr=0.001)
         self.optimizer_policyinit = optim.Adam(self.policy.parameters(), lr=0.001)
-        self.optimizer_val = optim.Adam(self.params_value, lr=0.001)
+        self.optimizer_val = optim.Adam(self.params_value, lr=0.0004)
         self.optimizer_pol = optim.Adam(self.params_policy, lr=0.001)
         self.optimizer_pri = optim.Adam(self.params_price, lr=0.001)
         self.optimizer_next_gm = optim.Adam(self.params_next_gm, lr=0.001)
@@ -361,7 +361,6 @@ n_model.target_value.load_state_dict(n_model.value0.state_dict())
 n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
 
-
 with torch.no_grad():
     dataset_grid = vi.get_dataset(params, 1100, n_model, init_price, mean)
     vi.plot_mean_k(dataset_grid, 500, 600)
@@ -379,7 +378,7 @@ pred.next_gm_train1(train_ds.data_cpu, dist_new, n_model, params, n_model.optimi
 #pred.price_train(train_ds.data_cpu, n_model, 100)
 #pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 100)
 
-params.B = 0.007
+params.B = 0.0083
 #new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
 #train_ds_gm.update_data(new_data)
@@ -397,9 +396,9 @@ for _ in range(50):
     loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean)
     
     
-    if loss_v < 0.015:
+    if max_loss < 0.015:
         with torch.no_grad():
-            new_data=sim.simulation(params, n_model, 1500, init_dist=True, last_dist=False)
+            new_data=sim.simulation(params, n_model, 1500, init=2.0, init_dist=True, last_dist=False)
         train_ds = BasicDataset(new_data)
         pred.price_train(train_ds.data_cpu, n_model, 50)
         pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 50)
