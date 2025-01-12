@@ -42,6 +42,61 @@ def move_models_to_device(nn, device):
     nn.gm_model_price.to(device)
     nn.target_value.to(device)
     nn.target_gm_model.to(device)
+    
+class value_check_dataset(Dataset):
+    def __init__(self, k_cross, ashock, ishock, grid, dist, grid_k, dist_k):
+        self.data = {}
+        
+        # Flatten k_cross for 5 * grid_size samples
+        if isinstance(k_cross, np.ndarray):
+            k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE)
+        # Repeat for 5 sets and flatten
+        self.data['k_cross'] = k_cross.view(1, -1).repeat(5, 1).reshape(-1)  # Shape: (5*grid_size,)
+
+        # Repeat and flatten ashock similarly
+        if isinstance(ashock, np.ndarray):
+            ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
+        # Assuming ashock originally shape matches grid_size; repeat to match total samples
+        self.data['ashock'] = ashock.view(1, -1).repeat(5, self.data['k_cross'].size(0)).reshape(-1)  # Shape: (5*grid_size,)
+
+        # Repeat and flatten ishock similarly
+        if isinstance(ishock, np.ndarray):
+            ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
+        self.data['ishock'] = ishock.view(-1, 1).repeat(1, self.data['k_cross'].size(0)).reshape(-1)  # Shape: (5*grid_size,)
+
+        # For grid: repeat for each ishock and flatten first two dims
+        if grid is not None:
+            if isinstance(grid, np.ndarray):
+                grid = torch.tensor(grid, dtype=TORCH_DTYPE)
+        # Original grid assumed shape: (grid_size, nz)
+        # Expand to (5, grid_size, grid_size, nz) then flatten first two dims to (5*grid_size, grid_size, nz)
+        self.data['grid'] = grid.view(1, 1, -1, params.nz).repeat(5, self.data['k_cross'].size(0), 1, 1).reshape(5*self.data['k_cross'].size(0), -1, params.nz)
+
+        # For dist: similar handling as grid
+        if dist is not None:
+            if isinstance(dist, np.ndarray):
+                dist = torch.tensor(dist, dtype=TORCH_DTYPE)
+        self.data['dist'] = dist.view(1, 1, -1, params.nz).repeat(5, self.data['k_cross'].size(0), 1, 1).reshape(5*self.data['k_cross'].size(0), -1, params.nz)
+
+        # For grid_k: similar repeat and flatten
+        if grid_k is not None:
+            if isinstance(grid_k, np.ndarray):
+                grid_k = torch.tensor(grid_k, dtype=TORCH_DTYPE)
+        self.data['grid_k'] = grid_k.view(1, 1, -1).repeat(5, self.data['k_cross'].size(0), 1).reshape(5*self.data['k_cross'].size(0), -1)
+
+        # For dist_k: similar repeat and flatten
+        if dist_k is not None:
+            if isinstance(dist_k, np.ndarray):
+                dist_k = torch.tensor(dist_k, dtype=TORCH_DTYPE)
+        self.data['dist_k'] = dist_k.view(1, 1, -1).repeat(5, self.data['k_cross'].size(0), 1).reshape(5*self.data['k_cross'].size(0), -1)
+
+    def __len__(self):
+        # Return length based on one of the attributes
+        return self.data['k_cross'].shape[0]
+
+    def __getitem__(self, idx):
+        # Return a dictionary with a single sample corresponding to index idx
+        return {key: value[idx] for key, value in self.data.items()}
 
 class MyDataset(Dataset):
     def __init__(self, num_sample, k_cross=None, ashock=None, ishock=None, grid=None, dist=None, grid_k=None, dist_k=None):
@@ -365,8 +420,47 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
             if loss_value > max_loss:
                 max_loss = loss_value
         average_loss = total_loss / test_count if test_count > 0 else float('nan')
-
         print(f'Average Test Loss: {average_loss}, Min Loss: {min_loss}, Max Loss: {max_loss}')
+        # ====== Visualize the shape of the Value function ======
+        # For example, to visualize 5 different i-shocks on the same graph:
+        check_dataset = value_check_dataset(
+        k_cross=params.k_grid_tmp_lin,  
+        ashock=params.ashock[3],        
+        ishock=params.ishock[:5],       # Use 5 different i-shock values as an example
+        grid=params.k_grid,
+        dist=nn.init_dist,
+        grid_k=params.k_grid_tmp,
+        dist_k=nn.init_dist_k
+    )
+        check_dataloader = DataLoader(check_dataset, batch_size=len(check_dataset), shuffle=False)
+
+        # Since batch size equals the entire dataset, we iterate only once
+        for check_data in check_dataloader:
+            # Move data to device
+            check_data = {key: val.to(device, dtype=TORCH_DTYPE) for key, val in check_data.items()}
+            # Estimate Value function
+            value_ = value_fn(check_data, nn, params).detach().cpu().numpy()
+            # Extract k_cross for plotting
+            k_cross_ = check_data["k_cross"].detach().cpu().numpy()
+
+            # Adjust shapes: reshape to (5, grid_size)
+            value_ = value_.reshape(5, -1)      # (5, grid_size)
+            k_cross_ = k_cross_.reshape(5, -1)  # (5, grid_size)
+
+            plt.figure(figsize=(8, 5))
+            for i in range(5):
+                plt.plot(
+                    k_cross_[i],     # x-axis: k_cross values for shock i
+                    value_[i],       # y-axis: corresponding Value for shock i
+                    label=f"ishock {i}"
+                )
+            plt.xlabel("k_cross")
+            plt.ylabel("Value")
+            plt.title("Value for each i-shock")
+            plt.legend()
+            plt.tight_layout()
+            plt.show()
+        # ====== End of visualization ======
     return average_loss, min_loss, max_loss
 
 def value_init(nn, params, optimizer, T, num_sample):   
