@@ -51,18 +51,19 @@ class value_check_dataset(Dataset):
         if isinstance(k_cross, np.ndarray):
             k_cross = torch.tensor(k_cross, dtype=TORCH_DTYPE)
         # Repeat for 5 sets and flatten
-        self.data['k_cross'] = k_cross.view(1, -1).repeat(5, 1).reshape(-1)  # Shape: (5*grid_size,)
+        data_tmp = k_cross.view(1, -1).repeat(5, 1)
+        self.data['k_cross'] = data_tmp.reshape(-1)  # Shape: (5*grid_size,)
 
         # Repeat and flatten ashock similarly
         if isinstance(ashock, np.ndarray):
             ashock = torch.tensor(ashock, dtype=TORCH_DTYPE)
         # Assuming ashock originally shape matches grid_size; repeat to match total samples
-        self.data['ashock'] = ashock.view(1, -1).repeat(5, self.data['k_cross'].size(0)).reshape(-1)  # Shape: (5*grid_size,)
+        self.data['ashock'] = ashock.view(1, -1).repeat(5, data_tmp.size(1)).reshape(-1)  # Shape: (5*grid_size,)
 
         # Repeat and flatten ishock similarly
         if isinstance(ishock, np.ndarray):
             ishock = torch.tensor(ishock, dtype=TORCH_DTYPE)
-        self.data['ishock'] = ishock.view(-1, 1).repeat(1, self.data['k_cross'].size(0)).reshape(-1)  # Shape: (5*grid_size,)
+        self.data['ishock'] = ishock.view(-1, 1).repeat(1, data_tmp.size(1)).reshape(-1)  # Shape: (5*grid_size,)
 
         # For grid: repeat for each ishock and flatten first two dims
         if grid is not None:
@@ -70,25 +71,25 @@ class value_check_dataset(Dataset):
                 grid = torch.tensor(grid, dtype=TORCH_DTYPE)
         # Original grid assumed shape: (grid_size, nz)
         # Expand to (5, grid_size, grid_size, nz) then flatten first two dims to (5*grid_size, grid_size, nz)
-        self.data['grid'] = grid.view(1, 1, -1, params.nz).repeat(5, self.data['k_cross'].size(0), 1, 1).reshape(5*self.data['k_cross'].size(0), -1, params.nz)
+        self.data['grid'] = grid.view(1, 1, -1, params.nz).repeat(5, data_tmp.size(1), 1, 1).reshape(5*data_tmp.size(1), -1, params.nz)
 
         # For dist: similar handling as grid
         if dist is not None:
             if isinstance(dist, np.ndarray):
                 dist = torch.tensor(dist, dtype=TORCH_DTYPE)
-        self.data['dist'] = dist.view(1, 1, -1, params.nz).repeat(5, self.data['k_cross'].size(0), 1, 1).reshape(5*self.data['k_cross'].size(0), -1, params.nz)
+        self.data['dist'] = dist.view(1, 1, -1, params.nz).repeat(5, data_tmp.size(1), 1, 1).reshape(5*data_tmp.size(1), -1, params.nz)
 
         # For grid_k: similar repeat and flatten
         if grid_k is not None:
             if isinstance(grid_k, np.ndarray):
                 grid_k = torch.tensor(grid_k, dtype=TORCH_DTYPE)
-        self.data['grid_k'] = grid_k.view(1, 1, -1).repeat(5, self.data['k_cross'].size(0), 1).reshape(5*self.data['k_cross'].size(0), -1)
+        self.data['grid_k'] = grid_k.view(1, 1, -1).repeat(5, data_tmp.size(1), 1).reshape(5*data_tmp.size(1), -1)
 
         # For dist_k: similar repeat and flatten
         if dist_k is not None:
             if isinstance(dist_k, np.ndarray):
                 dist_k = torch.tensor(dist_k, dtype=TORCH_DTYPE)
-        self.data['dist_k'] = dist_k.view(1, 1, -1).repeat(5, self.data['k_cross'].size(0), 1).reshape(5*self.data['k_cross'].size(0), -1)
+        self.data['dist_k'] = dist_k.view(1, 1, -1).repeat(5, data_tmp.size(1), 1).reshape(5*data_tmp.size(1), -1)
 
     def __len__(self):
         # Return length based on one of the attributes
@@ -335,7 +336,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
             next_k = nn.policy(train_data['X']).squeeze(-1) * 8
-            target = torch.full_like(next_k, 2.5, dtype=TORCH_DTYPE).to(device)
+            target = torch.full_like(next_k, 3.5, dtype=TORCH_DTYPE).to(device)
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
             loss.backward()
@@ -345,12 +346,17 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
 
 
 # By implementing hard targetting, we might be able to accelerate the training process. But, not yet.
-def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=None):
+def value_iter(
+    data, nn, params, optimizer, T, num_sample, 
+    p_init=None, mean=None, 
+    count=None,       
+    save_plot=False    
+):
     ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
@@ -426,7 +432,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
         check_dataset = value_check_dataset(
         k_cross=params.k_grid_tmp_lin,  
         ashock=params.ashock[3],        
-        ishock=params.ishock[:5],       # Use 5 different i-shock values as an example
+        ishock=params.ishock,       # Use 5 different i-shock values as an example
         grid=params.k_grid,
         dist=nn.init_dist,
         grid_k=params.k_grid_tmp,
@@ -436,31 +442,45 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
 
         # Since batch size equals the entire dataset, we iterate only once
         for check_data in check_dataloader:
-            # Move data to device
             check_data = {key: val.to(device, dtype=TORCH_DTYPE) for key, val in check_data.items()}
-            # Estimate Value function
-            value_ = value_fn(check_data, nn, params).detach().cpu().numpy()
-            # Extract k_cross for plotting
+            price = price_fn(check_data["grid"], check_data["dist"], check_data["ashock"], nn, mean=mean)
+            next_e0_partial = init_next_e0(check_data, price, nn, params, device)
+            e0 = next_e0_partial(check_data["k_cross"]).detach().cpu().numpy()
             k_cross_ = check_data["k_cross"].detach().cpu().numpy()
 
-            # Adjust shapes: reshape to (5, grid_size)
-            value_ = value_.reshape(5, -1)      # (5, grid_size)
-            k_cross_ = k_cross_.reshape(5, -1)  # (5, grid_size)
+            # (5, grid_size) 形状に変形
+            e0 = e0.reshape(5, -1)
+            k_cross_ = k_cross_.reshape(5, -1)
 
-            plt.figure(figsize=(8, 5))
+            # プロット作成
+            fig, ax = plt.subplots(figsize=(8, 5))
             for i in range(5):
-                plt.plot(
-                    k_cross_[i],     # x-axis: k_cross values for shock i
-                    value_[i],       # y-axis: corresponding Value for shock i
+                ax.plot(
+                    k_cross_[i],  # x-axis
+                    e0[i],        # y-axis
                     label=f"ishock {i}"
                 )
-            plt.xlabel("k_cross")
-            plt.ylabel("Value")
-            plt.title("Value for each i-shock")
-            plt.legend()
+            ax.set_xlabel("k_cross")
+            ax.set_ylabel("Value")
+            ax.set_title("Value for each i-shock")
+            ax.legend()
             plt.tight_layout()
-            plt.show()
-        # ====== End of visualization ======
+
+            # ★ プロットを保存する
+            if save_plot and count is not None:
+                # 保存先のフォルダを作成
+                plot_dir = os.path.join(".", "results", "e0_plots")
+                os.makedirs(plot_dir, exist_ok=True)
+                # count をファイル名に入れる
+                plot_path = os.path.join(plot_dir, f"e0_plot_{count}.png")
+                plt.savefig(plot_path)
+                plt.close(fig)
+                print(f"Saved plot to {plot_path}")
+            else:
+                # ファイル保存しない場合は、show() もしくは close
+                # plt.show()  # ← 実際にウィンドウ表示したいならここを使用
+                plt.close(fig)
+
     return average_loss, min_loss, max_loss
 
 def value_init(nn, params, optimizer, T, num_sample):   

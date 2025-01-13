@@ -393,10 +393,10 @@ for _ in range(50):
 
     outer_count += 1
     count += 1
-    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean)
+    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean, count=count, save_plot=True)
     
     
-    if loss_v < 0.015:
+    if max_loss < 0.015:
         with torch.no_grad():
             new_data=sim.simulation(params, n_model, 1500, init=2.0, init_dist=True, last_dist=False)
         train_ds = BasicDataset(new_data)
