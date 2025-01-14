@@ -284,6 +284,7 @@ def golden_section_search_batch(
     batch_size: int,
     max_iter: int = 50, 
     tol: float = 1e-6,
+    valid=False
 ):
     """
     golden_section_search_batchの高速化版。
@@ -292,7 +293,7 @@ def golden_section_search_batch(
     """
 
     # next_e0 のうち k 以外をキャッシュし、k だけ差し替える関数を作る
-    next_e0_partial = init_next_e0(train_data, price, nn, params, device)
+    next_e0_partial = init_next_e0(train_data, price, nn, params, device, valid=valid)
 
     # 黄金比
     phi = 0.618033988749895
@@ -356,7 +357,7 @@ def value_iter(
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
@@ -395,8 +396,6 @@ def value_iter(
             soft_update(nn.target_gm_model, nn.gm_model, tau)
             if countv % 100 == 0:
                 print(f"count: {countv}, loss: {loss.item()}")
-    nn.target_value.load_state_dict(nn.value0.state_dict())
-    nn.target_gm_model.load_state_dict(nn.gm_model.state_dict())
     with torch.no_grad():
         test_count = 0
         total_loss = 0.0
@@ -410,8 +409,8 @@ def value_iter(
                 price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
             wage = params.eta / price
             profit = get_profit(test_data["k_cross"], test_data["ashock"], test_data["ishock"], price, params)
-            _, e0 = golden_section_search_batch(test_data, price, nn, params, "cuda", params.k_grid_min, params.k_grid_max, batch_size=price.size(0))
-            e1 = next_e1(test_data, price, nn, params, device)
+            _, e0 = golden_section_search_batch(test_data, price, nn, params, "cuda", params.k_grid_min, params.k_grid_max, batch_size=price.size(0), valid=True)
+            e1 = next_e1(test_data, price, nn, params, device, valid=True)
             threshold = (e0 - e1) / params.eta
             xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
             vnew = profit - (params.eta*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
@@ -444,7 +443,7 @@ def value_iter(
         for check_data in check_dataloader:
             check_data = {key: val.to(device, dtype=TORCH_DTYPE) for key, val in check_data.items()}
             price = price_fn(check_data["grid"], check_data["dist"], check_data["ashock"], nn, mean=mean)
-            next_e0_partial = init_next_e0(check_data, price, nn, params, device)
+            next_e0_partial = init_next_e0(check_data, price, nn, params, device, valid=True)
             e0 = next_e0_partial(check_data["k_cross"]).detach().cpu().numpy()
             k_cross_ = check_data["k_cross"].detach().cpu().numpy()
 
@@ -516,10 +515,13 @@ def get_profit(k_cross, ashock, ishock, price, params):
     v0temp = y - wage * n + (1 - params.delta) * k_cross
     return v0temp*price.squeeze(-1)
 
-def dist_gm(grid, dist, ashock, nn):
+def dist_gm(grid, dist, ashock, nn, valid=False):
     grid_norm = (grid - params.k_grid_min) / (params.k_grid_max - params.k_grid_min)
     ashock_norm = (ashock - params.ashock_min) / (params.ashock_max - params.ashock_min)
-    gm_tmp = nn.target_gm_model(grid_norm.unsqueeze(-1))
+    if valid:
+        gm_tmp = nn.gm_model(grid_norm.unsqueeze(-1))
+    else:
+        gm_tmp = nn.target_gm_model(grid_norm.unsqueeze(-1))
     gm = torch.sum(gm_tmp * dist.unsqueeze(-1), dim=-2)
     state = torch.cat([ashock_norm.unsqueeze(-1), gm], dim=1)
     next_gm = nn.next_gm_model(state)
@@ -539,7 +541,7 @@ def generate_price(params, nn, price):
     return price + noise
     
 
-def init_next_e0(train_data, price, nn, params, device):
+def init_next_e0(train_data, price, nn, params, device, valid=False):
     """
     Precompute invariant parts of next_e0 that do not change on each call,
     and return a partial function that computes only the k-dependent part.
@@ -562,7 +564,7 @@ def init_next_e0(train_data, price, nn, params, device):
 
     with torch.no_grad():
         # First, compute parts that do not depend on k only once, such as dist_gm.
-        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
+        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn, valid=valid)
         
         # Compute necessary indices and probability distributions beforehand.
         ashock = train_data["ashock"]
@@ -601,7 +603,10 @@ def init_next_e0(train_data, price, nn, params, device):
         data_e0 = torch.cat([k_expanded, a_flat, i_flat, next_gm_flat], dim=2)  # (batch, a*i, 4)
         
         # Call the precomputed target_value (e.g., nn.target_value).
-        value0 = nn.target_value(data_e0).squeeze(-1)
+        if valid:
+            value0 = nn.value0(data_e0).squeeze(-1)
+        else:
+            value0 = nn.target_value(data_e0).squeeze(-1)
         # Reshape to (batch, nA, nI) to compute expectation.
         value0 = value0.view(price.size(0), len(params.ashock), len(params.ishock))
         
@@ -616,9 +621,9 @@ def init_next_e0(train_data, price, nn, params, device):
     return next_e0_partial
 
 
-def next_e1(train_data, price, nn, params, device):
+def next_e1(train_data, price, nn, params, device, valid=False):
     with torch.no_grad():
-        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn)
+        next_gm = dist_gm(train_data["grid_k"], train_data["dist_k"], train_data["ashock"], nn, valid=valid)
         ashock = train_data["ashock"]
         ashock_idx = [torch.where(params.ashock_gpu == val)[0].item() for val in ashock]
         ashock_exp = params.pi_a_gpu[ashock_idx].unsqueeze(-1)
@@ -637,7 +642,10 @@ def next_e1(train_data, price, nn, params, device):
     pre_k_flat = (1-params.delta)*k_cross_flat
 
     data_e1 = torch.cat([pre_k_flat, a_flat, i_flat, next_gm_flat], dim=2)
-    value1 = nn.target_value(data_e1).squeeze(-1)
+    if valid:
+        value1 = nn.value0(data_e1).squeeze(-1)
+    else:
+        value1 = nn.target_value(data_e1).squeeze(-1)
     value1 = value1.view(-1, len(params.ashock), len(params.ishock))  # (batch_size, a, i)
     expected_value1 = (value1 * probabilities).sum(dim=(1, 2)).unsqueeze(-1)  # (batch_size,)
     e1 = -(1-params.delta) * train_data["k_cross"].unsqueeze(-1) * price + params.beta * expected_value1
