@@ -692,6 +692,7 @@ def next_gm_init(nn, params, optimizer, num_epochs, num_sample,T):
             loss = F.mse_loss(next_gm, train_data['y'])
             loss.backward()
             optimizer.step()
+        print(f"Epoch: {epoch+1}, Loss: {loss.item()}")
 
 
 class Valueinit(Dataset):

@@ -362,7 +362,7 @@ def value_iter(
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     test_dataloader = DataLoader(test_data, batch_size=250, shuffle=True)
     countv = 0
-    tau = 0.05
+    tau = 0.01
     for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
