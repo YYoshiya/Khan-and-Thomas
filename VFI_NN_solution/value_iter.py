@@ -357,13 +357,13 @@ def value_iter(
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     test_dataloader = DataLoader(test_data, batch_size=250, shuffle=True)
     countv = 0
-    tau = 0.01
+    tau = 0.05
     for epoch in range(10):
         for train_data in dataloader:
             train_data = {key: value.to(device, dtype=TORCH_DTYPE) for key, value in train_data.items()}
@@ -372,13 +372,11 @@ def value_iter(
                 price = price_fn(train_data["grid"],train_data["dist"], train_data["ashock"], nn, mean=mean)
                 if p_init is not None:
                     price = torch.full_like(price, p_init, dtype=TORCH_DTYPE).to(device)
-                #入力は分布とashockかな。
                 wage = params.eta / price
                 profit = get_profit(train_data["k_cross"], train_data["ashock"], train_data["ishock"], price, params)
                 _, e0 = golden_section_search_batch(train_data, price, nn, params, "cuda", params.k_grid_min, params.k_grid_max, batch_size=price.size(0))
                 e1 = next_e1(train_data, price, nn, params, device)
                 threshold = (e0 - e1) / params.eta
-                #ここ見にくすぎる。
                 xi = torch.min(torch.tensor(params.B, dtype=TORCH_DTYPE).to(device), torch.max(torch.tensor(0, dtype=TORCH_DTYPE).to(device), threshold))
                 vnew = profit - (params.eta*xi**2)/(2*params.B) + (xi/params.B)*e0 + (1-(xi/params.B))*e1
             v = value_fn(train_data, nn, params).squeeze(-1)

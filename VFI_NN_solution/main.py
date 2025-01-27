@@ -28,10 +28,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DTYPE = "float32"
 if DTYPE == "float64":
     NP_DTYPE = np.float64
-    TORCH_DTYPE = torch.float64  # PyTorchのデータ型を指定
+    TORCH_DTYPE = torch.float64  
 elif DTYPE == "float32":
     NP_DTYPE = np.float32
-    TORCH_DTYPE = torch.float32  # PyTorchのデータ型を指定
+    TORCH_DTYPE = torch.float32  
 else:
     raise ValueError("Unknown dtype.")
 
@@ -84,7 +84,7 @@ class GeneralizedMomModel(nn.Module):
         x = self.leakyrelu(self.fc1(x))
         x = self.leakyrelu(self.fc2(x))
         x = self.softplus(self.fc3(x))
-        return x #このあとこれと分布の内積をとる。
+        return x 
     
 class Price_GM(nn.Module):
     def __init__(self, d_in):
@@ -102,7 +102,7 @@ class Price_GM(nn.Module):
         x = self.leakyrelu(self.fc2(x))
         x = self.softplus(self.fc3(x))
         
-        return x #このあとこれと分布の内積をとる。
+        return x 
 
 class NextkNN(nn.Module):
     def __init__(self, d_in):
