@@ -250,8 +250,8 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
     p_init = price_fn(data["grid"], data["dist"], data["ashock"], nn).squeeze(-1)
     if init is not None:
         p_init = torch.full_like(p_init, init)
-    pL = p_init - 0.3  # Lower bound of the price interval
-    pH = p_init + 0.3  # Upper bound of the price interval
+    pL = p_init - 0.1  # Lower bound of the price interval
+    pH = p_init + 0.1  # Upper bound of the price interval
     critbp = params.critbp  # Convergence criterion
     expansion_count = 0  # Counter for the number of expansions
 
@@ -292,8 +292,8 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
             expansion_count += 1
             # Expand the initial interval if convergence was not achieved
             expansion_amount = expansion_count * 0.1
-            pL = p_init - 0.3 - expansion_amount  # Expand lower bound
-            pH = p_init + 0.3 + expansion_amount  # Expand upper bound
+            pL = p_init - expansion_amount  # Expand lower bound
+            pH = p_init + expansion_amount  # Expand upper bound
             #print(f"Expansion {expansion_count}: New interval [{pL.item():.4f}, {pH.item():.4f}]")
 
     # Raise an error if the maximum number of expansions is exceeded without convergence
