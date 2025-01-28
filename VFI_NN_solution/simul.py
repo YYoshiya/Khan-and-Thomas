@@ -214,12 +214,12 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
     print(f"Simulation completed in {elapsed_time:.2f} seconds.")
 
     return {
-        "grid": k_history,         # From the 100th period onwards
-        "dist": dist_history,      # From the 100th period onwards
-        "dist_k": dist_k_history,  # From the 100th period onwards
-        "grid_k": grid_k_history,  # From the 100th period onwards
-        "ashock": ashock_history,  # From the 100th period onwards
-        "price": price_history,    # From the 100th period onwards
+        "grid": k_history[100:],         # From the 100th period onwards
+        "dist": dist_history[100:],      # From the 100th period onwards
+        "dist_k": dist_k_history[100:],  # From the 100th period onwards
+        "grid_k": grid_k_history[100:],  # From the 100th period onwards
+        "ashock": ashock_history[100:],  # From the 100th period onwards
+        "price": price_history[100:],    # From the 100th period onwards
         # Average statistics are excluded from the return value
     }
         
