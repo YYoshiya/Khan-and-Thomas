@@ -40,8 +40,8 @@ else:
 class ValueNN(nn.Module):
     def __init__(self, d_in):
         super(ValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 64)
+        self.fc1 = nn.Linear(d_in, 128)
+        self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, 1)
         #self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -56,8 +56,8 @@ class ValueNN(nn.Module):
 class TargetValueNN(nn.Module):
     def __init__(self, d_in):
         super(TargetValueNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 64)
+        self.fc1 = nn.Linear(d_in, 128)
+        self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, 1)
         #self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -107,8 +107,8 @@ class Price_GM(nn.Module):
 class NextkNN(nn.Module):
     def __init__(self, d_in):
         super(NextkNN, self).__init__()
-        self.fc1 = nn.Linear(d_in, 64)
-        self.fc2 = nn.Linear(64, 64)
+        self.fc1 = nn.Linear(d_in, 128)
+        self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, 1)
         #self.fc4 = nn.Linear(32, 1)
         self.relu = nn.ReLU()
@@ -385,7 +385,7 @@ for _ in range(50):
     loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean, count=outer_count)
     
     
-    if loss_v < 0.015:
+    if max_loss < 0.015:
         loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T-100, 10, mean=mean)
         
         with torch.no_grad():
