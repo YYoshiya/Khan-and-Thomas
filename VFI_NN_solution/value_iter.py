@@ -779,8 +779,8 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         negative_spike_mean = sum(negative_spike_history[start_period:]) / (T - start_period)
         positive_inv_mean = sum(positive_inv_history[start_period:]) / (T - start_period)
         negative_inv_mean = sum(negative_inv_history[start_period:]) / (T - start_period)
-    else:
-        raise ValueError("T must be greater than 500.")
+    #else:
+        #raise ValueError("T must be greater than 500.")
 
     # Compile average statistics into a dictionary
     mean_statistics = {
