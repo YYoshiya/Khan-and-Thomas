@@ -366,7 +366,7 @@ train_ds = BasicDataset(new_data)
 pred.price_train(train_ds.data_cpu, n_model, 100)
 pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 100)
 
-params.B = 0.0083
+params.B = 0.004
 #new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
 #train_ds_gm.update_data(new_data)
