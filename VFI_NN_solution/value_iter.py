@@ -288,7 +288,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
             next_k = nn.policy(train_data['X']).squeeze(-1) * 8
-            target = torch.full_like(next_k, 3.0, dtype=TORCH_DTYPE).to(device)
+            target = torch.full_like(next_k, 3.3, dtype=TORCH_DTYPE).to(device)
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
             loss.backward()
@@ -474,7 +474,7 @@ def value_init(nn, params, optimizer, T, num_sample):
             train_data['y'] = train_data['y'].to(device, dtype=TORCH_DTYPE)
             optimizer.zero_grad()
             v = nn.value0(train_data['X']).squeeze(-1)
-            loss = F.mse_loss(v, 4*(train_data['y']**0.8))
+            loss = F.mse_loss(v, 4*(train_data['y']**0.7))
             loss.backward()
             optimizer.step()
             if countv % 100 == 0:

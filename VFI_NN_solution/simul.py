@@ -263,16 +263,13 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
         # Bisection loop
         while diff > critbp and iter_count < max_bisect_iters:
             p0 = (pL + pH) / 2  # Midpoint of the current interval
-            pnew, alpha, threshold = eq_price(nn, data, params, p0)  # Compute new price and distance
-            B0 = p0 - pnew  # Difference between current price and new price
-
-            if pnew < 0:
-                pL = p0  # Adjust the lower bound if new price is negative
+            Cagg, alpha, threshold = eq_price(nn, data, params, p0)  # Compute new price and distance
+            B0 = 1/p0 - Cagg  # Difference between current price and new price
+            
+            if B0 < 0:
+                pH = p0  
             else:
-                if B0 < 0:
-                    pL = p0  # Adjust the lower bound if B0 is negative
-                else:
-                    pH = p0  # Adjust the upper bound otherwise
+                pL = p0  
 
             new_diff = abs(B0)  # Calculate the new difference
 
@@ -320,8 +317,8 @@ def eq_price(nn, data, params, price):
     Iagg = torch.sum(data["dist"] * inow)
     Yagg = torch.sum(data["dist"] * ynow)
     Cagg = Yagg - Iagg
-    target = 1 / Cagg
-    return target, alpha, threshold
+    
+    return Cagg, alpha, threshold
                 
 def next_value_price(data, nn, params, price):
     G = data["grid"].size(0)
