@@ -288,7 +288,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
             count += 1
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
             next_k = nn.policy(train_data['X']).squeeze(-1) * 8
-            target = torch.full_like(next_k, 3.5, dtype=TORCH_DTYPE).to(device)
+            target = torch.full_like(next_k, 3.0, dtype=TORCH_DTYPE).to(device)
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
             loss.backward()
