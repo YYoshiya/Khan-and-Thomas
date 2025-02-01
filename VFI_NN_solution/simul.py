@@ -79,7 +79,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
                 "dist_k": dist_now_k,      
             }
 
-            pnew, alpha, threshold = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=50, init=init)
+            pnew, alpha, threshold = bisectp(nn, params, basic_s, max_expansions=5, max_bisect_iters=5000, init=init)
             k_prime_adj = policy_fn_sim(
                 basic_s["ashock"].view(1,1).expand(G, i_size), 
                 basic_s["ishock"], 
@@ -140,6 +140,8 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
             negative_inv_history.append(negative_inv)
 
             dist_sum = dist_new.sum()
+            
+            k_mean = torch.sum(basic_s["grid"] * basic_s["dist"]).item()
             # Normalize distribution to prevent numerical errors
             dist_new /= dist_sum
 
@@ -152,6 +154,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
             grid_k_history.append(k_now_k.clone())
             ashock_history.append(ashock[t])  # Record scalar 'a'
             price_history.append(pnew)
+            mean_k_history.append(k_mean)
 
             dist_now = dist_new
             dist_now_k = dist_new_k
@@ -224,7 +227,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
     }
         
         
-def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
+def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=5000, init=None):
     """
     Uses the bisection method to find the equilibrium price. If convergence is not achieved,
     the initial interval is expanded iteratively. Additionally, if the change in `diff` between
@@ -252,47 +255,47 @@ def bisectp(nn, params, data, max_expansions=5, max_bisect_iters=50, init=None):
         p_init = torch.full_like(p_init, init)
     pL = p_init - 0.1  # Lower bound of the price interval
     pH = p_init + 0.1  # Upper bound of the price interval
+    
+    iter_count = 0
+    p0 = p_init
+    Cagg, alpha, threshold, next_k = eq_price(nn, data, params, p0)
     critbp = params.critbp  # Convergence criterion
     expansion_count = 0  # Counter for the number of expansions
+    prev_B0 = 1/p0 - Cagg  # 最初のB0を計算
+    prev_p0 = p0.clone()   # 前回のp0を保持
 
-    while expansion_count <= max_expansions:
-        diff = float('inf')  # Initialize difference to infinity
-        iter_count = 0  # Iteration counter for the bisection method
-        prev_diff = None  # To store the previous difference
+    # 必要に応じてリストを初期化（デバッグ等の目的で）
+    cCagg_list = [Cagg]
+    cp0_list = [p0.clone()]
+    cB0_list = [prev_B0.clone()]
+    
 
-        # Bisection loop
-        while diff > critbp and iter_count < max_bisect_iters:
-            p0 = (pL + pH) / 2  # Midpoint of the current interval
-            Cagg, alpha, threshold = eq_price(nn, data, params, p0)  # Compute new price and distance
-            B0 = 1/p0 - Cagg  # Difference between current price and new price
-            
-            if B0 < 0:
-                pH = p0  
-            else:
-                pL = p0  
+    while iter_count < max_bisect_iters:
+        iter_count += 1
+        
+        # p0を更新（ここでは仮に0.0001ずつ増加させている）
+        p0 = p0 + 0.0001  
+        
+        # 新しいp0に対して計算を実施
+        Cagg, alpha, threshold, next_k = eq_price(nn, data, params, p0)
+        current_B0 = 1/p0 - Cagg  # 現在のB0を計算
 
-            new_diff = abs(B0)  # Calculate the new difference
+        # リストへの追加（オプション）
+        cCagg_list.append(Cagg)
+        cp0_list.append(p0.clone())
+        cB0_list.append(current_B0.clone())
 
-            # Check if the change in diff is small enough to trigger expansion
-            if prev_diff is not None:
-                if new_diff > 0.01 and abs(new_diff - prev_diff) <= 0.001:
-                    #print(f"Change in diff ({abs(new_diff - prev_diff):.4f}) <= 0.01, triggering expansion.")
-                    break  # Exit the bisection loop to expand the interval
+        # 符号が変わったかをチェック
+        if prev_B0 * current_B0 < 0:
+            # 符号が変わった場合、前回と今回のp0の中間値を新たなp0として返す
+            midpoint = (prev_p0 + p0) / 2
+            return midpoint, alpha, threshold
 
-            prev_diff = new_diff  # Update previous difference
-            diff = new_diff  # Update the current difference
-            iter_count += 1  # Increment iteration counter
+        # 符号が変わっていなければ、現在の値を次回の比較用として保存
+        prev_B0 = current_B0.clone()
+        prev_p0 = p0.clone()
 
-        if diff <= critbp:
-            return p0, alpha, threshold  # Return the converged price and distance
-        else:
-            expansion_count += 1
-            # Expand the initial interval if convergence was not achieved
-            expansion_amount = expansion_count * 0.1
-            pL = p_init - expansion_amount  # Expand lower bound
-            pH = p_init + expansion_amount  # Expand upper bound
-            #print(f"Expansion {expansion_count}: New interval [{pL.item():.4f}, {pH.item():.4f}]")
-
+    # 最大反復回数に達した場合、現在の値を返す（またはエラーを投げるなど適宜処理）
     # Raise an error if the maximum number of expansions is exceeded without convergence
     raise ValueError("Bisection method did not converge. Reached maximum number of expansions.")
 
@@ -318,7 +321,7 @@ def eq_price(nn, data, params, price):
     Yagg = torch.sum(data["dist"] * ynow)
     Cagg = Yagg - Iagg
     
-    return Cagg, alpha, threshold
+    return Cagg, alpha, threshold, next_k
                 
 def next_value_price(data, nn, params, price):
     G = data["grid"].size(0)

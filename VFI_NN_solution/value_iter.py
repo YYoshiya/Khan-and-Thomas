@@ -275,26 +275,59 @@ def price_fn(grid, dist, ashock, nn, mean=None):
 
 
 def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
-    ashock_idx = torch.randint(0, len(params.ashock), (num_sample*T,))
-    ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
+    # ランダムにashockとishockのインデックスをサンプリング
+    ashock_idx = torch.randint(0, len(params.ashock), (num_sample * T,))
+    ishock_idx = torch.randint(0, len(params.ishock), (num_sample * T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    K_cross = np.random.choice(params.K_grid_np, num_sample* T)
-    dataset = Valueinit(ashock=ashock,ishock=ishock, K_cross=K_cross, price=init_price ,target_attr='K_cross', input_attrs=['ashock', 'ishock', 'K_cross', 'price'])
+    
+    # K_crossのサンプルを生成
+    K_cross = np.random.choice(params.K_grid_np, num_sample * T)
+    
+    # Valueinitデータセットの作成（入力属性：ashock, ishock, K_cross, price）
+    dataset = Valueinit(
+        ashock=ashock,
+        ishock=ishock,
+        K_cross=K_cross,
+        price=init_price,
+        target_attr='K_cross',
+        input_attrs=['ashock', 'ishock', 'K_cross', 'price']
+    )
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    
     count = 0
     for epoch in range(10):
-        for train_data in dataloader:#policy_fnからnex_kを出してprice, gammaをかけて引く。
+        for train_data in dataloader:
             count += 1
+            # 入力データをGPUに移動（かつdtypeを指定）
             train_data['X'] = train_data['X'].to(device, dtype=TORCH_DTYPE)
+            
+            # policyネットワークからnext_kを算出
             next_k = nn.policy(train_data['X']).squeeze(-1) * 8
-            target = torch.full_like(next_k, 3.3, dtype=TORCH_DTYPE).to(device)
+            
+            # Valueinit内ではishockは正規化されているので、元の値に戻す
+            # Valueinitでは以下のように正規化していることを前提としています:
+            # ishock_norm = (ishock - params.ishock_min) / (params.ishock_max - params.ishock_min)
+            ishock_norm_batch = train_data['X'][:, 1]
+            ishock_orig = ishock_norm_batch * (params.ishock_max - params.ishock_min) + params.ishock_min
+            
+            # 各サンプルごとにishockの元の値に応じたターゲット値を設定する
+            target = torch.empty_like(next_k)
+            # マッピング: 0.9176 → 0.5, 0.9579 → 1.0, 1.0000 → 1.5, 1.0439 → 2.0, 1.0897 → 3.0
+            for orig_val, tar in zip([0.9176, 0.9579, 1.0000, 1.0439, 1.0897],
+                                       [0.5, 1.0, 1.5, 2.0, 3.0]):
+                # 浮動小数点の比較のため、ある程度の許容誤差を与える（ここでは1e-4）
+                mask = (torch.abs(ishock_orig - orig_val) < 1e-4)
+                target[mask] = tar
+            
             optimizer.zero_grad()
             loss = F.mse_loss(next_k, target)
             loss.backward()
             optimizer.step()
+            
             if count % 100 == 0:
                 print(f"count: {count}, loss: {loss.item()}")
+
 
 
 def policy_iter(data, params, optimizer, nn, T, num_sample, p_init=None, mean=None):
