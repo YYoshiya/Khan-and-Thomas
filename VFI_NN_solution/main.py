@@ -387,7 +387,7 @@ for _ in range(50):
     loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean, count=outer_count)
     
     
-    if max_loss < 0.015 and count == 5:
+    if max_loss < 0.015 and count > 5:
         loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T-100, 10, mean=mean)
         
         with torch.no_grad():

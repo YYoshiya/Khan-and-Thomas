@@ -55,6 +55,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
     mean_k_history = []
     price_diff_history = []
     price_history = []
+    mean_k_history = []
     # Initialize lists to store statistics each period
     i_over_k_level_history = []
     i_over_k_std_history = []
@@ -140,6 +141,8 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
             negative_inv_history.append(negative_inv)
 
             dist_sum = dist_new.sum()
+
+            k_mean = torch.sum(basic_s["grid"] * basic_s["dist"]).item()
             # Normalize distribution to prevent numerical errors
             dist_new /= dist_sum
 
@@ -152,6 +155,7 @@ def simulation(params, nn, T, init=None, init_dist=None, last_dist=True):
             grid_k_history.append(k_now_k.clone())
             ashock_history.append(ashock[t])  # Record scalar 'a'
             price_history.append(pnew)
+            mean_k_history.append(k_mean)
 
             dist_now = dist_new
             dist_now_k = dist_new_k
