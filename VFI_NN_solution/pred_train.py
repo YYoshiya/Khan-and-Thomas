@@ -328,7 +328,7 @@ def price_train1(data, price, nn, num_epochs):
         with torch.no_grad():
             for grid, dist, ashock, target in valid_loader:
                 pred = vi.price_fn(grid, dist, ashock, nn).squeeze(-1)
-                valid_loss = F.mse_loss(pred, target-0.1)
+                valid_loss = F.mse_loss(pred, target)
             if epoch % 10 == 0:
                 print(f"Epoch: {epoch}, Train Loss: {loss.item()}, Validation Loss: {valid_loss.item()}")
 
