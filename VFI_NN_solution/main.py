@@ -353,7 +353,7 @@ n_model.target_gm_model.load_state_dict(n_model.gm_model.state_dict())
 
 init_price = 2.2
 mean=None
-simul_T = 1100
+simul_T = 1000
 vi.value_init(n_model, params, n_model.optimizer_valueinit, 1000, 10)
 pred.next_gm_init(n_model, params, n_model.optimizer_next_gm, 10, 10, 1000)
 vi.policy_iter_init2(params,n_model.optimizer_policyinit, n_model, 1000, 10, init_price)
@@ -368,7 +368,7 @@ with torch.no_grad():
     true_price, dist_new, params.price_size = pred.bisectp(n_model, params, train_ds.data_gm, init=init_price)
 pred.price_train1(train_ds.data_cpu, true_price, n_model, 100)
 
-params.B = 0.003
+params.B = 0.0083
 #new_data = vi.get_dataset(params, 1100, n_model, init_price, mean)
 
 #train_ds_gm.update_data(new_data)
@@ -383,15 +383,15 @@ for _ in range(50):
 
     outer_count += 1
     count += 1
-    loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T-100, 10, mean=mean)
-    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T-100, 10, mean=mean, count=outer_count)
+    loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T, 10, mean=mean)
+    loss_v, min_loss, max_loss = vi.value_iter(train_ds.data_cpu, n_model, params, n_model.optimizer_val, simul_T, 10, mean=mean, count=outer_count)
     
     
-    if max_loss < 0.015 and count > 3:
-        loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T-100, 10, mean=mean)
+    if max_loss < 0.015 or count == 5:
+        loss_p = vi.policy_iter(train_ds.data_cpu, params, n_model.optimizer_pol, n_model, simul_T, 10, mean=mean)
         
         with torch.no_grad():
-            new_data=sim.simulation(params, n_model, 1500, init=2.0, init_dist=True, last_dist=False)
+            new_data=sim.simulation(params, n_model, 1500, init=2.0, last_dist=False)
         train_ds = BasicDataset(new_data)
         pred.price_train(train_ds.data_cpu, n_model, 50)
         pred.next_gm_train(train_ds.data_cpu, n_model, params, n_model.optimizer_next_gm, 400, 10, 50)
