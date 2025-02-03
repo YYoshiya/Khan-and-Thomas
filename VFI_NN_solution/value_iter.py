@@ -315,7 +315,7 @@ def policy_iter_init2(params, optimizer, nn, T, num_sample, init_price):
             target = torch.empty_like(next_k)
             # マッピング: 0.9176 → 0.5, 0.9579 → 1.0, 1.0000 → 1.5, 1.0439 → 2.0, 1.0897 → 3.0
             for orig_val, tar in zip([0.9176, 0.9579, 1.0000, 1.0439, 1.0897],
-                                       [0.8, 1.2, 1.7, 2.2, 3.2]):
+                                       [0.9, 1.2, 1.7, 2.2, 3.2]):
                 # 浮動小数点の比較のため、ある程度の許容誤差を与える（ここでは1e-4）
                 mask = (torch.abs(ishock_orig - orig_val) < 1e-4)
                 target[mask] = tar
@@ -370,7 +370,7 @@ def value_iter(data, nn, params, optimizer, T, num_sample, p_init=None, mean=Non
     ishock_idx = torch.randint(0, len(params.ishock), (num_sample*T,))
     ashock = params.ashock[ashock_idx]
     ishock = params.ishock[ishock_idx]
-    k_cross = np.random.choice(params.k_grid_tmp_lin, num_sample* T)
+    k_cross = np.random.choice(params.k_grid_tmp, num_sample* T)
     dataset = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     test_data = MyDataset(num_sample, k_cross, ashock, ishock, data["grid"], data["dist"] ,data["grid_k"], data["dist_k"])
@@ -698,6 +698,7 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
         # Compute expected values for adjustment decision
         e0, e1 = next_value_sim(basic_s, nn, params, p_init, mean)  # Returns (G, I) tensors
         xi_tmp = ((e0 - e1) / params.eta)  # Adjustment condition
+        xi_tmp = xi_tmp * params.B_fix
         xi = torch.clamp(xi_tmp, min=0.0, max=params.B)
         alpha = xi / params.B  # Probability of adjustment (G, I)
 
@@ -851,12 +852,12 @@ def get_dataset(params, T, nn, p_init=None, mean=None, init_dist=None, last_dist
 
     ##### Exclude average statistics from the return value #####
     return {
-        "grid": k_history,         # From the 100th period onwards
-        "dist": dist_history,      # From the 100th period onwards
-        "dist_k": dist_k_history,  # From the 100th period onwards
-        "grid_k": grid_k_history,  # From the 100th period onwards
-        "ashock": ashock_history,  # From the 100th period onwards
-        "mean_k": mean_k_history,  # From the 100th period onwards
+        "grid": k_history[100:],         # From the 100th period onwards
+        "dist": dist_history[100:],      # From the 100th period onwards
+        "dist_k": dist_k_history[100:],  # From the 100th period onwards
+        "grid_k": grid_k_history[100:],  # From the 100th period onwards
+        "ashock": ashock_history[100:],  # From the 100th period onwards
+        "mean_k": mean_k_history[100:],  # From the 100th period onwards
         # Average statistics are excluded from the return value
     }
 
